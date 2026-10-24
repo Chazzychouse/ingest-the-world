@@ -19,9 +19,10 @@ open http://localhost:8081
 ```
 
 The ingest queue runs on the Service Bus emulator, which with its SQL Server is licensed under
-Microsoft's EULAs. `ACCEPT_EULA=Y` in `.env` accepts them and adds the emulator and the event
-shim (which announces finished uploads on the queue, standing in for Event Grid) to the stack
-and to `make check`. Without it everything else runs and the queue tests skip.
+Microsoft's EULAs. `ACCEPT_EULA=Y` in `.env` accepts them and adds three services to the stack: the emulator;
+the event shim, which announces finished uploads on the queue, standing in for Event Grid; and
+the worker, which scans each upload, promotes it to `raw/` and catalogs it. It also adds the
+emulator tests to `make check`. Without it everything else runs and the queue tests skip.
 
 | User  | Password | Roles | Clearance | Sees |
 |-------|----------|-------|-----------|------|

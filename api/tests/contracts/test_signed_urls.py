@@ -14,7 +14,7 @@ from azure.storage.blob import BlobBlock, BlobClient, BlobServiceClient, Contain
 
 from ingest_api.adapters.azure_blob import AzureBlobSigner, service_client
 from ingest_api.ports import Container, SystemClock
-from tests.conftest import AZURITE_KEY
+from tests.conftest import TEST_ACCOUNT, TEST_ACCOUNT_KEY
 from tests.contracts.azurite import azurite
 from tests.signed_urls import check_upload_url
 
@@ -32,11 +32,11 @@ def service() -> BlobServiceClient:
 # path-style), so signing must not depend on its parse.
 @pytest.fixture(params=["direct", "compose"])
 def signer(request: pytest.FixtureRequest, service: BlobServiceClient) -> AzureBlobSigner:
-    url = service.url if request.param == "direct" else "http://azurite:10000/devstoreaccount1"
+    url = service.url if request.param == "direct" else f"http://azurite:10000/{TEST_ACCOUNT}"
     return AzureBlobSigner(
-        service_client(url, AZURITE_KEY),
+        service_client(url, TEST_ACCOUNT_KEY),
         SystemClock(),
-        account_key=AZURITE_KEY,
+        account_key=TEST_ACCOUNT_KEY,
         public_url=service.url,
     )
 

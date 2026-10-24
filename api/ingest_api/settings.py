@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # How long a receive waits for a message before returning none.
     queue_max_wait_seconds: float = Field(default=5.0, gt=0, le=60)
 
+    # Messages a worker takes per receive. It handles them one at a time.
+    worker_batch: int = Field(default=4, gt=0, le=32)
+
     # The local event shim's polling interval (`ingest_api.event_shim`).
     shim_poll_seconds: float = Field(default=1.0, gt=0, le=60)
 

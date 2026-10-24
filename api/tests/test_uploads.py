@@ -113,11 +113,11 @@ def test_only_the_uploader_renews_the_url(client, auth, db):
 @pytest.mark.invariant("ACC-5")
 def test_a_finished_upload_gets_no_new_url(client, auth, db):
     upload_id = _start(client, auth, "carol", "site-survey-alpha").json()["upload"]["id"]
-    db.execute("UPDATE ingest.uploads SET status = 'committed' WHERE id = %s", (upload_id,))
+    db.execute("UPDATE ingest.uploads SET status = 'cataloged' WHERE id = %s", (upload_id,))
 
     response = client.post(f"/uploads/{upload_id}/url", headers=auth("carol"))
 
-    assert (response.status_code, response.json()) == (409, {"detail": "upload is committed"})
+    assert (response.status_code, response.json()) == (409, {"detail": "upload is cataloged"})
     assert AuditLog(db).last(target_id=upload_id).outcome == "denied"
 
 

@@ -507,7 +507,9 @@
           "status": {
             "enum": [
               "pending",
-              "committed",
+              "cataloged",
+              "quarantined",
+              "rejected",
               "abandoned"
             ],
             "title": "Status",

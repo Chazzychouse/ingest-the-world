@@ -9,7 +9,7 @@ import uuid
 import pytest
 
 from ingest_api.adapters.azure_blob import AzureBlobStore
-from ingest_api.ports import BlobNotFound, BlobStore
+from ingest_api.ports import BlobChanged, BlobExists, BlobNotFound, BlobStore
 from tests.contracts.azurite import azurite
 from tests.fakes import MemoryBlobStore
 
@@ -74,3 +74,44 @@ def test_list_by_prefix_in_name_order(store, name):
     store.put(C, f"{name}-other", b"x")
 
     assert [b.name for b in store.list(C, f"{name}/")] == [f"{name}/{s}" for s in ("a", "b", "c/d")]
+
+
+def test_conditional_delete_removes_only_that_version(store, name):
+    first = store.put(C, name, b"v1")
+    second = store.put(C, name, b"v2")
+
+    with pytest.raises(BlobChanged):
+        store.delete(C, name, if_match=first.etag)
+    assert store.head(C, name) == second
+    store.delete(C, name, if_match=second.etag)
+    assert store.head(C, name) is None
+
+
+def test_copy_makes_an_identical_blob_with_new_metadata(store, name):
+    source = store.put(C, name, b"original", content_type="image/tiff", metadata={"a": "1"})
+
+    copied = store.copy((C, name), (C, f"{name}.copy"), if_match=source.etag, metadata={"b": "2"})
+
+    assert store.read_range(C, f"{name}.copy", 0, 100) == b"original"
+    assert (copied.size, copied.content_type, copied.metadata) == (8, "image/tiff", {"b": "2"})
+    assert store.head(C, f"{name}.copy") == copied
+
+
+def test_copy_of_a_changed_or_missing_source_is_refused(store, name):
+    stale = store.put(C, name, b"v1")
+    store.put(C, name, b"v2")
+
+    with pytest.raises(BlobChanged):
+        store.copy((C, name), (C, f"{name}.copy"), if_match=stale.etag)
+    with pytest.raises(BlobChanged):
+        store.copy((C, f"{name}.missing"), (C, f"{name}.copy"), if_match=stale.etag)
+    assert store.head(C, f"{name}.copy") is None
+
+
+def test_copy_never_overwrites(store, name):
+    source = store.put(C, name, b"new")
+    existing = store.put(C, f"{name}.copy", b"old")
+
+    with pytest.raises(BlobExists):
+        store.copy((C, name), (C, f"{name}.copy"), if_match=source.etag)
+    assert store.head(C, f"{name}.copy") == existing

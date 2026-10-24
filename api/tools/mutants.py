@@ -39,6 +39,8 @@ ROUTES = "ingest_api/catalog/routes.py"
 UPLOAD_ROUTES = "ingest_api/uploads/routes.py"
 # The latest definition of the access functions; earlier migrations' versions are replaced.
 UPLOADS_SQL = "migrations/0003_uploads.sql"
+ITEMS_SQL = "migrations/0004_items_and_jobs.sql"
+PIPELINE = "ingest_api/worker/pipeline.py"
 READ_GRANTED = (
     "      AND c.id IN (SELECT authz.granted_collections(subject, roles, groups, 'read'))"
 )
@@ -164,6 +166,64 @@ MUTANTS = [
         "BEFORE UPDATE OR DELETE OR TRUNCATE ON audit.events",
         "BEFORE UPDATE ON audit.events",
         ("ACC-6",),
+    ),
+    Mutant(
+        "landing-cleared-without-etag",
+        PIPELINE,
+        "store.delete(LANDING, event.name, if_match=event.etag)",
+        "store.delete(LANDING, event.name)",
+        # Finishing an old version deletes a newer one that landed meanwhile: it is never seen.
+        ("ING-2",),
+    ),
+    Mutant(
+        "redelivery-decides-again",
+        PIPELINE,
+        "return job.stage  # a duplicate or redelivery: the outcome stands (ING-1)",
+        "pass",
+        # The duplicate finds its upload closed, "rejects" itself and discards the item's raw.
+        ("ING-1", "ING-3", "ING-5"),
+    ),
+    Mutant(
+        "scan-ignored",
+        PIPELINE,
+        "    if not verdict.clean:\n",
+        "    if verdict.clean and not verdict.clean:\n",
+        ("ING-4",),
+    ),
+    Mutant(
+        "checksum-not-verified",
+        PIPELINE,
+        "if upload.sha256 is not None and sha256 != upload.sha256:",
+        "if False:",
+        ("ING-2",),
+    ),
+    Mutant(
+        "rejection-keeps-raw-copy",
+        PIPELINE,
+        "    if raw is not None and raw.metadata.get(SOURCE_ETAG) == etag:\n",
+        "    if False:\n",
+        ("ING-5",),
+    ),
+    Mutant(
+        "promote-before-scan",
+        PIPELINE,
+        "    verdict = p.scanner.scan(LANDING, event.name)\n",
+        "    _copy_to_raw(p.store, event)\n    verdict = p.scanner.scan(LANDING, event.name)\n",
+        ("ING-4", "ING-5"),
+    ),
+    Mutant(
+        "job-outcome-can-change",
+        ITEMS_SQL,
+        "    IF OLD.stage <> 'received' AND NEW.stage IS DISTINCT FROM OLD.stage THEN",
+        "    IF false THEN",
+        ("ING-2",),
+    ),
+    Mutant(
+        "item-marking-floor-dropped",
+        ITEMS_SQL,
+        "    IF (SELECT rank FROM authz.markings WHERE code = NEW.marking) < (",
+        "    IF false AND (SELECT rank FROM authz.markings WHERE code = NEW.marking) < (",
+        ("ACC-3",),
     ),
 ]
 

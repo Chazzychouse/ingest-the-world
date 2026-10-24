@@ -53,6 +53,9 @@ api/ingest_api/
   identity.py    /me
   catalog/       collections and grants: models.py, store.py, routes.py
   uploads/       upload sessions and their signed URLs: models.py, store.py, routes.py
+  items/         catalog items: kinds.py (what a file is), store.py (only the pipeline writes)
+  worker/        the pipeline: pipeline.py (one blob version's step machine), classify.py,
+                 store.py (jobs), runner.py (queue -> settle), __main__.py (composition)
 api/migrations/  numbered SQL, never edited once merged; add a new file instead
 ```
 
@@ -165,10 +168,13 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
 
 - `api/tests/model.py`: the independent reference model of who may read what.
 - `api/tests/sim/`: Hypothesis state machines that drive the real API and Postgres with
-  random actors and operations (catalog changes and upload sessions), checking invariants
-  after every step. Worker and faulty-queue actors join later in M1.
+  random actors and operations, checking invariants after every step.
+  `test_catalog_sim.py` covers catalog changes and upload sessions (ACC-*);
+  `test_pipeline_sim.py` runs the worker over a faulty queue and blob store, then drains and
+  replays every event (ING-1 to ING-5).
 - `api/tests/strategies.py`: the shared Hypothesis strategies (actors, grantees, names).
-- `api/tests/fakes.py`: seeded, fault-injecting implementations of the ports.
+- `api/tests/fakes.py`: seeded, fault-injecting implementations of the ports, and
+  `CrashAfter`, which interrupts a job after its N-th storage call (`test_pipeline.py`).
 - `api/tests/contracts/`: one behavioural suite per port, run against the fake *and* the real
   thing (Azurite, the Service Bus emulator), so fakes can't drift from reality.
   `test_signed_urls.py` also proves Azurite enforces the limits a signed URL claims (ACC-8).

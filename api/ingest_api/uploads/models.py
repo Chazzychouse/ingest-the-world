@@ -20,7 +20,9 @@ Filename = Annotated[str, Field(min_length=1, max_length=255, pattern=FILENAME_P
 MediaType = Annotated[str, Field(max_length=255, pattern=MEDIA_TYPE_PATTERN)]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Tag = Annotated[str, Field(min_length=1, max_length=64, pattern=NO_NUL_PATTERN)]
-UploadStatus = Literal["pending", "committed", "abandoned"]
+# `pending` until the pipeline decides; then the outcome of the version it acted on (ING-2).
+UploadStatus = Literal["pending", "cataloged", "quarantined", "rejected", "abandoned"]
+ClosedStatus = Literal["cataloged", "quarantined", "rejected"]
 
 
 class UploadIn(ApiModel):

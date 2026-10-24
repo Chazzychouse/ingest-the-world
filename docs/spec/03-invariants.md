@@ -38,7 +38,7 @@ same status code and same body. Markings can't be probed by guessing ids.
 
 ### ACC-3 Marking floor
 
-Status: enforced (collections, banner); planned for items and derivatives (M1, M3)
+Status: enforced (collections, items, banner); planned for derivatives (M3)
 
 An item's marking is at least its collection's, and a derivative's marking is at least its
 source's. The page banner shows the highest marking among everything currently displayed,
@@ -92,38 +92,44 @@ storage service enforces what the URL says.
 
 ### ING-1 Idempotent processing
 
-Status: planned (M1)
+Status: enforced
 
-Delivering the same blob event (blob URL + eTag) one or more times leaves the catalog in
-the same state as delivering it once.
+Delivering the same blob event (blob name + eTag) one or more times, in any order and
+interleaved with redeliveries after lost locks, leaves the catalog, the jobs and storage in
+the same state as delivering it once. Checked by the pipeline simulation, which duplicates,
+reorders and redelivers events.
 
 ### ING-2 Exactly one outcome
 
-Status: planned (M1)
+Status: enforced
 
-Every blob that lands ends in exactly one of `cataloged`, `quarantined` or `rejected`:
-never lost, never cataloged twice. Checked once the simulation drains with faults off.
+Every blob version that lands ends in exactly one of `cataloged`, `quarantined` or `rejected`:
+never lost, never cataloged twice, and an outcome once reached never changes. An upload yields
+at most one item. Checked once the simulation drains with faults off.
 
 ### ING-3 Originals are immutable
 
-Status: planned (M1)
+Status: enforced
 
-A raw blob's content hash never changes after it is committed; a new upload of the same
-path is a new version.
+Once an item is cataloged, its raw blob is never overwritten, changed or deleted by the
+pipeline; its content hash is fixed. A new upload of the same file is a new item with its own
+raw blob. (A version that loses to a newer one before it is cataloged may have its raw copy
+discarded; nothing ever referred to it.)
 
 ### ING-4 Quarantine is sealed
 
-Status: planned (M1)
+Status: enforced (pipeline); planned for serving and search (M1 slice 5)
 
-A quarantined blob is never extracted, served, signed or returned by search.
+A blob the scanner flags never reaches `raw/` and never becomes an item, so nothing can
+extract, serve, sign or return it.
 
 ### ING-5 Catalog and storage agree
 
-Status: planned (M1)
+Status: enforced
 
 Every catalog item points at a raw blob whose hash matches the item's checksum, and every
-raw blob has a catalog item or an in-flight job; orphans past the grace period are a
-violation.
+raw blob has a catalog item or an in-flight job. Holds after every step of the pipeline
+simulation, including those that fail midway.
 
 ### ING-6 Header-only extraction
 

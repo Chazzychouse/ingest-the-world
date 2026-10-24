@@ -27,9 +27,7 @@ jobs:
           docker run -d --name db -p 5432:5432 \
             -e POSTGRES_USER=ingest -e POSTGRES_PASSWORD=ingest -e POSTGRES_DB=ingest \
             --health-cmd "pg_isready -U ingest" --health-interval 2s ingest-postgres:ci
-          docker run -d --name azurite -p 10000:10000 \
-            mcr.microsoft.com/azure-storage/azurite:3.37.0 \
-            azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+          docker compose up -d --wait azurite
           until [ "$(docker inspect -f '{{.State.Health.Status}}' db)" = healthy ]; do sleep 1; done
       - run: uv sync --frozen
       - name: Simulation soak

@@ -1,6 +1,7 @@
 # Local stack, no cloud account required.
 #   make up    then open http://localhost:8081  (users: alice / carol / bob)
-# The queue (Service Bus emulator, its SQL Server, and the event shim) is in the `queue` profile,
+# The queue (Service Bus emulator, its SQL Server, the event shim and the worker) is in the
+# `queue` profile,
 # which `make` enables once ACCEPT_EULA=Y is in .env (see .env.example).
 name: ingest-the-world
 
@@ -22,6 +23,9 @@ services:
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:3.37.0
     command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck --location /data
+    environment:
+      # The default account for the stack, and a separate one for the test suite.
+      AZURITE_ACCOUNTS: devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;ingesttest:aW5nZXN0LXRoZS13b3JsZC10ZXN0LWFjY291bnQta2V5LTMyYg==
     ports: ["10000:10000", "10001:10001", "10002:10002"]
     volumes: [azurite-data:/data]
 
@@ -81,6 +85,17 @@ services:
   event-shim:
     image: ingest-api:dev
     command: ["python", "-m", "ingest_api.event_shim"]
+    environment: *api-env
+    profiles: [queue]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      azurite: { condition: service_started }
+      servicebus: { condition: service_started }
+
+  # Takes blob events off the queue: scan, promote to raw/, catalog (ingest_api.worker).
+  worker:
+    image: ingest-api:dev
+    command: ["python", "-m", "ingest_api.worker"]
     environment: *api-env
     profiles: [queue]
     depends_on:

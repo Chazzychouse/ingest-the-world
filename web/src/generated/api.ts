@@ -382,7 +382,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "pending" | "committed" | "abandoned";
+            status: "pending" | "cataloged" | "quarantined" | "rejected" | "abandoned";
             /** Tags */
             tags: string[];
         };
