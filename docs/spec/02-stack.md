@@ -1,0 +1,48 @@
+# Stack — Ingest the World
+
+Status: proposed, 2026-10-24. Each choice links to the research that justifies it. Items marked **SPIKE** must be proven before the dependent milestone.
+
+## Summary
+
+| Layer | Choice | Why (research ref) |
+|-------|--------|--------------------|
+| Object storage | Azure Blob, **flat namespace** (not ADLS Gen2), versioning on | HNS is irreversible and drops versioning/change feed/PITR; Azurite can't emulate it (02 §3) |
+| Upload path | Browser → Blob directly via short-lived, single-blob, write-only **user-delegation SAS**; parallel block upload; resume state in IndexedDB | 4000 MiB blocks × 50k blocks; uncommitted blocks live 7 days; tus would re-introduce a proxy (02 §2) |
+| Eventing | Event Grid `BlobCreated` (filtered to commit APIs) → **Service Bus** queue, dead-lettering on | At-least-once, unordered → idempotent workers keyed on blob URL + eTag (02 §3) |
+| Workers | Plain OCI containers pulling from the queue; **Container Apps jobs** (dev/IL2) or **AKS + KEDA** (IL4/5) — same image | Container Apps tops out at IL2 in Gov; Functions too small for multi-GB (4 GB RAM / 0.8 GB disk) (02 §3, §1) |
+| Worker language | **Python 3.12** on one pinned GDAL image (rasterio, pyogrio, PDAL, pyproj, pystac); Node/native sidecars for mesh tooling | GDAL/PDAL ecosystem is Python-first (01 §4) |
+| Mesh tooling | Khronos glTF-Validator, **gltfpack** (native) for proxies, glTF-Transform for small files, **mago-3d-tiler** for GLB → 3D Tiles 1.1, 3d-tiles-tools for validate/package | Cesium 3d-tiles-tools does not tile meshes; mago does (MPL-2.0) — **SPIKE** on a multi-GB GLB (04 §2–3) |
+| Mesh normalizers (D1) | Assimp / headless Blender (FBX, OBJ), IfcOpenShell (IFC), usd-core (USD/USDZ), each converting to glTF | Plugins behind one interface; licenses to be checked per tool in M3 |
+| Malware scan (D3) | Defender for Storage malware scanning (cloud), ClamAV container (local) | Gov availability of on-upload scanning is **unverified**; ClamAV worker is the fallback |
+| Database | **PostgreSQL 16+ (Azure Flexible Server)** + PostGIS, pgvector, pg_trgm, btree_gist, pg_partman, TimescaleDB | All listed extensions supported; available in Gov AZ/TX/VA (02 §1, 03 §3) |
+| Catalog | **pgSTAC 0.9.x (pinned)** + **stac-fastapi-pgstac** | Same core as Planetary Computer; titiler-pgstac not yet certified on pgstac 0.10 (03 §1–2) |
+| Search | A `catalog` schema beside pgSTAC: facet columns, `tsvector` FTS, `pg_trgm` fuzzy matching, **pgvector HNSW** embeddings, keyword + semantic results merged by **reciprocal rank fusion** in SQL | pgSTAC's own free-text search is unindexed; Azure AI Search can't index polygon footprints (03 §3–4) |
+| Embeddings | Azure OpenAI `text-embedding-3-small` (1536-d), behind a provider interface; keyword-only fallback locally | Available in Gov; under pgvector's 2000-d HNSW limit (03 §4) |
+| Small readings | Batched to per-device-per-day **Parquet** (one STAC Item each) + TimescaleDB hypertable for queryable readings | Avoid one catalog row per reading (01 §3, 02 §4) |
+| Platform API | **Python FastAPI**; mounts the STAC API; OIDC JWT validation against discovered JWKS | One language with workers and stac-fastapi |
+| Auth | Generic OIDC (auth code + PKCE in the SPA); **Entra ID app roles** for RBAC; authority host + tenant are config (`login.microsoftonline.com` / `.us`); Managed Identity service-to-service | Gov apps can sign in commercial or Gov tenants; groups claim overflows past 200 groups (02 §5) |
+| Map tiles / previews | **TiTiler-pgstac** (COG previews/mosaics), **Martin** or **tipg** (footprint vector tiles) | eoAPI / Planetary Computer pattern (03 §6) |
+| Web UI | **React + TypeScript + Vite** SPA; **MapLibre GL** for catalog browsing; **three.js + 3DTilesRendererJS** with **WebXR** for the 3D/XR viewer; `<model-viewer>` for phone AR (USDZ Quick Look on iOS); optional CesiumJS page | CesiumJS can't enter WebXR; Quest Browser is the strongest XR target (04 §4–5) |
+| Base map | Azure Maps (Gov: `atlas.azure.us`) or self-hosted imagery; pluggable | (04 §4) |
+| IaC | **Terraform** (`azurerm` with `environment = "usgovernment"`, `azuread` for app registrations + app roles) | One tool covers infra *and* Entra config (02 §7) |
+| Local dev | Docker Compose: Azurite, Postgres+PostGIS+pgvector, Service Bus emulator, a small **event shim** that forwards Azurite commits to the queue, Keycloak as a stand-in OIDC IdP | No official Event Grid emulator; Keycloak proves the OIDC-generic claim (02 §6) |
+| Observability | OpenTelemetry → Azure Monitor / App Insights (local: Grafana LGTM container) | |
+
+## Explicit non-choices
+
+- **Azure AI Search as the primary index** — it indexes points only. Revisit only as an add-on for its semantic ranker.
+- **OpenSearch/Elasticsearch** — not managed in Gov (unconfirmed); deferred. The outbox table (spec §6) keeps this option open.
+- **Azure Functions for processing** — fine for tiny glue code, wrong for multi-GB files.
+- **HoloLens 2** — production ended Dec 2024; don't target it.
+- **Cesium ion** — commercial and not confirmed for Gov; recorded as the alternative if mago-3d-tiler fails its spike.
+- **Vercel / non-Azure hosting** — the client constraint is Azure (Gov).
+
+## Spikes (prove before building on them)
+
+| # | Spike | Pass criteria |
+|---|-------|---------------|
+| S1 | mago-3d-tiler on a 2–4 GB GLB | Valid 3D Tiles 1.1 (3d-tiles-tools validate), streams in 3DTilesRendererJS, peak RAM recorded |
+| S2 | Browser block upload of a 10 GB file to Azurite and to real Blob, with a mid-upload reload | Resumes from IndexedDB state; commit triggers exactly one processed record |
+| S3 | pgSTAC 0.9.x install on Azure Flexible Server | Migrations run without superuser-only steps |
+| S4 | GDAL `/vsiaz/` against a Gov-style endpoint with an externally supplied token | COG header read via range requests only |
+| S5 | WebXR on Quest Browser: tiled model in VR + passthrough AR hit-test placement | 72 fps on a mid-size tileset |
