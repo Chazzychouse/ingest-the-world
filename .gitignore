@@ -18,3 +18,7 @@ dist/
 !example.backend.hcl
 
 .DS_Store
+
+# Test reports
+api/reports/
+.hypothesis/

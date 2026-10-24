@@ -50,6 +50,7 @@ def test_me_defaults_to_unclassified(client, auth):
     assert client.get("/me", headers=auth("bob")).json()["clearance"]["code"] == "UNCLASSIFIED"
 
 
+@pytest.mark.invariant("ACC-1")
 @pytest.mark.parametrize(
     ("user", "expected"),
     [
@@ -68,11 +69,13 @@ def test_collection_visibility_combines_grants_and_clearance(client, auth, user,
         assert ids == expected
 
 
+@pytest.mark.invariant("ACC-2", "ACC-5")
 def test_cui_collection_is_hidden_from_uncleared_reader_and_the_attempt_audited(client, auth, db):
     assert client.get("/collections/range-ops-cui", headers=auth("bob")).status_code == 404
     assert last_audit(db, target_id="range-ops-cui", actor_name="bob")["outcome"] == "denied"
 
 
+@pytest.mark.invariant("ACC-5")
 def test_reading_a_collection_is_audited_with_its_marking(client, auth, db):
     response = client.get("/collections/range-ops-cui", headers=auth("carol"))
 
@@ -87,6 +90,7 @@ def test_reading_a_collection_is_audited_with_its_marking(client, auth, db):
     }
 
 
+@pytest.mark.invariant("ACC-5")
 def test_non_admin_cannot_create_collection_and_is_audited(client, auth, db):
     response = client.post(
         "/collections", json={"id": new_id(), "title": "Nope"}, headers=auth("bob")
@@ -117,6 +121,7 @@ def test_admin_creates_collection(client, auth, db):
     assert duplicate.status_code == 409
 
 
+@pytest.mark.invariant("ACC-4")
 def test_admin_cannot_create_above_own_clearance(client, auth, db):
     collection_id = new_id()
 
@@ -146,8 +151,51 @@ def test_rejects_invalid_collections(client, auth, body):
     assert client.post("/collections", json=body, headers=auth("alice")).status_code == 422
 
 
+@pytest.mark.invariant("ACC-6")
 def test_audit_log_is_append_only(db):
-    with pytest.raises(psycopg.errors.RaiseException):
-        db.execute("UPDATE audit.events SET outcome = 'allowed'")
-    with pytest.raises(psycopg.errors.RaiseException):
-        db.execute("DELETE FROM audit.events")
+    for statement in (
+        "UPDATE audit.events SET outcome = 'allowed'",
+        "DELETE FROM audit.events",
+        "TRUNCATE audit.events",
+    ):
+        with pytest.raises(psycopg.errors.RaiseException):
+            db.execute(statement)
+
+
+@pytest.mark.invariant("ACC-5")
+def test_listing_collections_is_audited_with_the_highest_marking(client, auth, db):
+    client.get("/collections", headers=auth("carol"))
+
+    assert last_audit(db, actor_name="carol", action="collection.list")["marking"] == "CUI"
+
+
+@pytest.mark.invariant("ACC-4")
+def test_admin_cannot_grant_on_a_collection_above_their_clearance(client, auth, db):
+    response = client.put(
+        "/collections/range-ops-cui/grants/user/sub-bob",
+        json={"access": "read"},
+        headers=auth("admin-no-cui"),
+    )
+
+    assert response.status_code == 404
+    assert last_audit(db, target_id="range-ops-cui", actor_name="admin-no-cui") == {
+        "action": "grant.put",
+        "outcome": "denied",
+        "marking": "CUI",
+        "actor_name": "admin-no-cui",
+        "target_id": "range-ops-cui",
+    }
+
+
+def test_user_grant_opens_a_collection_to_one_person(client, auth):
+    collection_id = new_id()
+    client.post("/collections", json={"id": collection_id, "title": "T"}, headers=auth("alice"))
+    path = f"/collections/{collection_id}/grants/user/sub-nobody"
+
+    assert client.get(f"/collections/{collection_id}", headers=auth("nobody")).status_code == 404
+    assert client.put(path, json={"access": "read"}, headers=auth("alice")).status_code == 200
+    assert client.get(f"/collections/{collection_id}", headers=auth("nobody")).status_code == 200
+    grants = client.get(f"/collections/{collection_id}/grants", headers=auth("alice")).json()
+    assert grants == [{"principal_type": "user", "principal": "sub-nobody", "access": "read"}]
+    assert client.delete(path, headers=auth("alice")).status_code == 204
+    assert client.get(f"/collections/{collection_id}", headers=auth("nobody")).status_code == 404

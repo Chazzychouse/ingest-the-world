@@ -19,6 +19,7 @@ export type Collection = {
   marking: string
   marking_label: string
   marking_color: string
+  marking_rank: number
   cui_categories: string[]
   dissemination: string[]
   retention: { retain_days: number | null; legal_hold: boolean; tiering: { after_days: number; tier: string }[] }

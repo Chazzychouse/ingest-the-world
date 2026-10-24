@@ -1,4 +1,4 @@
-.PHONY: up down reset logs test lint tf-validate token
+.PHONY: up down reset logs test check explore sim soak mutants lint tf-validate token
 
 up:  ## Build and start the local stack (http://localhost:8081)
 	docker compose up -d --build --wait
@@ -12,9 +12,38 @@ reset:  ## Stop and delete local data volumes
 logs:
 	docker compose logs -f api
 
-test:  ## API tests against the Compose Postgres
+PYTEST = cd api && INGEST_REQUIRE_DB=1 uv run pytest -q
+
+test:  ## API tests against the Compose Postgres (and Azurite)
+	docker compose up -d --wait db azurite
+	$(PYTEST)
+
+# Hypothesis profile per target (see api/tests/conftest.py). `check` is derandomized so a
+# local pass predicts CI; `explore` and `soak` look for new failures.
+check: export INGEST_HYPOTHESIS_PROFILE = ci
+explore sim: export INGEST_HYPOTHESIS_PROFILE = dev
+soak: export INGEST_HYPOTHESIS_PROFILE = soak
+
+check: lint  ## The gate: lint, every test, invariant traceability, JSON report
+	docker compose up -d --wait db azurite
+	$(PYTEST) --check-invariants --invariants-report=reports/invariants.json
+
+explore:  ## Property tests and simulation with fresh random inputs
 	docker compose up -d --wait db
-	cd api && INGEST_REQUIRE_DB=1 uv run pytest -q
+	$(PYTEST) tests/sim tests/test_access_model.py
+
+SEED ?= 0
+sim:  ## Replay the simulation from a seed: make sim SEED=123
+	docker compose up -d --wait db
+	$(PYTEST) tests/sim --hypothesis-seed=$(SEED)
+
+soak:  ## Long simulation run (minutes)
+	docker compose up -d --wait db
+	$(PYTEST) tests/sim tests/test_access_model.py
+
+mutants:  ## Plant known bugs and check each is caught by the right invariant
+	docker compose up -d --wait db azurite
+	cd api && INGEST_REQUIRE_DB=1 uv run python tools/mutants.py
 
 lint:
 	cd api && uv run ruff check . && uv run ruff format --check .

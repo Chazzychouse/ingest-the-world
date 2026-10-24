@@ -25,12 +25,23 @@ jobs:
             -e POSTGRES_USER=ingest -e POSTGRES_PASSWORD=ingest -e POSTGRES_DB=ingest \
             --health-cmd "pg_isready -U ingest" --health-interval 2s ingest-postgres:ci
           until [ "$(docker inspect -f '{{.State.Health.Status}}' db)" = healthy ]; do sleep 1; done
+      - name: Start Azurite (blob store contract tests)
+        run: docker run -d --name azurite -p 10000:10000 mcr.microsoft.com/azure-storage/azurite:3.37.0 azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run pytest -q
+      - name: Tests, simulation, fuzzing and invariant traceability
+        run: uv run pytest -q --check-invariants --invariants-report=reports/invariants.json
         env:
           INGEST_REQUIRE_DB: "1"
+          INGEST_REQUIRE_AZURITE: "1"
+          INGEST_HYPOTHESIS_PROFILE: ci
+      - name: Upload invariant report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: invariants
+          path: api/reports/invariants.json
 
   web:
     runs-on: ubuntu-latest
@@ -47,6 +58,7 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - run: pnpm test
       - run: pnpm build
 
   terraform:

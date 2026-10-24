@@ -1,7 +1,6 @@
 import { useAuth } from 'react-oidc-context'
 import { useApi, type Collection, type Marking, type Me } from './api'
-
-const UNCLASSIFIED: Marking = { code: 'UNCLASSIFIED', label: 'UNCLASSIFIED', banner_color: '#007a33' }
+import { bannerFor } from './markings'
 
 function MarkingBanner({ marking, position }: { marking: Marking; position: 'top' | 'bottom' }) {
   return (
@@ -95,12 +94,7 @@ function Workspace() {
   const me = useApi<Me>('/me')
   const collections = useApi<Collection[]>('/collections')
 
-  // The API orders collections by marking rank, highest first, so the first one sets the
-  // banner for everything on screen.
-  const first = collections.data?.[0]
-  const banner: Marking = first
-    ? { code: first.marking, label: first.marking_label, banner_color: first.marking_color }
-    : UNCLASSIFIED
+  const banner = bannerFor(collections.data ?? [])
 
   return (
     <>
