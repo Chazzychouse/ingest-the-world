@@ -5,6 +5,7 @@ description = "Platform API for the Ingest the World geospatial data platform"
 requires-python = ">=3.12"
 dependencies = [
     "azure-identity>=1.26.0",
+    "azure-servicebus>=7.14",
     "azure-storage-blob>=12.31.0",
     "fastapi>=0.162.0",
     "httpx>=0.28.1",

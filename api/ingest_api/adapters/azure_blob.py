@@ -1,12 +1,13 @@
 """`BlobStore` and `BlobSigner` over Azure Blob Storage (and Azurite)."""
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta
 from typing import NoReturn
 from urllib.parse import quote, urlsplit
 
 from azure.core.exceptions import (
     HttpResponseError,
+    ResourceExistsError,
     ResourceNotFoundError,
     ServiceRequestError,
     ServiceResponseError,
@@ -68,6 +69,18 @@ def service_client(account_url: str, account_key: str | None) -> BlobServiceClie
         return BlobServiceClient(account_url, credential=DefaultAzureCredential())
     credential = {"account_name": account_name(account_url), "account_key": account_key}
     return BlobServiceClient(account_url, credential=credential)
+
+
+def ensure_containers(service: BlobServiceClient, containers: Iterable[str]) -> None:
+    """Creates any of `containers` that don't exist. Terraform creates them in the cloud;
+    emulators start empty."""
+    for container in containers:
+        try:
+            service.get_container_client(container).create_container()
+        except ResourceExistsError:
+            continue
+        except (HttpResponseError, ServiceRequestError) as exc:
+            _raise_translated(exc)
 
 
 def _props(container: str, blob: BlobProperties) -> BlobProps:

@@ -1,5 +1,7 @@
-# Local stack: everything M0 needs, no cloud account required.
-#   docker compose up --build    then open http://localhost:8081  (users: alice / carol / bob)
+# Local stack, no cloud account required.
+#   make up    then open http://localhost:8081  (users: alice / carol / bob)
+# The queue (Service Bus emulator, its SQL Server, and the event shim) is in the `queue` profile,
+# which `make` enables once ACCEPT_EULA=Y is in .env (see .env.example).
 name: ingest-the-world
 
 services:
@@ -61,6 +63,8 @@ services:
       INGEST_BLOB_ACCOUNT_URL: http://azurite:10000/devstoreaccount1
       INGEST_BLOB_ACCOUNT_KEY: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
       INGEST_BLOB_PUBLIC_URL: http://localhost:10000/devstoreaccount1
+      # The emulator's fixed connection string; the cloud uses managed identity instead.
+      INGEST_QUEUE_CONNECTION: Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;
     depends_on:
       db: { condition: service_healthy }
 
@@ -72,6 +76,44 @@ services:
       migrate: { condition: service_completed_successfully }
       keycloak: { condition: service_healthy }
       azurite: { condition: service_started }
+
+  # Stands in for Event Grid: announces committed landing/ blobs on the ingest queue.
+  event-shim:
+    image: ingest-api:dev
+    command: ["python", "-m", "ingest_api.event_shim"]
+    environment: *api-env
+    profiles: [queue]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      azurite: { condition: service_started }
+      servicebus: { condition: service_started }
+
+  servicebus:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1
+    profiles: [queue]
+    environment:
+      SQL_SERVER: servicebus-sql
+      MSSQL_SA_PASSWORD: &sql-password Ingest-dev-only-1
+      ACCEPT_EULA: ${ACCEPT_EULA:-N}
+    volumes: [./infra/servicebus/config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro]
+    # 5672 is AMQP; 5300 serves /health, which `make` polls (the image has no shell for a
+    # healthcheck).
+    ports: ["5672:5672", "5300:5300"]
+    depends_on:
+      servicebus-sql: { condition: service_healthy }
+
+  servicebus-sql:
+    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+    profiles: [queue]
+    environment:
+      MSSQL_SA_PASSWORD: *sql-password
+      ACCEPT_EULA: ${ACCEPT_EULA:-N}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$$MSSQL_SA_PASSWORD" -Q "SELECT 1" -b -o /dev/null
+      interval: 5s
+      retries: 30
 
   web:
     build: web

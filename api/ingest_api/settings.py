@@ -48,6 +48,18 @@ class Settings(BaseSettings):
     blob_public_url: str | None = None
     upload_url_minutes: int = Field(default=MAX_SIGNED_URL_MINUTES, gt=0, le=MAX_SIGNED_URL_MINUTES)
 
+    # Service Bus. Locally a connection string for the emulator; in the cloud the namespace's
+    # host name (`sb-x.servicebus.usgovcloudapi.net`) and the process's managed identity, since
+    # local (SAS) auth is disabled on the namespace.
+    queue_connection: SecretStr | None = None
+    queue_namespace: str | None = None
+    queue_name: str = "ingest"
+    # How long a receive waits for a message before returning none.
+    queue_max_wait_seconds: float = Field(default=5.0, gt=0, le=60)
+
+    # The local event shim's polling interval (`ingest_api.event_shim`).
+    shim_poll_seconds: float = Field(default=1.0, gt=0, le=60)
+
     cors_origins: list[str] = Field(default_factory=list)
 
 
