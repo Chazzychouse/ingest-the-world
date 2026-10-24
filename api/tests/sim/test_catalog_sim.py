@@ -1,15 +1,19 @@
-"""Stateful simulation of the catalog API against the reference model.
+"""Stateful simulation of the catalog and upload API against the reference model.
 
-Hypothesis generates sequences of actors and operations (list, read, create, grant, revoke),
-runs each against the real app and a fresh Postgres database, and after every step checks:
+Hypothesis generates sequences of actors and operations (list, read, create, grant, revoke,
+start an upload, read it, renew its URL), runs each against the real app and a fresh
+Postgres database, and after every step checks:
 
-- the response matches what the model says the actor may see or do (ACC-1, ACC-2, ACC-4);
+- the response matches what the model says the actor may see or do (ACC-1, ACC-2, ACC-4,
+  ACC-7), and every signed URL is scoped to its upload's blob (ACC-8);
 - exactly one audit event was written, with the right outcome and marking (ACC-5);
-- the database holds the same collections and grants as the model.
+- the database holds the same collections, grants and uploads as the model.
 
 Failures shrink to a minimal sequence of steps and print how to replay them. Runs are
-seeded: `make sim SEED=123`. Pipeline actors (uploads, workers, faulty queues) join in M1.
+seeded: `make sim SEED=123`. Worker and faulty-queue actors join later in M1.
 """
+
+from datetime import UTC, datetime
 
 import psycopg
 import pytest
@@ -26,16 +30,21 @@ from hypothesis.stateful import (
 
 from ingest_api.audit import AuditAction
 from ingest_api.catalog.routes import NOT_FOUND
+from ingest_api.ports import Container
+from ingest_api.uploads.routes import NOT_FOUND as UPLOAD_NOT_FOUND
 from tests.audit_log import AuditLog
 from tests.conftest import make_app, reset_catalog
-from tests.invariants import check
+from tests.invariants import InvariantViolation, check
 from tests.model import Actor, World
+from tests.signed_urls import check_upload_url
 from tests.strategies import actors as actor_strategy
 from tests.strategies import grant_keys
 from tests.tokens import TestIdp
 
 GHOST = "ghost-collection"  # never created: the baseline for ACC-2
+GHOST_UPLOAD = "00000000-0000-4000-8000-000000000000"
 collection_ids = st.from_regex(r"c-[a-z]{2}", fullmatch=True)
+filenames = st.sampled_from(["scan.laz", "site model.glb", "100%.tif", "ünï.csv"])
 
 
 class CatalogMachine(RuleBasedStateMachine):
@@ -49,6 +58,7 @@ class CatalogMachine(RuleBasedStateMachine):
         self.audit = AuditLog(db)
         reset_catalog(db)
         self.world = World.from_db(db)
+        self.uploads: dict[str, tuple[str, str]] = {}  # id -> (collection, creator's subject)
 
     # -- plumbing ---------------------------------------------------------------------
 
@@ -197,6 +207,99 @@ class CatalogMachine(RuleBasedStateMachine):
                 AuditAction.GRANT_DELETE, "allowed", self.world.collections[cid], cid
             )
 
+    # -- uploads ----------------------------------------------------------------------
+
+    def _check_session(self, session) -> None:
+        upload_id = session["upload"]["id"]
+        row = self.db.execute(
+            "SELECT blob_name FROM ingest.uploads WHERE id = %s", (upload_id,)
+        ).fetchone()
+        if row is None:
+            raise InvariantViolation("ACC-8", f"signed URL for unknown upload {upload_id}")
+        check_upload_url(
+            session["upload_url"],
+            container=Container.LANDING,
+            blob_name=row[0],
+            issued_by=datetime.now(UTC),
+        )
+
+    @rule(actor=actors, filename=filenames, data=st.data())
+    def start_upload(self, actor, filename, data):
+        cid = data.draw(st.sampled_from([*sorted(self.world.collections), GHOST]))
+        response = self._call(
+            actor,
+            "POST",
+            "/uploads",
+            json={"collection_id": cid, "filename": filename, "size_bytes": 10},
+        )
+        marking = self.world.collections.get(cid)
+        if not self.world.can_read(actor, cid):
+            check(
+                "ACC-2",
+                (response.status_code, response.json()) == (404, {"detail": NOT_FOUND}),
+                f"{actor} upload into unreadable {cid}: {response.status_code} {response.text}",
+            )
+            self._expect_audit(AuditAction.UPLOAD_CREATE, "denied", marking, cid)
+            return
+        if not self.world.can_write(actor, cid):
+            check("ACC-7", response.status_code == 403, f"{actor} uploaded into {cid}")
+            self._expect_audit(AuditAction.UPLOAD_CREATE, "denied", marking, cid)
+            return
+        check("ACC-7", response.status_code == 201, f"{actor} refused upload: {response.text}")
+        session = response.json()
+        self._check_session(session)
+        upload_id = session["upload"]["id"]
+        self.uploads[upload_id] = (cid, actor.subject)
+        self._expect_audit(AuditAction.UPLOAD_CREATE, "allowed", marking, upload_id)
+
+    def _upload_target(self, data) -> tuple[str, str | None]:
+        """An upload id to act on, and its collection (None for the ghost)."""
+        # Insertion order, not sorted: ids are random, and draws must not depend on their values.
+        upload_id = data.draw(st.sampled_from([*self.uploads, GHOST_UPLOAD]))
+        return upload_id, self.uploads.get(upload_id, (None, ""))[0]
+
+    def _visible_in(self, actor, response, action, upload_id, cid: str | None) -> str | None:
+        """The upload's collection if the actor can read it; otherwise checks the refusal."""
+        if cid is not None and self.world.can_read(actor, cid):
+            return cid
+        check(
+            "ACC-2",
+            (response.status_code, response.json()) == (404, {"detail": UPLOAD_NOT_FOUND}),
+            f"{actor} on upload {upload_id}: {response.status_code} {response.text}",
+        )
+        marking = self.world.collections.get(cid) if cid else None
+        self._expect_audit(action, "denied", marking, upload_id)
+        return None
+
+    @rule(actor=actors, data=st.data())
+    def read_upload(self, actor, data):
+        upload_id, cid = self._upload_target(data)
+        response = self._call(actor, "GET", f"/uploads/{upload_id}")
+        action = AuditAction.UPLOAD_READ
+        cid = self._visible_in(actor, response, action, upload_id, cid)
+        if cid is None:
+            return
+        check("ACC-1", response.status_code == 200, f"{actor} refused readable upload")
+        self._expect_audit(action, "allowed", self.world.collections[cid], upload_id)
+
+    @rule(actor=actors, data=st.data())
+    def renew_upload_url(self, actor, data):
+        upload_id, cid = self._upload_target(data)
+        response = self._call(actor, "POST", f"/uploads/{upload_id}/url")
+        action = AuditAction.UPLOAD_RENEW
+        cid = self._visible_in(actor, response, action, upload_id, cid)
+        if cid is None:
+            return
+        marking = self.world.collections[cid]
+        creator = self.uploads[upload_id][1]
+        if creator != actor.subject or not self.world.can_write(actor, cid):
+            check("ACC-7", response.status_code == 403, f"{actor} renewed {creator}'s upload")
+            self._expect_audit(action, "denied", marking, upload_id)
+            return
+        check("ACC-7", response.status_code == 200, f"{actor} refused renewal: {response.text}")
+        self._check_session(response.json())
+        self._expect_audit(action, "allowed", marking, upload_id)
+
     # -- global checks ----------------------------------------------------------------
 
     @invariant()
@@ -207,9 +310,16 @@ class CatalogMachine(RuleBasedStateMachine):
             (actual.collections, actual.grants) == (self.world.collections, self.world.grants),
             "database and model disagree about collections or grants",
         )
+        uploads = {
+            str(upload_id): (cid, creator)
+            for upload_id, cid, creator in self.db.execute(
+                "SELECT id, collection_id, created_by FROM ingest.uploads"
+            )
+        }
+        check("ACC-7", uploads == self.uploads, "database and model disagree about uploads")
 
 
-@pytest.mark.invariant("ACC-1", "ACC-2", "ACC-3", "ACC-4", "ACC-5")
+@pytest.mark.invariant("ACC-1", "ACC-2", "ACC-3", "ACC-4", "ACC-5", "ACC-7", "ACC-8")
 def test_catalog_simulation(fresh_database, idp):
     # One database and app for the whole run; each example starts from a reset catalog.
     url = fresh_database()

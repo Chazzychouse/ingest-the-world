@@ -1,4 +1,4 @@
-"""Differential tests: the SQL authorization predicate against the reference model."""
+"""Differential tests: the SQL authorization predicates against the reference model."""
 
 import psycopg
 import pytest
@@ -65,24 +65,37 @@ def _principal(idp: TestIdp, actor: Actor) -> Principal:
     return idp.verifier().verify(token["Authorization"].removeprefix("Bearer "))
 
 
-@pytest.mark.invariant("ACC-1")
+def _ids(conn, query, principal: Principal) -> set[str]:
+    return {row[0] for row in conn.execute(query, authz.principal_args(principal))}
+
+
+def _compare(invariant: str, what: str, actor: Actor, got: set[str], expected: set[str]) -> None:
+    check(
+        invariant,
+        got == expected,
+        f"{actor} {what}: SQL allows {sorted(got - expected)}, model allows "
+        f"{sorted(expected - got)} that SQL refuses",
+    )
+
+
+@pytest.mark.invariant("ACC-1", "ACC-7")
 @given(world=worlds(), actor_list=st.lists(actors, min_size=1, max_size=4))
-def test_sql_predicate_matches_the_model(tx, idp, world, actor_list):
+def test_sql_predicates_match_the_model(tx, idp, world, actor_list):
     _load(tx, world)
     try:
         full = World.from_db(tx)  # the generated world plus the seeded collections
         for actor in actor_list:
             principal = _principal(idp, actor)
-            got = {
-                row[0] for row in tx.execute(authz.READABLE_IDS, authz.principal_args(principal))
-            }
-            expected = full.readable(actor)
-            check(
-                "ACC-1",
-                got == expected,
-                f"{actor}: SQL allows {sorted(got - expected)}, model allows "
-                f"{sorted(expected - got)} that SQL refuses",
-            )
+            readable = _ids(tx, authz.READABLE_IDS, principal)
+            _compare("ACC-1", "reading", actor, readable, full.readable(actor))
+            writable = _ids(tx, authz.WRITABLE_IDS, principal)
+            _compare("ACC-7", "writing", actor, writable, full.writable(actor))
+            for cid in full.collections:
+                check(
+                    "ACC-7",
+                    authz.can_write(tx, cid, principal) == (cid in writable),
+                    f"can_write({cid}) disagrees with writable_collections for {actor}",
+                )
     finally:
         tx.execute("ROLLBACK TO SAVEPOINT example")
 

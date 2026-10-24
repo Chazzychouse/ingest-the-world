@@ -4,46 +4,26 @@ If the fake drifts from real Blob Storage, the simulator stops telling the truth
 suite is what keeps them honest. New BlobStore behaviour gets a test here first.
 """
 
-import os
 import uuid
 
 import pytest
-from azure.core.exceptions import AzureError, ResourceExistsError
-from azure.storage.blob import BlobServiceClient
 
 from ingest_api.adapters.azure_blob import AzureBlobStore
 from ingest_api.ports import BlobNotFound, BlobStore
+from tests.contracts.azurite import azurite
 from tests.fakes import MemoryBlobStore
 
-AZURITE = os.environ.get("INGEST_TEST_AZURITE", "UseDevelopmentStorage=true")
-
-
-def _azurite() -> AzureBlobStore:
-    service = BlobServiceClient.from_connection_string(AZURITE)
-    try:
-        service.create_container("contract", timeout=3)
-    except ResourceExistsError:
-        pass
-    except AzureError as exc:
-        if os.environ.get("INGEST_REQUIRE_AZURITE"):
-            raise
-        pytest.skip(
-            f"Azurite not reachable ({type(exc).__name__}); run `docker compose up azurite`"
-        )
-    return AzureBlobStore(service)
+C = "contract"
 
 
 @pytest.fixture(params=["memory", "azurite"])
 def store(request: pytest.FixtureRequest) -> BlobStore:
-    return MemoryBlobStore() if request.param == "memory" else _azurite()
+    return MemoryBlobStore() if request.param == "memory" else AzureBlobStore(azurite(C))
 
 
 @pytest.fixture
 def name():
     return f"t/{uuid.uuid4().hex}"
-
-
-C = "contract"
 
 
 def test_put_then_head(store, name):

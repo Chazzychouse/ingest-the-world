@@ -32,7 +32,7 @@ GRANT_PATH = "/{collection_id}/grants/{principal_type}/{grantee}"
 CollectionPathId = Annotated[str, Path(max_length=63, pattern=NO_NUL_PATTERN)]
 
 
-def _target(collection_id: str) -> Target:
+def collection_target(collection_id: str) -> Target:
     return Target("collection", collection_id)
 
 
@@ -43,7 +43,7 @@ def grant_key(principal_type: PrincipalType, grantee: Annotated[Grantee, Path()]
 GrantKeyPath = Annotated[store.GrantKey, Depends(grant_key)]
 
 
-def _readable_or_404(
+def readable_or_404(
     conn: Conn, auditor: Auditor, action: AuditAction, collection_id: str, principal: Principal
 ) -> store.CollectionRow:
     """The collection if `principal` may read it; otherwise audits the attempt and raises 404.
@@ -57,7 +57,7 @@ def _readable_or_404(
         action,
         status_code=status.HTTP_404_NOT_FOUND,
         message=NOT_FOUND,
-        target=_target(collection_id),
+        target=collection_target(collection_id),
         marking=store.marking_of(conn, collection_id),
     )
 
@@ -79,8 +79,8 @@ def get_collection(
     collection_id: CollectionPathId, principal: CurrentPrincipal, conn: Conn, auditor: Audit
 ) -> Collection:
     action = AuditAction.COLLECTION_READ
-    row = _readable_or_404(conn, auditor, action, collection_id, principal)
-    auditor.allowed(action, target=_target(collection_id), marking=row.marking)
+    row = readable_or_404(conn, auditor, action, collection_id, principal)
+    auditor.allowed(action, target=collection_target(collection_id), marking=row.marking)
     return Collection.model_validate(row)
 
 
@@ -98,7 +98,7 @@ def create_collection(
             action,
             status_code=status.HTTP_403_FORBIDDEN,
             message="marking exceeds your clearance",
-            target=_target(body.id),
+            target=collection_target(body.id),
             marking=body.marking,
         )
     try:
@@ -108,9 +108,9 @@ def create_collection(
             action,
             status_code=status.HTTP_409_CONFLICT,
             message="collection already exists",
-            target=_target(body.id),
+            target=collection_target(body.id),
         ) from None
-    auditor.allowed(action, target=_target(body.id), marking=body.marking)
+    auditor.allowed(action, target=collection_target(body.id), marking=body.marking)
     # Admins hold every grant, and clearance was checked above, so the row is readable.
     return Collection.model_validate(store.get_readable(conn, body.id, principal))
 
@@ -120,9 +120,9 @@ def list_grants(
     collection_id: CollectionPathId, principal: AdminPrincipal, conn: Conn, auditor: Audit
 ) -> list[store.GrantRow]:
     action = AuditAction.GRANT_LIST
-    row = _readable_or_404(conn, auditor, action, collection_id, principal)
+    row = readable_or_404(conn, auditor, action, collection_id, principal)
     grants = store.list_grants(conn, collection_id)
-    auditor.allowed(action, target=_target(collection_id), marking=row.marking)
+    auditor.allowed(action, target=collection_target(collection_id), marking=row.marking)
     return grants
 
 
@@ -137,11 +137,11 @@ def put_grant(
 ) -> store.GrantRow:
     # An admin who can't read the collection can't hand out access to it either (ACC-4).
     action = AuditAction.GRANT_PUT
-    row = _readable_or_404(conn, auditor, action, collection_id, principal)
+    row = readable_or_404(conn, auditor, action, collection_id, principal)
     store.put_grant(conn, collection_id, key, body.access)
     auditor.allowed(
         action,
-        target=_target(collection_id),
+        target=collection_target(collection_id),
         marking=row.marking,
         detail={
             "principal_type": key.principal_type,
@@ -161,11 +161,11 @@ def delete_grant(
     auditor: Audit,
 ) -> None:
     action = AuditAction.GRANT_DELETE
-    row = _readable_or_404(conn, auditor, action, collection_id, principal)
+    row = readable_or_404(conn, auditor, action, collection_id, principal)
     deleted = store.delete_grant(conn, collection_id, key)
     auditor.allowed(
         action,
-        target=_target(collection_id),
+        target=collection_target(collection_id),
         marking=row.marking,
         detail={
             "principal_type": key.principal_type,

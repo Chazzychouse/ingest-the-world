@@ -1,9 +1,12 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ingest_api.auth import DEFAULT_CLAIMS
+
+# The longest a signed URL may live (ACC-8). Large uploads renew theirs instead.
+MAX_SIGNED_URL_MINUTES = 60
 
 
 class Settings(BaseSettings):
@@ -35,6 +38,15 @@ class Settings(BaseSettings):
     web_oidc_authority: str = "http://localhost:8080/realms/ingest"
     web_oidc_client_id: str = "ingest-web"
     web_oidc_scope: str = "openid profile email"
+
+    # Blob Storage. Locally the API signs upload URLs with Azurite's account key. In the cloud the
+    # key is left unset and it signs with a user-delegation key from its managed identity, since
+    # shared-key access is disabled on the account.
+    blob_account_url: str = "http://127.0.0.1:10000/devstoreaccount1"
+    blob_account_key: SecretStr | None = None
+    # Where browsers reach Blob Storage, when that differs from `blob_account_url` (Compose).
+    blob_public_url: str | None = None
+    upload_url_minutes: int = Field(default=MAX_SIGNED_URL_MINUTES, gt=0, le=MAX_SIGNED_URL_MINUTES)
 
     cors_origins: list[str] = Field(default_factory=list)
 

@@ -5,16 +5,25 @@ uv run python tools/export_openapi.py ../web/src/generated/openapi.json
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from ingest_api.app import create_app
+
+
+class NoSigner:
+    """Exporting the schema serves no requests, so it needs no storage credentials."""
+
+    def upload_url(self, container: str, name: str, *, expires_at: datetime) -> str:
+        raise NotImplementedError("the schema exporter signs nothing")
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print(__doc__)
         return 2
-    schema = create_app().openapi()  # builds routes only: no database or IdP is contacted
+    # Builds routes only: no database, IdP or storage account is contacted.
+    schema = create_app(signer=NoSigner()).openapi()
     Path(argv[0]).write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n")
     return 0
 

@@ -55,10 +55,10 @@ clearance. Admin role does not lift this.
 
 Status: enforced
 
-Every authenticated request to a catalog route that the API accepts or refuses on policy
-grounds (2xx, 403, 404, 409) writes exactly one audit event, committed before the response
-is sent. Its outcome matches the response, and its `marking` is the highest marking the
-request disclosed or, for a refusal on an existing target, that target's marking.
+Every authenticated request to a catalog or upload route that the API accepts or refuses on
+policy grounds (2xx, 403, 404, 409) writes exactly one audit event, committed before the
+response is sent. Its outcome matches the response, and its `marking` is the highest marking
+the request disclosed or, for a refusal on an existing target, that target's marking.
 Malformed requests (401, 422) carry no identity or intent worth auditing and are left to
 request logs. Health, public config and `/me` are not catalog data and are exempt.
 
@@ -67,6 +67,26 @@ request logs. Health, public config and `/me` are not catalog data and are exemp
 Status: enforced
 
 No role, including the table owner, can update, delete or truncate audit events.
+
+### ACC-7 Write needs a write grant
+
+Status: enforced
+
+A principal may upload into a collection only when they can read it (ACC-1), hold the
+Contributor role or higher, and, unless they are an Admin, hold a `write` or `curate` grant
+on it. A `read` grant never allows writing, whatever the principal's role. Only an upload's
+creator, while still holding write access, may obtain further signed URLs for it. Refusals
+follow ACC-2: a collection the caller can't read answers 404, one they can read but not
+write, 403.
+
+### ACC-8 Signed URLs are least-privilege
+
+Status: enforced
+
+Every signed URL the API hands out covers exactly one blob, carries only the permissions
+its purpose needs (an upload URL may create and write, never read, list or delete), and
+expires within one hour. Checked on every issued URL, and against Azurite to prove the
+storage service enforces what the URL says.
 
 ## Ingest integrity
 

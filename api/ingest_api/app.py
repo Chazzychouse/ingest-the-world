@@ -3,32 +3,50 @@
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from psycopg_pool import ConnectionPool
 
 from ingest_api import identity, meta
+from ingest_api.adapters.azure_blob import AzureBlobSigner, service_client
 from ingest_api.auth import AuthError, OidcVerifier, verifier_from_settings
 from ingest_api.catalog import routes as catalog
 from ingest_api.deps import Runtime
-from ingest_api.ports import Ids, UuidIds
+from ingest_api.ports import BlobSigner, Clock, Ids, StorageError, SystemClock, UuidIds
 from ingest_api.settings import Settings, get_settings
+from ingest_api.uploads import routes as uploads
 
 POOL_MAX_SIZE = 10
 POOL_OPEN_TIMEOUT_SECONDS = 30
+
+
+def signer_from_settings(settings: Settings, clock: Clock) -> AzureBlobSigner:
+    key = settings.blob_account_key.get_secret_value() if settings.blob_account_key else None
+    return AzureBlobSigner(
+        service_client(settings.blob_account_url, key),
+        clock,
+        account_key=key,
+        public_url=settings.blob_public_url,
+    )
 
 
 def create_app(
     settings: Settings | None = None,
     verifier: OidcVerifier | None = None,
     ids: Ids | None = None,
+    *,
+    clock: Clock | None = None,
+    signer: BlobSigner | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
+    clock = clock or SystemClock()
     runtime = Runtime(
         settings=settings,
         verifier=verifier or verifier_from_settings(settings),
         ids=ids or UuidIds(),
+        clock=clock,
+        signer=signer or signer_from_settings(settings, clock),
         pool=ConnectionPool(settings.database_url, min_size=1, max_size=POOL_MAX_SIZE, open=False),
     )
 
@@ -68,6 +86,16 @@ def create_app(
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         )
 
-    for router in (meta.router, identity.router, catalog.router):
+    @app.exception_handler(StorageError)
+    async def storage_unavailable(_: Request, __: StorageError) -> JSONResponse:
+        # Signing can need a user-delegation key from storage; an outage there is ours, not
+        # the caller's, and worth a retry.
+        return JSONResponse(
+            {"detail": "storage unavailable"},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Retry-After": "5"},
+        )
+
+    for router in (meta.router, identity.router, catalog.router, uploads.router):
         app.include_router(router)
     return app

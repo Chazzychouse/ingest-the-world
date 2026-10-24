@@ -1,7 +1,8 @@
-"""Reference model of read authorization: the executable definition behind ACC-1.
+"""Reference model of authorization: the executable definition behind ACC-1 and ACC-7.
 
-Deliberately written apart from `authz.readable_collections` and `Principal`: tests compare
-the two, so a bug has to be made twice, the same way, to slip through.
+Deliberately written apart from `authz.readable_collections`, `authz.writable_collections`
+and `Principal`: tests compare the two, so a bug has to be made twice, the same way, to slip
+through.
 """
 
 from __future__ import annotations
@@ -10,6 +11,8 @@ from dataclasses import dataclass, field
 
 HIERARCHY = ["Reader", "Contributor", "Curator", "Admin"]
 CLEARANCE_PREFIX = "Clearance."
+ANY_ACCESS = frozenset({"read", "write", "curate"})
+WRITE_ACCESS = frozenset({"write", "curate"})  # curating includes writing
 
 
 @dataclass(frozen=True)
@@ -59,10 +62,12 @@ class World:
     def cleared_for(self, actor: Actor, marking: str) -> bool:
         return self.markings[marking] <= self.clearance_rank(actor)
 
-    def has_grant(self, actor: Actor, collection_id: str) -> bool:
+    def has_grant(
+        self, actor: Actor, collection_id: str, accesses: frozenset[str] = ANY_ACCESS
+    ) -> bool:
         roles = actor.granted_roles()
-        for key in self.grants.get(collection_id, {}):
-            if (
+        for key, access in self.grants.get(collection_id, {}).items():
+            if access in accesses and (
                 (key.principal_type == "role" and key.principal in roles)
                 or (key.principal_type == "group" and key.principal in actor.groups)
                 or (key.principal_type == "user" and key.principal == actor.subject)
@@ -78,6 +83,16 @@ class World:
 
     def readable(self, actor: Actor) -> set[str]:
         return {c for c in self.collections if self.can_read(actor, c)}
+
+    def can_write(self, actor: Actor, collection_id: str) -> bool:
+        if not self.can_read(actor, collection_id):
+            return False
+        if "Contributor" not in actor.granted_roles():
+            return False
+        return actor.is_admin or self.has_grant(actor, collection_id, WRITE_ACCESS)
+
+    def writable(self, actor: Actor) -> set[str]:
+        return {c for c in self.collections if self.can_write(actor, c)}
 
     @classmethod
     def from_db(cls, conn) -> World:

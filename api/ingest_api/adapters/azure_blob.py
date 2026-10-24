@@ -1,7 +1,9 @@
-"""`BlobStore` over Azure Blob Storage (and Azurite)."""
+"""`BlobStore` and `BlobSigner` over Azure Blob Storage (and Azurite)."""
 
 from collections.abc import Iterator
+from datetime import datetime, timedelta
 from typing import NoReturn
+from urllib.parse import quote, urlsplit
 
 from azure.core.exceptions import (
     HttpResponseError,
@@ -9,13 +11,63 @@ from azure.core.exceptions import (
     ServiceRequestError,
     ServiceResponseError,
 )
-from azure.storage.blob import BlobProperties, BlobServiceClient, ContentSettings
+from azure.identity import DefaultAzureCredential
+from azure.storage.blob import (
+    BlobProperties,
+    BlobSasPermissions,
+    BlobServiceClient,
+    ContentSettings,
+    UserDelegationKey,
+    generate_blob_sas,
+)
 
-from ingest_api.ports import BlobNotFound, BlobProps, StorageError, TransientStorageError
+from ingest_api.ports import (
+    BlobNotFound,
+    BlobProps,
+    Clock,
+    StorageError,
+    TransientStorageError,
+)
 
 # Throttling and server-side failures; anything else is a caller or configuration error.
 TRANSIENT_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 RANGE_NOT_SATISFIABLE = 416
+
+# Put Blob, Put Block and Put Block List need create and write; nothing else is granted (ACC-8).
+UPLOAD_PERMISSION = BlobSasPermissions(create=True, write=True)
+# User-delegation keys are fetched with this lifetime and reused until they no longer outlive
+# the URL being signed, so signing costs one key request per few hours, not one per upload.
+DELEGATION_KEY_LIFETIME = timedelta(hours=6)
+# Backdates key validity so a storage clock slightly behind ours still accepts new URLs.
+CLOCK_SKEW = timedelta(minutes=5)
+
+
+def account_name(account_url: str) -> str:
+    """The storage account an endpoint belongs to.
+
+    Cloud endpoints name it in the host (`https://acct.blob.core.usgovcloudapi.net`); emulators
+    use path-style URLs and name it in the first path segment (`http://azurite:10000/acct`).
+    The SDK only recognises path-style URLs on IP addresses and localhost; for a named host
+    (Compose's `azurite`) it finds no name, and every URL signed without one is refused.
+    """
+    parts = urlsplit(account_url)
+    if not parts.hostname:
+        raise ValueError(f"not a storage account URL: {account_url}")
+    path_style = parts.path.strip("/").split("/")[0]
+    return path_style or parts.hostname.split(".")[0]
+
+
+def service_client(account_url: str, account_key: str | None) -> BlobServiceClient:
+    """A client for the account at `account_url`.
+
+    With an account key (Azurite) it signs requests with the key. Without one it uses the
+    process's Entra identity: managed identity in the cloud, where shared-key access is
+    disabled, or `az login` on a laptop. Set `AZURE_AUTHORITY_HOST` for Azure Government.
+    """
+    if account_key is None:
+        return BlobServiceClient(account_url, credential=DefaultAzureCredential())
+    credential = {"account_name": account_name(account_url), "account_key": account_key}
+    return BlobServiceClient(account_url, credential=credential)
 
 
 def _props(container: str, blob: BlobProperties) -> BlobProps:
@@ -107,3 +159,53 @@ class AzureBlobStore:
                 yield _props(container, blob)
         except (HttpResponseError, ServiceRequestError) as exc:
             _raise_translated(exc)
+
+
+class AzureBlobSigner:
+    """Signs per-blob SAS URLs: with the account key against Azurite, with a user-delegation
+    key from the service's Entra identity in the cloud."""
+
+    def __init__(
+        self,
+        service: BlobServiceClient,
+        clock: Clock,
+        *,
+        account_key: str | None = None,
+        public_url: str | None = None,
+    ):
+        if not service.account_name:
+            raise ValueError(f"no storage account name for {service.url}; use service_client()")
+        self._service = service
+        self._account_name = service.account_name
+        self._clock = clock
+        self._account_key = account_key
+        # Browsers may reach storage on a different host than the API does (Compose).
+        self._public_url = (public_url or service.url).rstrip("/")
+        self._delegation: UserDelegationKey | None = None
+        self._delegation_expiry: datetime | None = None
+
+    def upload_url(self, container: str, name: str, *, expires_at: datetime) -> str:
+        token = generate_blob_sas(
+            account_name=self._account_name,
+            container_name=container,
+            blob_name=name,
+            account_key=self._account_key,
+            user_delegation_key=None if self._account_key else self._delegation_key(expires_at),
+            permission=UPLOAD_PERMISSION,
+            expiry=expires_at,
+        )
+        return f"{self._public_url}/{quote(container)}/{quote(name)}?{token}"
+
+    def _delegation_key(self, expires_at: datetime) -> UserDelegationKey:
+        if self._delegation and self._delegation_expiry and self._delegation_expiry >= expires_at:
+            return self._delegation
+        now = self._clock.now()
+        key_expiry = now + DELEGATION_KEY_LIFETIME
+        if expires_at > key_expiry:
+            raise ValueError(f"cannot sign a URL valid beyond {DELEGATION_KEY_LIFETIME}")
+        try:
+            key = self._service.get_user_delegation_key(now - CLOCK_SKEW, key_expiry)
+        except (HttpResponseError, ServiceRequestError) as exc:
+            _raise_translated(exc)
+        self._delegation, self._delegation_expiry = key, key_expiry
+        return key

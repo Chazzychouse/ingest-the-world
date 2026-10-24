@@ -57,6 +57,10 @@ services:
       INGEST_OIDC_JWKS_URI: http://keycloak:8080/realms/ingest/protocol/openid-connect/certs
       INGEST_WEB_OIDC_AUTHORITY: http://localhost:8080/realms/ingest
       INGEST_WEB_OIDC_CLIENT_ID: ingest-web
+      # Azurite's published development key; the cloud signs with managed identity instead.
+      INGEST_BLOB_ACCOUNT_URL: http://azurite:10000/devstoreaccount1
+      INGEST_BLOB_ACCOUNT_KEY: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
+      INGEST_BLOB_PUBLIC_URL: http://localhost:10000/devstoreaccount1
     depends_on:
       db: { condition: service_healthy }
 
@@ -67,6 +71,7 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       keycloak: { condition: service_healthy }
+      azurite: { condition: service_started }
 
   web:
     build: web
