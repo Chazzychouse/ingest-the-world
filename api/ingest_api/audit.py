@@ -23,6 +23,9 @@ class AuditAction(StrEnum):
     GRANT_LIST = "grant.list"
     GRANT_PUT = "grant.put"
     GRANT_DELETE = "grant.delete"
+    UPLOAD_CREATE = "upload.create"
+    UPLOAD_READ = "upload.read"
+    UPLOAD_RENEW = "upload.renew"
     ROLE_CHECK = "authz.role"
 
 

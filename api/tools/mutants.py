@@ -33,23 +33,29 @@ class Mutant:
 
 LIST_AUDIT = "    auditor.allowed(\n        AuditAction.COLLECTION_LIST,"
 PUT_GRANT_CHECK = (
-    "row = _readable_or_404(conn, auditor, action, collection_id, principal)\n    store.put_grant("
+    "row = readable_or_404(conn, auditor, action, collection_id, principal)\n    store.put_grant("
 )
 ROUTES = "ingest_api/catalog/routes.py"
+UPLOAD_ROUTES = "ingest_api/uploads/routes.py"
+# The latest definition of the access functions; earlier migrations' versions are replaced.
+UPLOADS_SQL = "migrations/0003_uploads.sql"
+READ_GRANTED = (
+    "      AND c.id IN (SELECT authz.granted_collections(subject, roles, groups, 'read'))"
+)
 
 MUTANTS = [
     Mutant(
         "admin-bypasses-clearance",
-        "migrations/0002_cleared_for.sql",
-        "    WHERE authz.cleared_for(c.marking, clearances)\n      AND (",
-        "    WHERE (authz.cleared_for(c.marking, clearances) OR 'Admin' = ANY (roles))\n"
-        "      AND (",
+        UPLOADS_SQL,
+        f"    WHERE authz.cleared_for(c.marking, clearances)\n{READ_GRANTED}",
+        f"    WHERE (authz.cleared_for(c.marking, clearances) OR 'Admin' = ANY (roles))\n"
+        f"{READ_GRANTED}",
         # Shows up as reading CUI (ACC-1) or granting on it (ACC-4), whichever runs first.
         ("ACC-1", "ACC-4"),
     ),
     Mutant(
         "group-grant-matches-roles",
-        "migrations/0002_cleared_for.sql",
+        UPLOADS_SQL,
         "(g.principal_type = 'group' AND g.principal = ANY (groups))",
         "(g.principal_type = 'group' AND g.principal = ANY (roles || groups))",
         ("ACC-1",),
@@ -59,7 +65,9 @@ MUTANTS = [
         "ingest_api/auth.py",
         "return self.roles | {role for role, rank in ROLE_RANK.items() if rank <= top}",
         "return self.roles",
-        ("ACC-1",),
+        # Breaks reading (a grant to Reader stops covering a Curator) and writing (a Curator
+        # stops counting as a Contributor); the write check often fails first.
+        ("ACC-1", "ACC-7"),
     ),
     Mutant(
         "forbidden-reveals-existence",
@@ -105,6 +113,50 @@ MUTANTS = [
         "title: str = Field(min_length=1, max_length=200, pattern=NO_NUL_PATTERN)",
         "title: str = Field(min_length=1, max_length=200)",
         ("ROB-1",),
+    ),
+    Mutant(
+        "read-grant-allows-upload",
+        UPLOADS_SQL,
+        "granted_collections(subject, roles, groups, 'write')",
+        "granted_collections(subject, roles, groups, 'read')",
+        ("ACC-7",),
+    ),
+    Mutant(
+        "upload-skips-role-check",
+        UPLOADS_SQL,
+        "      AND 'Contributor' = ANY (roles)\n",
+        "",
+        ("ACC-7",),
+    ),
+    Mutant(
+        "anyone-renews-an-upload",
+        UPLOAD_ROUTES,
+        "    if row.created_by != principal.subject:",
+        "    if False:",
+        ("ACC-7",),
+    ),
+    Mutant(
+        "upload-url-can-read",
+        "ingest_api/adapters/azure_blob.py",
+        "BlobSasPermissions(create=True, write=True)",
+        "BlobSasPermissions(read=True, create=True, write=True)",
+        ("ACC-8",),
+    ),
+    Mutant(
+        # Found on the running stack, not by the suite: Compose names Azurite by host, the SDK
+        # then reads the account name from the host, and storage refused every signed URL.
+        "sas-signed-for-sdk-parsed-account",
+        "ingest_api/adapters/azure_blob.py",
+        '"account_name": account_name(account_url),',
+        '"account_name": BlobServiceClient(account_url).account_name or "",',
+        ("ACC-8",),
+    ),
+    Mutant(
+        "upload-url-outlives-limit",
+        UPLOAD_ROUTES,
+        "return timedelta(minutes=runtime.settings.upload_url_minutes)",
+        "return timedelta(days=1)",
+        ("ACC-8",),
     ),
     Mutant(
         "audit-can-be-deleted",

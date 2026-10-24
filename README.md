@@ -81,10 +81,15 @@ rule, Power of 10, typing) and agent guidance are in
 
 ## Status
 
-**M0 — foundation** (this branch): local stack, OIDC login, marking-aware access control,
+**M0 — foundation**: local stack, OIDC login, marking-aware access control,
 append-only audit log, Terraform for storage / Service Bus / Event Grid / Postgres / Entra.
 Compute (Container Apps jobs or AKS) arrives with the M1 workers. See the spec for M1–M5.
 
 **M0.5 — invariants and harness**: the invariant catalog, reference model, simulator,
 fuzzing, ports with fault-injecting fakes and contract tests, planted-bug runner, and
 collection grant management (`/collections/{id}/grants`).
+
+**M1 — pipeline** (in progress): upload sessions (`POST /uploads`) that hand the browser a
+signed URL for exactly one landing blob, valid for at most an hour and renewable by the
+uploader. Bytes never pass through the API. Write access (ACC-7) and URL scoping (ACC-8) are
+enforced and simulated. Next: blob events, the worker step machine, extraction and search.

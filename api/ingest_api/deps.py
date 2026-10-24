@@ -13,7 +13,7 @@ from psycopg_pool import ConnectionPool
 
 from ingest_api.audit import AuditAction, Auditor, RequestContext
 from ingest_api.auth import AuthError, OidcVerifier, Principal, Role
-from ingest_api.ports import Ids
+from ingest_api.ports import BlobSigner, Clock, Ids
 from ingest_api.settings import Settings
 
 _bearer = HTTPBearer(auto_error=False)
@@ -26,6 +26,8 @@ class Runtime:
     settings: Settings
     verifier: OidcVerifier
     ids: Ids
+    clock: Clock
+    signer: BlobSigner
     pool: ConnectionPool[Connection[TupleRow]]
 
 
@@ -34,7 +36,10 @@ def get_runtime(request: Request) -> Runtime:
     return cast(Runtime, request.app.state.runtime)
 
 
-def get_conn(runtime: Annotated[Runtime, Depends(get_runtime)]) -> Iterator[Connection[TupleRow]]:
+Rt = Annotated[Runtime, Depends(get_runtime)]
+
+
+def get_conn(runtime: Rt) -> Iterator[Connection[TupleRow]]:
     with runtime.pool.connection() as conn:
         yield conn
 
@@ -54,7 +59,7 @@ def request_context(request: Request) -> RequestContext:
 
 
 def current_principal(
-    runtime: Annotated[Runtime, Depends(get_runtime)],
+    runtime: Rt,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> Principal:
     if credentials is None:

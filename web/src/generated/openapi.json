@@ -436,6 +436,201 @@
         "title": "TierStep",
         "type": "object"
       },
+      "Upload": {
+        "description": "An upload as returned by the API; built straight from `store.UploadRow`.",
+        "properties": {
+          "collection_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+            "title": "Collection Id",
+            "type": "string"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[^/\\\\\\x00-\\x1f\\x7f]*[^/\\\\\\x00-\\x1f\\x7f. ]$",
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "marking": {
+            "title": "Marking",
+            "type": "string"
+          },
+          "marking_rank": {
+            "title": "Marking Rank",
+            "type": "integer"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1099511627776.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "committed",
+              "abandoned"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[^\\x00]*$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "collection_id",
+          "filename",
+          "size_bytes",
+          "content_type",
+          "sha256",
+          "tags",
+          "id",
+          "status",
+          "marking",
+          "marking_rank",
+          "created_by",
+          "created_at"
+        ],
+        "title": "Upload",
+        "type": "object"
+      },
+      "UploadIn": {
+        "properties": {
+          "collection_id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+            "title": "Collection Id",
+            "type": "string"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "pattern": "^[^/\\\\\\x00-\\x1f\\x7f]*[^/\\\\\\x00-\\x1f\\x7f. ]$",
+            "title": "Filename",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size_bytes": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 1099511627776.0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "tags": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[^\\x00]*$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "collection_id",
+          "filename",
+          "size_bytes"
+        ],
+        "title": "UploadIn",
+        "type": "object"
+      },
+      "UploadSession": {
+        "description": "An upload plus the signed URL its bytes go to. The URL is shown once and never stored.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "upload": {
+            "$ref": "#/components/schemas/Upload"
+          },
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload",
+          "upload_url",
+          "expires_at"
+        ],
+        "title": "UploadSession",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -895,6 +1090,149 @@
         "summary": "Me",
         "tags": [
           "identity"
+        ]
+      }
+    },
+    "/uploads": {
+      "post": {
+        "operationId": "create_upload_uploads_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/uploads/{upload_id}": {
+      "get": {
+        "operationId": "get_upload_uploads__upload_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Upload Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Upload"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/uploads/{upload_id}/url": {
+      "post": {
+        "description": "A new signed URL for an upload still in progress, for transfers that outlast one.",
+        "operationId": "renew_upload_url_uploads__upload_id__url_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "upload_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Upload Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Renew Upload Url",
+        "tags": [
+          "uploads"
         ]
       }
     }

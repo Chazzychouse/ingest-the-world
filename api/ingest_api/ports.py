@@ -13,6 +13,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, Protocol
 
 
@@ -37,6 +38,15 @@ class SystemClock:
 class UuidIds:
     def new(self) -> str:
         return str(uuid.uuid4())
+
+
+class Container(StrEnum):
+    """The storage account's containers (`infra/terraform/storage.tf`); see spec section 3."""
+
+    LANDING = "landing"
+    RAW = "raw"
+    DERIVED = "derived"
+    QUARANTINE = "quarantine"
 
 
 class StorageError(Exception):
@@ -89,6 +99,15 @@ class BlobStore(Protocol):
 
     def list(self, container: str, prefix: str = "") -> Iterator[BlobProps]:
         """Blobs under `prefix`, in name order."""
+        ...
+
+
+class BlobSigner(Protocol):
+    """Issues signed URLs that let a browser move bytes without the API in the path (ACC-8)."""
+
+    def upload_url(self, container: str, name: str, *, expires_at: datetime) -> str:
+        """A URL that lets its holder create and write this one blob until `expires_at`, and
+        do nothing else: no reads, listing, deletes, or other blobs."""
         ...
 
 

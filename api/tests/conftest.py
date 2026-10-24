@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, Phase, settings
 from psycopg import sql
+from pydantic import SecretStr
 
 from ingest_api.app import create_app
 from ingest_api.migrate import DEV_SEED, migrate, sql_file
@@ -45,6 +46,11 @@ ADMIN_URL = os.environ.get(
     "INGEST_TEST_DATABASE_URL", "postgresql://ingest:ingest@localhost:5432/ingest"
 )
 REALM = Path(__file__).resolve().parents[2] / "infra" / "keycloak" / "ingest-realm.json"
+# Azurite's published development account key, the same for every Azurite install:
+# https://learn.microsoft.com/azure/storage/common/storage-use-azurite#well-known-storage-account-and-key
+AZURITE_KEY = (
+    "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+)
 
 
 def _realm_users() -> dict[str, list[str]]:
@@ -109,9 +115,10 @@ def fresh_database() -> Iterator[Callable[[], str]]:
 
 
 def reset_catalog(conn: psycopg.Connection) -> None:
-    """Puts collections and grants back to the seed. Audit events stay: they're append-only,
-    and checks read them as a delta from a high-water mark."""
+    """Puts collections and grants back to the seed, with no uploads. Audit events stay: they're
+    append-only, and checks read them as a delta from a high-water mark."""
     with conn.transaction():
+        conn.execute("DELETE FROM ingest.uploads")
         conn.execute("DELETE FROM authz.collection_grants")
         conn.execute("DELETE FROM catalog.collections")
         conn.execute(sql_file(DEV_SEED))
@@ -128,9 +135,18 @@ def idp() -> TestIdp:
     return TestIdp()
 
 
+def app_settings(database_url: str) -> Settings:
+    """Settings for an app under test: the test IdP, and Azurite for signing upload URLs."""
+    return Settings(
+        database_url=database_url,
+        oidc_issuer=ISSUER,
+        oidc_audience=AUDIENCE,
+        blob_account_key=SecretStr(AZURITE_KEY),
+    )
+
+
 def make_app(database_url: str, idp: TestIdp) -> FastAPI:
-    settings = Settings(database_url=database_url, oidc_issuer=ISSUER, oidc_audience=AUDIENCE)
-    return create_app(settings, idp.verifier())
+    return create_app(app_settings(database_url), idp.verifier())
 
 
 @pytest.fixture(scope="session")

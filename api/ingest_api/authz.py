@@ -1,8 +1,9 @@
 """Access rules, asked of the database.
 
-The rules live in SQL (`authz.cleared_for`, `authz.readable_collections`) so that every query,
-whichever route issues it, filters through the same definition (ACC-1). This module only
-passes a `Principal` to those functions; it never re-implements them.
+The rules live in SQL (`authz.cleared_for`, `authz.readable_collections`,
+`authz.writable_collections`) so that every query, whichever route issues it, filters through
+the same definition (ACC-1, ACC-7). This module only passes a `Principal` to those functions;
+it never re-implements them.
 """
 
 from dataclasses import dataclass
@@ -14,6 +15,8 @@ from ingest_api.auth import Principal
 
 # Use as `WHERE c.id IN ({READABLE_IDS})` with `principal_args(principal)` as parameters.
 READABLE_IDS = "SELECT authz.readable_collections(%s, %s, %s, %s)"
+# The collections `principal_args(principal)` may upload into; always a subset of READABLE_IDS.
+WRITABLE_IDS = "SELECT authz.writable_collections(%s, %s, %s, %s)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +35,14 @@ def principal_args(principal: Principal) -> tuple[str, list[str], list[str], lis
         sorted(principal.groups),
         sorted(principal.clearances),
     )
+
+
+def can_write(conn: Connection[TupleRow], collection_id: str, principal: Principal) -> bool:
+    row = conn.execute(
+        f"SELECT %s IN ({WRITABLE_IDS})",
+        (collection_id, *principal_args(principal)),
+    ).fetchone()
+    return row is not None and row[0] is True
 
 
 def cleared_for(conn: Connection[TupleRow], marking: str, principal: Principal) -> bool | None:

@@ -33,6 +33,20 @@ def test_collection_text_fields(client, auth, field, value):
     check("ROB-1", response.status_code in (201, 422), f"{response.status_code} for {body!r}")
 
 
+UPLOAD = {"collection_id": "site-survey-alpha", "filename": "f.bin", "size_bytes": 1}
+
+
+@pytest.mark.invariant("ROB-1")
+@pytest.mark.parametrize("field", ["filename", "content_type", "tags"])
+@given(value=text)
+def test_upload_text_fields(client, auth, field, value):
+    # The filename becomes part of a blob name and a signed URL, so it is the riskiest of these.
+    body = {**UPLOAD, field: [value] if field == "tags" else value}
+    response = client.post("/uploads", json=body, headers=auth("carol"))
+
+    check("ROB-1", response.status_code in (201, 422), f"{response.status_code} for {body!r}")
+
+
 @pytest.mark.invariant("ROB-1")
 @given(segment=text.filter(lambda s: s not in ("", ".", "..")))
 def test_path_segments(client, auth, segment):
@@ -41,6 +55,8 @@ def test_path_segments(client, auth, segment):
         ("GET", f"/collections/{encoded}", None),
         ("PUT", f"/collections/site-survey-alpha/grants/group/{encoded}", {"access": "read"}),
         ("DELETE", f"/collections/{encoded}/grants/user/{encoded}", None),
+        ("GET", f"/uploads/{encoded}", None),
+        ("POST", f"/uploads/{encoded}/url", None),
     ]:
         response = client.request(method, path, json=body, headers=auth("alice"))
         check("ROB-1", response.status_code < 500, f"{method} {path}: {response.status_code}")

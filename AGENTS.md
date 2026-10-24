@@ -45,10 +45,11 @@ api/ingest_api/
   audit.py       the Auditor: one way to record allowed and refused actions
   schema.py      ApiModel, the base for every request and response model
   ports.py       interfaces to the outside world (clock, ids, blobs, queues)
-  adapters/      real implementations of ports (Azure Blob, later Service Bus)
+  adapters/      real implementations of ports (Azure Blob and SAS signing, later Service Bus)
   meta.py        /healthz, /config
   identity.py    /me
   catalog/       collections and grants: models.py, store.py, routes.py
+  uploads/       upload sessions and their signed URLs: models.py, store.py, routes.py
 api/migrations/  numbered SQL, never edited once merged; add a new file instead
 ```
 
@@ -161,12 +162,13 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
 
 - `api/tests/model.py`: the independent reference model of who may read what.
 - `api/tests/sim/`: Hypothesis state machines that drive the real API and Postgres with
-  random actors and operations, checking invariants after every step. Pipeline actors
-  (uploads, workers, faulty queues) join in M1.
+  random actors and operations (catalog changes and upload sessions), checking invariants
+  after every step. Worker and faulty-queue actors join later in M1.
 - `api/tests/strategies.py`: the shared Hypothesis strategies (actors, grantees, names).
 - `api/tests/fakes.py`: seeded, fault-injecting implementations of the ports.
 - `api/tests/contracts/`: one behavioural suite per port, run against the fake *and* the real
   thing (Azurite today; the Service Bus emulator in M1), so fakes can't drift from reality.
+  `test_signed_urls.py` also proves Azurite enforces the limits a signed URL claims (ACC-8).
 - `api/tests/test_fuzz.py`, `test_robustness.py`: schema-driven and targeted fuzzing (ROB-1,
   ACC-1).
 
