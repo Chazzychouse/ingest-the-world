@@ -1,0 +1,79 @@
+# Local stack: everything M0 needs, no cloud account required.
+#   docker compose up --build    then open http://localhost:8081  (users: alice / carol / bob)
+name: ingest-the-world
+
+services:
+  db:
+    build: infra/docker/postgres
+    image: ingest-postgres:dev
+    environment:
+      POSTGRES_USER: ingest
+      POSTGRES_PASSWORD: ingest
+      POSTGRES_DB: ingest
+    ports: ["5432:5432"]
+    volumes: [db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ingest -d ingest"]
+      interval: 3s
+      retries: 20
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0
+    command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck --location /data
+    ports: ["10000:10000", "10001:10001", "10002:10002"]
+    volumes: [azurite-data:/data]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+      # Tokens always carry iss=http://localhost:8080/..., matching what the browser sees,
+      # while containers can still reach Keycloak as keycloak:8080.
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    ports: ["8080:8080"]
+    volumes: [./infra/keycloak:/opt/keycloak/data/import:ro]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"UP"' <&3
+      interval: 5s
+      retries: 40
+
+  migrate:
+    build: api
+    image: ingest-api:dev
+    command: ["python", "-m", "ingest_api.migrate", "--seed"]
+    environment: &api-env
+      INGEST_DATABASE_URL: postgresql://ingest:ingest@db:5432/ingest
+      INGEST_OIDC_ISSUER: http://localhost:8080/realms/ingest
+      INGEST_OIDC_AUDIENCE: ingest-api
+      INGEST_OIDC_JWKS_URI: http://keycloak:8080/realms/ingest/protocol/openid-connect/certs
+      INGEST_WEB_OIDC_AUTHORITY: http://localhost:8080/realms/ingest
+      INGEST_WEB_OIDC_CLIENT_ID: ingest-web
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    image: ingest-api:dev
+    environment: *api-env
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+
+  web:
+    build: web
+    image: ingest-web:dev
+    ports: ["8081:80"]
+    depends_on: [api]
+
+volumes:
+  db-data:
+  azurite-data:

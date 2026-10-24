@@ -1,0 +1,54 @@
+name: nightly
+
+# Slow harness tiers: a long, randomized simulation soak (new seeds every night) and the
+# planted-bug run that proves the suite still catches each known bug.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  soak-and-mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Start Postgres and Azurite
+        working-directory: .
+        run: |
+          docker build -t ingest-postgres:ci infra/docker/postgres
+          docker run -d --name db -p 5432:5432 \
+            -e POSTGRES_USER=ingest -e POSTGRES_PASSWORD=ingest -e POSTGRES_DB=ingest \
+            --health-cmd "pg_isready -U ingest" --health-interval 2s ingest-postgres:ci
+          docker run -d --name azurite -p 10000:10000 \
+            mcr.microsoft.com/azure-storage/azurite:3.37.0 \
+            azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+          until [ "$(docker inspect -f '{{.State.Health.Status}}' db)" = healthy ]; do sleep 1; done
+      - run: uv sync --frozen
+      - name: Simulation soak
+        run: >-
+          uv run pytest -q tests/sim tests/test_access_model.py
+          --invariants-report=reports/soak.json
+        env:
+          INGEST_REQUIRE_DB: "1"
+          INGEST_HYPOTHESIS_PROFILE: soak
+      - name: Planted bugs
+        if: always()
+        run: uv run python tools/mutants.py
+        env:
+          INGEST_REQUIRE_DB: "1"
+          INGEST_REQUIRE_AZURITE: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-reports
+          path: |
+            api/reports/
+            api/.hypothesis/

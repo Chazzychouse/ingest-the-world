@@ -1,0 +1,117 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Start Postgres (PostGIS + pgvector, same image as Compose)
+        working-directory: .
+        run: |
+          docker build -t ingest-postgres:ci infra/docker/postgres
+          docker run -d --name db -p 5432:5432 \
+            -e POSTGRES_USER=ingest -e POSTGRES_PASSWORD=ingest -e POSTGRES_DB=ingest \
+            --health-cmd "pg_isready -U ingest" --health-interval 2s ingest-postgres:ci
+          until [ "$(docker inspect -f '{{.State.Health.Status}}' db)" = healthy ]; do sleep 1; done
+      - name: Start Azurite (blob store contract tests)
+        run: docker run -d --name azurite -p 10000:10000 mcr.microsoft.com/azure-storage/azurite:3.37.0 azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+      - name: OpenAPI schema committed for the web types is current
+        run: |
+          PYTHONPATH=. uv run python tools/export_openapi.py ../web/src/generated/openapi.json
+          git diff --exit-code -- ../web/src/generated/openapi.json
+      - name: Tests, simulation, fuzzing and invariant traceability
+        run: uv run pytest -q --check-invariants --invariants-report=reports/invariants.json
+        env:
+          INGEST_REQUIRE_DB: "1"
+          INGEST_REQUIRE_AZURITE: "1"
+          INGEST_HYPOTHESIS_PROFILE: ci
+      - name: Upload invariant report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: invariants
+          path: api/reports/invariants.json
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json  # pnpm version comes from packageManager
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - name: Generated API types are current
+        run: pnpm gen:api && git diff --exit-code -- src/generated
+      - run: pnpm exec tsc -b
+      - run: pnpm test
+      - run: pnpm build
+
+  terraform:
+    runs-on: ubuntu-latest
+    # `plan` signs in to Azure with GitHub OIDC (no stored secrets). It runs only when the
+    # repository defines the AZURE_* variables for that cloud; `validate` always runs.
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cloud: public
+            tfvars: commercial-dev.tfvars
+            client_id_var: AZURE_CLIENT_ID_PUBLIC
+            tenant_id_var: AZURE_TENANT_ID_PUBLIC
+            subscription_id_var: AZURE_SUBSCRIPTION_ID_PUBLIC
+          - cloud: usgovernment
+            tfvars: gov-dev.tfvars
+            client_id_var: AZURE_CLIENT_ID_GOV
+            tenant_id_var: AZURE_TENANT_ID_GOV
+            subscription_id_var: AZURE_SUBSCRIPTION_ID_GOV
+    name: terraform (${{ matrix.cloud }})
+    defaults:
+      run:
+        working-directory: infra/terraform
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_ENVIRONMENT: ${{ matrix.cloud }}
+      ARM_CLIENT_ID: ${{ vars[matrix.client_id_var] }}
+      ARM_TENANT_ID: ${{ vars[matrix.tenant_id_var] }}
+      ARM_SUBSCRIPTION_ID: ${{ vars[matrix.subscription_id_var] }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.15.x
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      - name: plan
+        if: env.ARM_CLIENT_ID != ''
+        run: |
+          terraform init -input=false -reconfigure
+          terraform plan -input=false -lock=false -var-file=environments/${{ matrix.tfvars }}

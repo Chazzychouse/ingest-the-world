@@ -1,0 +1,33 @@
+{
+  "name": "ingest-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@12.14.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "gen:api": "openapi-typescript src/generated/openapi.json -o src/generated/api.ts"
+  },
+  "dependencies": {
+    "oidc-client-ts": "3.5.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-oidc-context": "3.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "fast-check": "^4.10.2",
+    "openapi-typescript": "^7.13.0",
+    "oxlint": "^1.88.0",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  }
+}
