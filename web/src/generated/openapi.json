@@ -1,0 +1,902 @@
+{
+  "components": {
+    "schemas": {
+      "Collection": {
+        "description": "A collection as returned by the API; built straight from `store.CollectionRow`.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "cui_categories": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Cui Categories",
+            "type": "array"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 4000,
+            "pattern": "^[^\\x00]*$",
+            "title": "Description",
+            "type": "string"
+          },
+          "dissemination": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Dissemination",
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "marking": {
+            "default": "UNCLASSIFIED",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.-]+$",
+            "title": "Marking",
+            "type": "string"
+          },
+          "marking_color": {
+            "title": "Marking Color",
+            "type": "string"
+          },
+          "marking_label": {
+            "title": "Marking Label",
+            "type": "string"
+          },
+          "marking_rank": {
+            "title": "Marking Rank",
+            "type": "integer"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/Retention-Output"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\x00]*$",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "marking",
+          "cui_categories",
+          "dissemination",
+          "retention",
+          "marking_label",
+          "marking_color",
+          "marking_rank",
+          "created_by",
+          "created_at"
+        ],
+        "title": "Collection",
+        "type": "object"
+      },
+      "CollectionIn": {
+        "properties": {
+          "cui_categories": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Cui Categories",
+            "type": "array"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 4000,
+            "pattern": "^[^\\x00]*$",
+            "title": "Description",
+            "type": "string"
+          },
+          "dissemination": {
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Dissemination",
+            "type": "array"
+          },
+          "id": {
+            "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "marking": {
+            "default": "UNCLASSIFIED",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.-]+$",
+            "title": "Marking",
+            "type": "string"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/Retention-Input"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\x00]*$",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "CollectionIn",
+        "type": "object"
+      },
+      "GrantIn": {
+        "properties": {
+          "access": {
+            "enum": [
+              "read",
+              "write",
+              "curate"
+            ],
+            "title": "Access",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access"
+        ],
+        "title": "GrantIn",
+        "type": "object"
+      },
+      "GrantRow": {
+        "properties": {
+          "access": {
+            "enum": [
+              "read",
+              "write",
+              "curate"
+            ],
+            "title": "Access",
+            "type": "string"
+          },
+          "principal": {
+            "title": "Principal",
+            "type": "string"
+          },
+          "principal_type": {
+            "enum": [
+              "role",
+              "group",
+              "user"
+            ],
+            "title": "Principal Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "principal_type",
+          "principal",
+          "access"
+        ],
+        "title": "GrantRow",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Health": {
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "Health",
+        "type": "object"
+      },
+      "Marking": {
+        "properties": {
+          "banner_color": {
+            "title": "Banner Color",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "label",
+          "banner_color",
+          "rank"
+        ],
+        "title": "Marking",
+        "type": "object"
+      },
+      "Me": {
+        "properties": {
+          "clearance": {
+            "$ref": "#/components/schemas/Marking"
+          },
+          "groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "subject",
+          "name",
+          "username",
+          "roles",
+          "groups",
+          "clearance"
+        ],
+        "title": "Me",
+        "type": "object"
+      },
+      "OidcClientConfig": {
+        "properties": {
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authority",
+          "client_id",
+          "scope"
+        ],
+        "title": "OidcClientConfig",
+        "type": "object"
+      },
+      "Retention-Input": {
+        "properties": {
+          "legal_hold": {
+            "default": false,
+            "title": "Legal Hold",
+            "type": "boolean"
+          },
+          "retain_days": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 36500.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Days"
+          },
+          "tiering": {
+            "items": {
+              "$ref": "#/components/schemas/TierStep"
+            },
+            "maxItems": 32,
+            "title": "Tiering",
+            "type": "array"
+          }
+        },
+        "title": "Retention",
+        "type": "object"
+      },
+      "Retention-Output": {
+        "properties": {
+          "legal_hold": {
+            "default": false,
+            "title": "Legal Hold",
+            "type": "boolean"
+          },
+          "retain_days": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 36500.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retain Days"
+          },
+          "tiering": {
+            "items": {
+              "$ref": "#/components/schemas/TierStep"
+            },
+            "maxItems": 32,
+            "title": "Tiering",
+            "type": "array"
+          }
+        },
+        "required": [
+          "retain_days",
+          "tiering",
+          "legal_hold"
+        ],
+        "title": "Retention",
+        "type": "object"
+      },
+      "TierStep": {
+        "properties": {
+          "after_days": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 36500.0,
+            "title": "After Days",
+            "type": "integer"
+          },
+          "tier": {
+            "enum": [
+              "cool",
+              "cold",
+              "archive"
+            ],
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "after_days",
+          "tier"
+        ],
+        "title": "TierStep",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WebConfig": {
+        "properties": {
+          "oidc": {
+            "$ref": "#/components/schemas/OidcClientConfig"
+          }
+        },
+        "required": [
+          "oidc"
+        ],
+        "title": "WebConfig",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Ingest the World",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/collections": {
+      "get": {
+        "operationId": "list_collections_collections_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Collection"
+                  },
+                  "title": "Response List Collections Collections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Collections",
+        "tags": [
+          "collections"
+        ]
+      },
+      "post": {
+        "operationId": "create_collection_collections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Collection",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/collections/{collection_id}": {
+      "get": {
+        "operationId": "get_collection_collections__collection_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "maxLength": 63,
+              "pattern": "^[^\\x00]*$",
+              "title": "Collection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Collection",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/collections/{collection_id}/grants": {
+      "get": {
+        "operationId": "list_grants_collections__collection_id__grants_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "maxLength": 63,
+              "pattern": "^[^\\x00]*$",
+              "title": "Collection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GrantRow"
+                  },
+                  "title": "Response List Grants Collections  Collection Id  Grants Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Grants",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/collections/{collection_id}/grants/{principal_type}/{grantee}": {
+      "delete": {
+        "operationId": "delete_grant_collections__collection_id__grants__principal_type___grantee__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "maxLength": 63,
+              "pattern": "^[^\\x00]*$",
+              "title": "Collection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "principal_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "role",
+                "group",
+                "user"
+              ],
+              "title": "Principal Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "grantee",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\x00]*$",
+              "title": "Grantee",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Grant",
+        "tags": [
+          "collections"
+        ]
+      },
+      "put": {
+        "operationId": "put_grant_collections__collection_id__grants__principal_type___grantee__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "maxLength": 63,
+              "pattern": "^[^\\x00]*$",
+              "title": "Collection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "principal_type",
+            "required": true,
+            "schema": {
+              "enum": [
+                "role",
+                "group",
+                "user"
+              ],
+              "title": "Principal Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "grantee",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\x00]*$",
+              "title": "Grantee",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantRow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Put Grant",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/config": {
+      "get": {
+        "description": "Public, non-secret settings for the SPA, so one web build runs against any IdP or cloud.",
+        "operationId": "web_config_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebConfig"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Web Config",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/me": {
+      "get": {
+        "operationId": "me_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Me",
+        "tags": [
+          "identity"
+        ]
+      }
+    }
+  }
+}

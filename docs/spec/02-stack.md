@@ -36,6 +36,7 @@ Status: proposed, 2026-10-24. Each choice links to the research that justifies i
 - **HoloLens 2** — production ended Dec 2024; don't target it.
 - **Cesium ion** — commercial and not confirmed for Gov; recorded as the alternative if mago-3d-tiler fails its spike.
 - **Vercel / non-Azure hosting** — the client constraint is Azure (Gov).
+- **Effect (v4) across the web app** — the SPA is a thin view over generated API types, and Effect's runtime and idiom cost more than they save there. Planned instead for the M1 resumable upload engine alone, where retries with backoff, bounded concurrency, cancellation and typed errors are the whole job.
 
 ## Spikes (prove before building on them)
 

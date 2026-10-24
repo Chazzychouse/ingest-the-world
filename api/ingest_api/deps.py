@@ -1,24 +1,41 @@
+"""Request-scoped dependencies: the runtime, a connection, the caller, their auditor."""
+
 import ipaddress
 from collections.abc import Callable, Iterator
-from typing import Annotated
+from dataclasses import dataclass
+from typing import Annotated, cast
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from psycopg import Connection
+from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
-from ingest_api import audit
-from ingest_api.auth import AuthError, OidcVerifier, Principal
+from ingest_api.audit import AuditAction, Auditor, RequestContext
+from ingest_api.auth import AuthError, OidcVerifier, Principal, Role
+from ingest_api.ports import Ids
+from ingest_api.settings import Settings
 
 _bearer = HTTPBearer(auto_error=False)
 
 
-def get_pool(request: Request) -> ConnectionPool:
-    return request.app.state.pool
+@dataclass(frozen=True, slots=True)
+class Runtime:
+    """Everything a request may use, built once in `app.create_app`."""
+
+    settings: Settings
+    verifier: OidcVerifier
+    ids: Ids
+    pool: ConnectionPool[Connection[TupleRow]]
 
 
-def get_conn(pool: Annotated[ConnectionPool, Depends(get_pool)]) -> Iterator[Connection]:
-    with pool.connection() as conn:
+def get_runtime(request: Request) -> Runtime:
+    # Starlette types `app.state` as Any; this is the single place it is narrowed.
+    return cast(Runtime, request.app.state.runtime)
+
+
+def get_conn(runtime: Annotated[Runtime, Depends(get_runtime)]) -> Iterator[Connection[TupleRow]]:
+    with runtime.pool.connection() as conn:
         yield conn
 
 
@@ -32,45 +49,45 @@ def _client_ip(request: Request) -> str | None:
         return None
 
 
-def request_context(request: Request) -> audit.RequestContext:
-    return audit.RequestContext(request_id=request.state.request_id, ip=_client_ip(request))
+def request_context(request: Request) -> RequestContext:
+    return RequestContext(request_id=request.state.request_id, ip=_client_ip(request))
 
 
 def current_principal(
-    request: Request,
+    runtime: Annotated[Runtime, Depends(get_runtime)],
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> Principal:
     if credentials is None:
         raise AuthError("missing bearer token")
-    verifier: OidcVerifier = request.app.state.verifier
-    return verifier.verify(credentials.credentials)
+    return runtime.verifier.verify(credentials.credentials)
 
 
-def require_role(minimum: str) -> Callable[..., Principal]:
-    """Dependency that admits principals holding `minimum` or a higher role, and audits refusals."""
+Conn = Annotated[Connection[TupleRow], Depends(get_conn)]
+Ctx = Annotated[RequestContext, Depends(request_context)]
+CurrentPrincipal = Annotated[Principal, Depends(current_principal)]
 
-    def dependency(
-        request: Request,
-        principal: Annotated[Principal, Depends(current_principal)],
-        pool: Annotated[ConnectionPool, Depends(get_pool)],
-        ctx: Annotated[audit.RequestContext, Depends(request_context)],
-    ) -> Principal:
+
+def get_auditor(conn: Conn, ctx: Ctx, principal: CurrentPrincipal) -> Auditor:
+    return Auditor(conn, ctx, principal)
+
+
+Audit = Annotated[Auditor, Depends(get_auditor)]
+
+
+def require_role(minimum: Role) -> Callable[..., Principal]:
+    """Dependency admitting principals with `minimum` or a higher role; refusals are audited."""
+
+    def dependency(request: Request, principal: CurrentPrincipal, auditor: Audit) -> Principal:
         if principal.has_role(minimum):
             return principal
-        with pool.connection() as conn:
-            audit.record(
-                conn,
-                ctx=ctx,
-                principal=principal,
-                action=f"{request.method} {request.url.path}",
-                outcome="denied",
-                detail={"required_role": minimum},
-            )
-        raise HTTPException(status.HTTP_403_FORBIDDEN, f"requires role {minimum}")
+        raise auditor.refuse(
+            AuditAction.ROLE_CHECK,
+            status_code=status.HTTP_403_FORBIDDEN,
+            message=f"requires role {minimum}",
+            detail={"route": f"{request.method} {request.url.path}"},
+        )
 
     return dependency
 
 
-CurrentPrincipal = Annotated[Principal, Depends(current_principal)]
-Conn = Annotated[Connection, Depends(get_conn)]
-Ctx = Annotated[audit.RequestContext, Depends(request_context)]
+AdminPrincipal = Annotated[Principal, Depends(require_role(Role.ADMIN))]

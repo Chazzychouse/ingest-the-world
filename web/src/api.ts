@@ -1,30 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
+import type { components } from './generated/api'
 
-export type Marking = { code: string; label: string; banner_color: string }
-
-export type Me = {
-  subject: string
-  name: string | null
-  username: string | null
-  roles: string[]
-  groups: string[]
-  clearance: Marking
-}
-
-export type Collection = {
-  id: string
-  title: string
-  description: string
-  marking: string
-  marking_label: string
-  marking_color: string
-  marking_rank: number
-  cui_categories: string[]
-  dissemination: string[]
-  retention: { retain_days: number | null; legal_hold: boolean; tiering: { after_days: number; tier: string }[] }
-  created_at: string
-}
+// Response shapes come from the API's OpenAPI schema (`make api-types`), never retyped here.
+type Schemas = components['schemas']
+export type Collection = Schemas['Collection']
+export type Marking = Schemas['Marking']
+export type Me = Schemas['Me']
+export type WebConfig = Schemas['WebConfig']
 
 type State<T> = { data?: T; error?: string; loading: boolean }
 

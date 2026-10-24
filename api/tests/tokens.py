@@ -1,15 +1,20 @@
-"""Mints test access tokens with locally generated keys, standing in for an IdP."""
+"""A local stand-in for the IdP: mints tokens and builds the verifier that trusts them."""
 
 import json
 import time
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
+
+from ingest_api.auth import ClaimNames, OidcVerifier, StaticJwks
 
 ISSUER = "https://idp.test/realms/ingest"
 AUDIENCE = "ingest-api"
+ALGORITHM = "RS256"
 
 
 class TestIdp:
@@ -21,9 +26,18 @@ class TestIdp:
 
     @property
     def jwks(self) -> dict[str, Any]:
-        jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(self.private_key.public_key()))
-        jwk.update(kid=self.kid, use="sig", alg="RS256")
+        jwk = json.loads(RSAAlgorithm.to_jwk(self.private_key.public_key()))
+        jwk.update(kid=self.kid, use="sig", alg=ALGORITHM)
         return {"keys": [jwk]}
+
+    def verifier(self, claims: ClaimNames | None = None) -> OidcVerifier:
+        return OidcVerifier(
+            issuer=ISSUER,
+            audience=AUDIENCE,
+            keys=StaticJwks(self.jwks),
+            algorithms=[ALGORITHM],
+            claims=claims or ClaimNames(),
+        )
 
     def token(self, *, sub: str | None = None, ttl: int = 300, **claims: Any) -> str:
         now = int(time.time())
@@ -35,4 +49,16 @@ class TestIdp:
             "exp": now + ttl,
             **claims,
         }
-        return jwt.encode(payload, self.private_key, algorithm="RS256", headers={"kid": self.kid})
+        return jwt.encode(payload, self.private_key, algorithm=ALGORITHM, headers={"kid": self.kid})
+
+    def bearer(
+        self, subject: str, *, roles: Iterable[str] = (), groups: Iterable[str] = ()
+    ) -> dict[str, str]:
+        """Authorization headers for a user whose username is their subject's suffix."""
+        token = self.token(
+            sub=subject,
+            preferred_username=subject.removeprefix("sub-"),
+            roles=sorted(roles),
+            groups=sorted(groups),
+        )
+        return {"Authorization": f"Bearer {token}"}

@@ -58,7 +58,7 @@ class BlobProps:
     size: int
     etag: str
     content_type: str | None = None
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, str] = field(default_factory=dict[str, str])
 
 
 class BlobStore(Protocol):

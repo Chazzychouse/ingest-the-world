@@ -3,6 +3,8 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from ingest_api.auth import DEFAULT_CLAIMS
+
 
 class Settings(BaseSettings):
     """Runtime configuration. Every value comes from `INGEST_*` environment variables.
@@ -25,9 +27,9 @@ class Settings(BaseSettings):
     oidc_jwks_uri: str | None = None
     oidc_algorithms: list[str] = Field(default_factory=lambda: ["RS256", "ES256"])
     # Claim names; dotted paths reach into nested objects (e.g. `realm_access.roles`).
-    oidc_roles_claim: str = "roles"
-    oidc_groups_claim: str = "groups"
-    oidc_clearance_claim: str = "clearance"
+    oidc_roles_claim: str = DEFAULT_CLAIMS.roles
+    oidc_groups_claim: str = DEFAULT_CLAIMS.groups
+    oidc_clearance_claim: str = DEFAULT_CLAIMS.clearance
 
     # Public values handed to the SPA by `GET /config`, so one web build serves every cloud.
     web_oidc_authority: str = "http://localhost:8080/realms/ingest"

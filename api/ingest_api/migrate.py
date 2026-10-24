@@ -6,6 +6,7 @@ Usage: python -m ingest_api.migrate [--seed]
 
 import argparse
 from pathlib import Path
+from typing import LiteralString, cast
 
 import psycopg
 
@@ -14,6 +15,11 @@ from ingest_api.settings import get_settings
 ROOT = Path(__file__).resolve().parent.parent
 MIGRATIONS = ROOT / "migrations"
 DEV_SEED = ROOT / "seed" / "dev.sql"
+
+
+def sql_file(path: Path) -> LiteralString:
+    """A SQL file from this repository, as a query. Repo files are code, not user input."""
+    return cast(LiteralString, path.read_text())
 
 
 def migrate(database_url: str, *, seed: bool = False) -> list[str]:
@@ -31,14 +37,14 @@ def migrate(database_url: str, *, seed: bool = False) -> list[str]:
                 if path.name in done:
                     continue
                 with conn.transaction():
-                    conn.execute(path.read_text())
+                    conn.execute(sql_file(path))
                     conn.execute(
                         "INSERT INTO public.schema_migrations (name) VALUES (%s)", (path.name,)
                     )
                 applied.append(path.name)
             if seed:
                 with conn.transaction():
-                    conn.execute(DEV_SEED.read_text())
+                    conn.execute(sql_file(DEV_SEED))
         finally:
             conn.execute("SELECT pg_advisory_unlock(hashtext('ingest.schema_migrations'))")
     return applied

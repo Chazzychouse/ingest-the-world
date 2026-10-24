@@ -2,7 +2,7 @@
 
 - `@pytest.mark.invariant("ACC-1", ...)` declares which invariants a test enforces.
   Citing an ID the doc doesn't define is a collection error.
-- `violated(id, message)` / `check(id, condition, message)` fail with the ID in the message,
+- `check(id, condition, message)` fails with the ID in the message,
   so a failure names the property it broke, not just the line.
 - `--check-invariants` (used by `make check` and CI) also fails the run when an `enforced`
   invariant has no test, so the doc can't claim more than the suite checks.
@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from collections.abc import Iterator
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import pytest
@@ -36,13 +37,18 @@ class InvariantViolation(AssertionError):
         self.invariant = invariant
 
 
-def violated(invariant: str, message: str) -> InvariantViolation:
-    return InvariantViolation(invariant, message)
-
-
 def check(invariant: str, condition: object, message: str) -> None:
     if not condition:
         raise InvariantViolation(invariant, message)
+
+
+@dataclass(frozen=True, slots=True)
+class Failure:
+    test: str
+    invariants: list[str]
+    error: str
+    repro: str
+    detail: str
 
 
 @dataclass
@@ -69,7 +75,7 @@ def load(doc: Path = DOC) -> dict[str, Invariant]:
     return registry
 
 
-def pytest_addoption(parser):
+def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("invariants")
     group.addoption(
         "--check-invariants",
@@ -79,122 +85,125 @@ def pytest_addoption(parser):
     group.addoption("--invariants-report", metavar="PATH", help="write a JSON report")
 
 
-_config: pytest.Config | None = None
-
-
-def pytest_configure(config):
-    global _config
+def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "invariant(*ids): invariants this test enforces")
-    config._invariants = load()
-    config._invariant_failures = []
-    config._ran = set()
-    _config = config
+    config.pluginmanager.register(InvariantPlugin(config, load()), "invariant-tracker")
 
 
-def pytest_collection_modifyitems(config, items):
-    registry: dict[str, Invariant] = config._invariants
-    unknown = []
-    for item in items:
-        for marker in item.iter_markers("invariant"):
-            for invariant in marker.args:
-                if invariant not in registry:
-                    unknown.append(f"{item.nodeid}: {invariant}")
-                else:
-                    registry[invariant].tests.append(item.nodeid)
+def _external_citations() -> Iterator[tuple[str, str]]:
+    """(location, invariant) for each `[ID]` cited in tests outside pytest."""
     for root in EXTERNAL_TESTS:
         for path in sorted(root.rglob("*.test.ts*")):
             for invariant in dict.fromkeys(_CITED.findall(path.read_text())):
-                where = str(path.relative_to(ROOT))
-                if invariant not in registry:
-                    unknown.append(f"{where}: {invariant}")
-                else:
-                    registry[invariant].tests.append(where)
-    if unknown:
-        raise pytest.UsageError("tests cite undefined invariants:\n  " + "\n  ".join(unknown))
-    if config.getoption("check_invariants"):
-        untested = [i.id for i in registry.values() if i.status == "enforced" and not i.tests]
-        if untested:
-            raise pytest.UsageError(f"enforced invariants with no test: {', '.join(untested)}")
+                yield str(path.relative_to(ROOT)), invariant
 
 
 def _repro(nodeid: str, text: str) -> str:
     command = f"uv run pytest '{nodeid}'"
     if blob := re.search(r"@reproduce_failure\([^)]*\)", text):
-        command += f"  # or add {blob[0]} to the test"
-    elif seed := re.search(r"--hypothesis-seed=(\d+)", text):
-        command += f" --hypothesis-seed={seed[1]}"
+        return f"{command}  # or add {blob[0]} to the test"
+    if seed := re.search(r"--hypothesis-seed=(\d+)", text):
+        return f"{command} --hypothesis-seed={seed[1]}"
     return command
 
 
-def pytest_runtest_logreport(report):
-    if _config is None:
-        return
-    if report.when == "call" and report.passed:
-        _config._ran.add(report.nodeid)
-    if not report.failed or report.when == "teardown":
-        return
-    config = _config
-    registry: dict[str, Invariant] = config._invariants
-    declared = [i for i in registry.values() if report.nodeid in i.tests]
-    text = str(report.longrepr)
-    cited = list(dict.fromkeys(_CITED.findall(text)))
-    broken = [i for i in cited if i in registry] or [i.id for i in declared]
-    for invariant in broken:
-        registry[invariant].failed.append(report.nodeid)
-    message = next(
-        (line.strip() for line in text.splitlines() if line.lstrip().startswith("E ")), ""
-    )
-    config._invariant_failures.append(
-        {
-            "test": report.nodeid,
-            "invariants": broken,
-            "error": message[2:].strip() if message.startswith("E ") else message,
-            "repro": _repro(report.nodeid, text),
-            "detail": text[-4000:],
-        }
-    )
+def _first_error_line(text: str) -> str:
+    for line in text.splitlines():
+        if line.lstrip().startswith("E "):
+            return line.strip()[2:].strip()
+    return ""
 
 
-def pytest_terminal_summary(terminalreporter, config):
-    registry: dict[str, Invariant] = config._invariants
-    exercised = [i for i in registry.values() if i.tests]
-    if not exercised:
-        return
-    terminalreporter.section("invariants")
-    for inv in registry.values():
-        if not inv.tests:
-            state = "untested" if inv.status == "enforced" else "planned"
-        elif inv.failed:
-            state = "FAILED"
+class InvariantPlugin:
+    """Tracks which tests cite which invariants, and what happened to them."""
+
+    def __init__(self, config: pytest.Config, registry: dict[str, Invariant]):
+        self.config = config
+        self.registry = registry
+        self.failures: list[Failure] = []
+        self.passed: set[str] = set()
+
+    def _cite(self, where: str, invariant: str, unknown: list[str]) -> None:
+        if invariant in self.registry:
+            self.registry[invariant].tests.append(where)
         else:
-            ran = [t for t in inv.tests if "::" in t and t in config._ran]
-            state = "ok" if ran else "elsewhere"  # only checked by another suite or not run
-        terminalreporter.write_line(f"{inv.id:<8} {state:<9} {inv.title}")
-    for failure in config._invariant_failures:
-        terminalreporter.write_line(
-            f"\n{', '.join(failure['invariants']) or '-'}: {failure['error']}\n"
-            f"  repro: {failure['repro']}"
+            unknown.append(f"{where}: {invariant}")
+
+    def pytest_collection_modifyitems(self, items: list[pytest.Item]) -> None:
+        unknown: list[str] = []
+        for item in items:
+            for marker in item.iter_markers("invariant"):
+                for invariant in marker.args:
+                    self._cite(item.nodeid, invariant, unknown)
+        for where, invariant in _external_citations():
+            self._cite(where, invariant, unknown)
+        if unknown:
+            raise pytest.UsageError("tests cite undefined invariants:\n  " + "\n  ".join(unknown))
+        if self.config.getoption("check_invariants"):
+            untested = [
+                i.id for i in self.registry.values() if i.status == "enforced" and not i.tests
+            ]
+            if untested:
+                raise pytest.UsageError(f"enforced invariants with no test: {', '.join(untested)}")
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if report.when == "call" and report.passed:
+            self.passed.add(report.nodeid)
+        if not report.failed or report.when == "teardown":
+            return
+        text = str(report.longrepr)
+        cited = [i for i in dict.fromkeys(_CITED.findall(text)) if i in self.registry]
+        declared = [i.id for i in self.registry.values() if report.nodeid in i.tests]
+        broken = cited or declared
+        for invariant in broken:
+            self.registry[invariant].failed.append(report.nodeid)
+        self.failures.append(
+            Failure(
+                test=report.nodeid,
+                invariants=broken,
+                error=_first_error_line(text),
+                repro=_repro(report.nodeid, text),
+                detail=text[-4000:],
+            )
         )
 
+    def _state(self, inv: Invariant) -> str:
+        if not inv.tests:
+            return "untested" if inv.status == "enforced" else "planned"
+        if inv.failed:
+            return "FAILED"
+        # Tests outside pytest (no "::"), or not selected in this run, are checked elsewhere.
+        return "ok" if any(t in self.passed for t in inv.tests) else "elsewhere"
 
-def pytest_sessionfinish(session, exitstatus):
-    path = session.config.getoption("invariants_report")
-    if not path:
-        return
-    registry: dict[str, Invariant] = session.config._invariants
-    report = {
-        "ok": exitstatus == 0,
-        "invariants": {
-            inv.id: {
-                "title": inv.title,
-                "status": inv.status,
-                "tests": len(inv.tests),
-                "result": ("failed" if inv.failed else "passed") if inv.tests else "unchecked",
-                "failed_tests": inv.failed,
-            }
-            for inv in registry.values()
-        },
-        "failures": session.config._invariant_failures,
-    }
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    Path(path).write_text(json.dumps(report, indent=2) + "\n")
+    def pytest_terminal_summary(self, terminalreporter: pytest.TerminalReporter) -> None:
+        if not any(i.tests for i in self.registry.values()):
+            return
+        terminalreporter.section("invariants")
+        for inv in self.registry.values():
+            terminalreporter.write_line(f"{inv.id:<8} {self._state(inv):<9} {inv.title}")
+        for failure in self.failures:
+            ids = ", ".join(failure.invariants) or "-"
+            terminalreporter.write_line(f"\n{ids}: {failure.error}\n  repro: {failure.repro}")
+
+    def pytest_sessionfinish(self, exitstatus: int) -> None:
+        path = self.config.getoption("invariants_report")
+        if not path:
+            return
+        report = {
+            "ok": exitstatus == 0,
+            "invariants": {
+                inv.id: {
+                    "title": inv.title,
+                    "status": inv.status,
+                    "tests": len(inv.tests),
+                    "result": "unchecked"
+                    if not inv.tests
+                    else ("failed" if inv.failed else "passed"),
+                    "failed_tests": inv.failed,
+                }
+                for inv in self.registry.values()
+            },
+            "failures": [asdict(f) for f in self.failures],
+        }
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text(json.dumps(report, indent=2) + "\n")

@@ -75,7 +75,8 @@ make tf-validate  # Terraform fmt + validate, via the official image
 the invariants broken, the error and a repro command) for agents and CI. CI runs `check`,
 the web tests and Terraform validation on every push; soak and planted bugs run nightly.
 Terraform `plan` runs per cloud when the repository defines `AZURE_CLIENT_ID_{PUBLIC,GOV}`
-etc. as variables (GitHub OIDC federation, no secrets). Agent guidance is in
+etc. as variables (GitHub OIDC federation, no secrets). Code standards (duplication
+rule, Power of 10, typing) and agent guidance are in
 [`AGENTS.md`](AGENTS.md).
 
 ## Status

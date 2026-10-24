@@ -3,17 +3,7 @@ import uuid
 import psycopg
 import pytest
 
-
-def last_audit(db, **where) -> dict | None:
-    clause = " AND ".join(f"{column} = %s" for column in where)
-    row = db.execute(
-        f"SELECT action, outcome, marking, actor_name, target_id FROM audit.events "  # noqa: S608
-        f"WHERE {clause} ORDER BY id DESC LIMIT 1",
-        tuple(where.values()),
-    ).fetchone()
-    if row is None:
-        return None
-    return dict(zip(["action", "outcome", "marking", "actor_name", "target_id"], row, strict=True))
+from tests.audit_log import AuditLog, Event
 
 
 def new_id() -> str:
@@ -72,7 +62,7 @@ def test_collection_visibility_combines_grants_and_clearance(client, auth, user,
 @pytest.mark.invariant("ACC-2", "ACC-5")
 def test_cui_collection_is_hidden_from_uncleared_reader_and_the_attempt_audited(client, auth, db):
     assert client.get("/collections/range-ops-cui", headers=auth("bob")).status_code == 404
-    assert last_audit(db, target_id="range-ops-cui", actor_name="bob")["outcome"] == "denied"
+    assert AuditLog(db).last(target_id="range-ops-cui", actor_name="bob").outcome == "denied"
 
 
 @pytest.mark.invariant("ACC-5")
@@ -81,13 +71,13 @@ def test_reading_a_collection_is_audited_with_its_marking(client, auth, db):
 
     assert response.status_code == 200
     assert response.json()["cui_categories"] == ["CRIT"]
-    assert last_audit(db, target_id="range-ops-cui", actor_name="carol") == {
-        "action": "collection.read",
-        "outcome": "allowed",
-        "marking": "CUI",
-        "actor_name": "carol",
-        "target_id": "range-ops-cui",
-    }
+    assert AuditLog(db).last(target_id="range-ops-cui", actor_name="carol") == Event(
+        action="collection.read",
+        outcome="allowed",
+        marking="CUI",
+        actor_name="carol",
+        target_id="range-ops-cui",
+    )
 
 
 @pytest.mark.invariant("ACC-5")
@@ -97,8 +87,7 @@ def test_non_admin_cannot_create_collection_and_is_audited(client, auth, db):
     )
 
     assert response.status_code == 403
-    audit = last_audit(db, actor_name="bob", outcome="denied")
-    assert audit["action"] == "POST /collections"
+    assert AuditLog(db).last(actor_name="bob", outcome="denied").action == "authz.role"
 
 
 def test_admin_creates_collection(client, auth, db):
@@ -116,7 +105,7 @@ def test_admin_creates_collection(client, auth, db):
     assert response.status_code == 201
     assert response.json()["marking_label"] == "CUI"
     assert response.json()["retention"]["legal_hold"] is True
-    assert last_audit(db, target_id=collection_id)["action"] == "collection.create"
+    assert AuditLog(db).last(target_id=collection_id).action == "collection.create"
     duplicate = client.post("/collections", json=body, headers=auth("alice"))
     assert duplicate.status_code == 409
 
@@ -132,7 +121,7 @@ def test_admin_cannot_create_above_own_clearance(client, auth, db):
     )
 
     assert response.status_code == 403
-    assert last_audit(db, target_id=collection_id)["outcome"] == "denied"
+    assert AuditLog(db).last(target_id=collection_id).outcome == "denied"
     assert db.execute(
         "SELECT count(*) FROM catalog.collections WHERE id = %s", (collection_id,)
     ).fetchone() == (0,)
@@ -166,7 +155,7 @@ def test_audit_log_is_append_only(db):
 def test_listing_collections_is_audited_with_the_highest_marking(client, auth, db):
     client.get("/collections", headers=auth("carol"))
 
-    assert last_audit(db, actor_name="carol", action="collection.list")["marking"] == "CUI"
+    assert AuditLog(db).last(actor_name="carol", action="collection.list").marking == "CUI"
 
 
 @pytest.mark.invariant("ACC-4")
@@ -178,13 +167,13 @@ def test_admin_cannot_grant_on_a_collection_above_their_clearance(client, auth, 
     )
 
     assert response.status_code == 404
-    assert last_audit(db, target_id="range-ops-cui", actor_name="admin-no-cui") == {
-        "action": "grant.put",
-        "outcome": "denied",
-        "marking": "CUI",
-        "actor_name": "admin-no-cui",
-        "target_id": "range-ops-cui",
-    }
+    assert AuditLog(db).last(target_id="range-ops-cui", actor_name="admin-no-cui") == Event(
+        action="grant.put",
+        outcome="denied",
+        marking="CUI",
+        actor_name="admin-no-cui",
+        target_id="range-ops-cui",
+    )
 
 
 def test_user_grant_opens_a_collection_to_one_person(client, auth):

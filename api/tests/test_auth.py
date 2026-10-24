@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from ingest_api.auth import AuthError, OidcVerifier, StaticJwks
-from tests.tokens import AUDIENCE, ISSUER, TestIdp
+from ingest_api.auth import AuthError, ClaimNames, OidcVerifier, Role
+from tests.tokens import TestIdp
 
 
 @pytest.fixture(scope="module")
@@ -12,15 +12,8 @@ def idp() -> TestIdp:
     return TestIdp()
 
 
-def make_verifier(idp: TestIdp, **overrides) -> OidcVerifier:
-    options = dict(
-        issuer=ISSUER,
-        audience=AUDIENCE,
-        keys=StaticJwks(idp.jwks),
-        algorithms=["RS256"],
-    )
-    options.update(overrides)
-    return OidcVerifier(**options)
+def make_verifier(idp: TestIdp, claims: ClaimNames | None = None) -> OidcVerifier:
+    return idp.verifier(claims or ClaimNames())
 
 
 def test_valid_token_yields_principal(idp):
@@ -31,8 +24,8 @@ def test_valid_token_yields_principal(idp):
     assert principal.subject == "u1"
     assert principal.username == "ada"
     assert principal.roles == {"Contributor"}
-    assert principal.has_role("Reader")
-    assert not principal.has_role("Curator")
+    assert principal.has_role(Role.READER)
+    assert not principal.has_role(Role.CURATOR)
 
 
 def test_every_principal_holds_baseline_clearance(idp):
@@ -57,7 +50,7 @@ def test_clearance_from_dedicated_claim(idp):
 def test_roles_claim_can_be_a_nested_path(idp):
     token = idp.token(realm_access={"roles": ["Admin"]})
 
-    principal = make_verifier(idp, roles_claim="realm_access.roles").verify(token)
+    principal = make_verifier(idp, ClaimNames(roles="realm_access.roles")).verify(token)
 
     assert principal.is_admin
 

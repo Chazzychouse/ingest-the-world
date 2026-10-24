@@ -1,53 +1,69 @@
+import json
 import os
 import uuid
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, Phase, settings
+from psycopg import sql
 
 from ingest_api.app import create_app
-from ingest_api.auth import OidcVerifier, StaticJwks
-from ingest_api.migrate import migrate
+from ingest_api.migrate import DEV_SEED, migrate, sql_file
 from ingest_api.settings import Settings
 from tests.tokens import AUDIENCE, ISSUER, TestIdp
 
 pytest_plugins = ["tests.invariants"]
 
 # Hypothesis profiles: `dev` explores new random inputs each run, `ci` is derandomized so a
-# red build reproduces exactly, `soak` runs long. Pick with INGEST_HYPOTHESIS_PROFILE.
-_common = {
-    "deadline": None,  # every example touches a real database
-    "suppress_health_check": [HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
-    "print_blob": True,
-}
-settings.register_profile("dev", max_examples=25, stateful_step_count=30, **_common)
+# red build reproduces exactly, `soak` runs long, `mutants` only needs to detect a failure.
+# Pick with INGEST_HYPOTHESIS_PROFILE.
 settings.register_profile(
-    "ci", max_examples=60, stateful_step_count=40, derandomize=True, **_common
+    "base",
+    deadline=None,  # every example touches a real database
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+    print_blob=True,
 )
-# For tools/mutants.py: only detection matters, so skip shrinking and the example database.
+_base = settings.get_profile("base")
+settings.register_profile("dev", _base, max_examples=25, stateful_step_count=30)
+settings.register_profile("ci", _base, max_examples=60, stateful_step_count=40, derandomize=True)
 settings.register_profile(
     "mutants",
-    **{**_common, "print_blob": False},
-    max_examples=60,
-    stateful_step_count=40,
-    derandomize=True,
+    settings.get_profile("ci"),
+    print_blob=False,
     database=None,
     phases=[Phase.explicit, Phase.generate],
 )
-settings.register_profile("soak", max_examples=2000, stateful_step_count=100, **_common)
+settings.register_profile("soak", _base, max_examples=2000, stateful_step_count=100)
 settings.load_profile(os.environ.get("INGEST_HYPOTHESIS_PROFILE", "dev"))
 
 ADMIN_URL = os.environ.get(
     "INGEST_TEST_DATABASE_URL", "postgresql://ingest:ingest@localhost:5432/ingest"
 )
+REALM = Path(__file__).resolve().parents[2] / "infra" / "keycloak" / "ingest-realm.json"
+
+
+def _realm_users() -> dict[str, list[str]]:
+    """Demo users and their realm roles, read from the Keycloak realm the stack imports."""
+    realm = json.loads(REALM.read_text())
+    default_role = f"default-roles-{realm['realm']}"  # Keycloak adds it to every user
+    return {u["username"]: [*u.get("realmRoles", []), default_role] for u in realm["users"]}
+
+
+USERS = {
+    **_realm_users(),
+    # Test-only principals the demo realm deliberately doesn't have.
+    "admin-no-cui": ["Admin"],
+    "nobody": ["default-roles-ingest"],
+}
 
 
 def _with_database(url: str, name: str) -> str:
-    parts = urlsplit(url)
-    return urlunsplit(parts._replace(path=f"/{name}"))
+    return urlunsplit(urlsplit(url)._replace(path=f"/{name}"))
 
 
 def _admin_connection() -> psycopg.Connection:
@@ -60,22 +76,25 @@ def _admin_connection() -> psycopg.Connection:
 
 
 @pytest.fixture(scope="session")
-def fresh_database():
+def fresh_database() -> Iterator[Callable[[], str]]:
     """Factory for isolated databases cloned from one migrated, seeded template.
 
-    Cloning a template takes a fraction of a second, so the simulator can afford a clean
-    database per example. Every database made here is dropped at the end of the session.
+    Every database made here is dropped at the end of the session.
     """
     admin = _admin_connection()
     run = uuid.uuid4().hex[:8]
     template = f"ingest_tpl_{run}"
     created = [template]
-    admin.execute(f'CREATE DATABASE "{template}"')
+    admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(template)))
     migrate(_with_database(ADMIN_URL, template), seed=True)
 
     def clone() -> str:
         name = f"ingest_test_{run}_{len(created)}"
-        admin.execute(f'CREATE DATABASE "{name}" TEMPLATE "{template}"')
+        admin.execute(
+            sql.SQL("CREATE DATABASE {} TEMPLATE {}").format(
+                sql.Identifier(name), sql.Identifier(template)
+            )
+        )
         created.append(name)
         return _with_database(ADMIN_URL, name)
 
@@ -83,11 +102,10 @@ def fresh_database():
         yield clone
     finally:
         for name in reversed(created):
-            admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            admin.execute(
+                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name))
+            )
         admin.close()
-
-
-SEED = Path(__file__).resolve().parents[1] / "seed" / "dev.sql"
 
 
 def reset_catalog(conn: psycopg.Connection) -> None:
@@ -96,11 +114,11 @@ def reset_catalog(conn: psycopg.Connection) -> None:
     with conn.transaction():
         conn.execute("DELETE FROM authz.collection_grants")
         conn.execute("DELETE FROM catalog.collections")
-        conn.execute(SEED.read_text())
+        conn.execute(sql_file(DEV_SEED))
 
 
 @pytest.fixture(scope="session")
-def database_url(fresh_database):
+def database_url(fresh_database: Callable[[], str]) -> str:
     """The database shared by the example-based API tests."""
     return fresh_database()
 
@@ -110,40 +128,28 @@ def idp() -> TestIdp:
     return TestIdp()
 
 
-def make_app(database_url: str, idp: TestIdp):
+def make_app(database_url: str, idp: TestIdp) -> FastAPI:
     settings = Settings(database_url=database_url, oidc_issuer=ISSUER, oidc_audience=AUDIENCE)
-    verifier = OidcVerifier(
-        issuer=ISSUER, audience=AUDIENCE, keys=StaticJwks(idp.jwks), algorithms=["RS256"]
-    )
-    return create_app(settings, verifier)
+    return create_app(settings, idp.verifier())
 
 
 @pytest.fixture(scope="session")
-def client(database_url, idp):
+def client(database_url: str, idp: TestIdp) -> Iterator[TestClient]:
     with TestClient(make_app(database_url, idp)) as test_client:
         yield test_client
 
 
 @pytest.fixture
-def db(database_url):
+def db(database_url: str) -> Iterator[psycopg.Connection]:
     with psycopg.connect(database_url, autocommit=True) as conn:
         yield conn
 
 
-USERS = {
-    # Mirrors infra/keycloak/ingest-realm.json, including Keycloak's default realm role.
-    "alice": ["Admin", "Clearance.CUI", "default-roles-ingest"],
-    "carol": ["Contributor", "Clearance.CUI", "default-roles-ingest"],
-    "bob": ["Reader", "default-roles-ingest"],
-    "admin-no-cui": ["Admin"],
-    "nobody": ["default-roles-ingest"],
-}
-
-
 @pytest.fixture
-def auth(idp):
+def auth(idp: TestIdp) -> Callable[[str], dict[str, str]]:
+    """Headers for a named user from `USERS`; their subject is `sub-<name>`."""
+
     def headers(user: str) -> dict[str, str]:
-        token = idp.token(sub=f"sub-{user}", preferred_username=user, roles=USERS[user])
-        return {"Authorization": f"Bearer {token}"}
+        return idp.bearer(f"sub-{user}", roles=USERS[user])
 
     return headers

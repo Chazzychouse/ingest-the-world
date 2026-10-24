@@ -7,12 +7,26 @@ in issuer, audience and claim names, and all of those are settings.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 import jwt
 
-ROLE_RANK = {"Reader": 1, "Contributor": 2, "Curator": 3, "Admin": 4}
+if TYPE_CHECKING:
+    from ingest_api.settings import Settings
+
+
+class Role(StrEnum):
+    """Platform roles, lowest to highest. Each role includes the ones before it."""
+
+    READER = "Reader"
+    CONTRIBUTOR = "Contributor"
+    CURATOR = "Curator"
+    ADMIN = "Admin"
+
+
+ROLE_RANK: dict[str, int] = {role.value: rank for rank, role in enumerate(Role, start=1)}
 CLEARANCE_ROLE_PREFIX = "Clearance."
 BASELINE_CLEARANCE = "UNCLASSIFIED"
 
@@ -32,13 +46,13 @@ class Principal:
     # (`authz.markings`), so new markings need no code change.
     clearances: frozenset[str]
 
-    def has_role(self, minimum: str) -> bool:
+    def has_role(self, minimum: Role) -> bool:
         needed = ROLE_RANK[minimum]
         return any(ROLE_RANK.get(role, 0) >= needed for role in self.roles)
 
     @property
     def is_admin(self) -> bool:
-        return "Admin" in self.roles
+        return Role.ADMIN in self.roles
 
     @property
     def effective_roles(self) -> frozenset[str]:
@@ -51,6 +65,7 @@ class Principal:
 
 
 class KeySource(Protocol):
+    # `Any` because PyJWT accepts several key types (RSA, EC, OKP) and types them loosely.
     def signing_key(self, token: str) -> Any: ...
 
 
@@ -91,21 +106,39 @@ class RemoteJwks:
             raise AuthError("unable to resolve signing key") from exc
 
 
-def claim(claims: dict[str, Any], path: str) -> Any:
-    value: Any = claims
+def claim(claims: dict[str, Any], path: str) -> object:
+    """The value at a dotted claim path (`realm_access.roles`), or None if any step is missing."""
+    value: object = claims
     for part in path.split("."):
         if not isinstance(value, dict):
             return None
-        value = value.get(part)
+        value = cast(dict[str, object], value).get(part)
     return value
 
 
-def _as_set(value: Any) -> frozenset[str]:
+def _as_set(value: object) -> frozenset[str]:
+    """A claim that may be absent, a single string, or a list, as a set of strings."""
     if value is None:
         return frozenset()
     if isinstance(value, str):
         return frozenset([value])
-    return frozenset(str(v) for v in value)
+    if isinstance(value, list | tuple):
+        return frozenset(str(v) for v in cast(list[object], value))
+    raise AuthError("claim must be a string or a list of strings")
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimNames:
+    """Where the token carries roles, groups and clearances. Dotted paths reach into nested
+    objects (`realm_access.roles`). The defaults match Entra app roles and our Keycloak realm."""
+
+    roles: str = "roles"
+    groups: str = "groups"
+    clearance: str = "clearance"
+
+
+DEFAULT_CLAIMS = ClaimNames()
+LEEWAY_SECONDS = 60  # tolerated clock skew between the IdP and this service
 
 
 class OidcVerifier:
@@ -116,19 +149,13 @@ class OidcVerifier:
         audience: str,
         keys: KeySource,
         algorithms: list[str],
-        roles_claim: str = "roles",
-        groups_claim: str = "groups",
-        clearance_claim: str = "clearance",
-        leeway_seconds: int = 60,
+        claims: ClaimNames = DEFAULT_CLAIMS,
     ):
         self.issuer = issuer
         self.audience = audience
         self.keys = keys
         self.algorithms = algorithms
-        self.roles_claim = roles_claim
-        self.groups_claim = groups_claim
-        self.clearance_claim = clearance_claim
-        self.leeway_seconds = leeway_seconds
+        self.claims = claims
 
     def verify(self, token: str) -> Principal:
         try:
@@ -146,7 +173,7 @@ class OidcVerifier:
                 algorithms=self.algorithms,
                 audience=self.audience,
                 issuer=self.issuer,
-                leeway=self.leeway_seconds,
+                leeway=LEEWAY_SECONDS,
                 options={"require": ["exp", "iat", "iss", "aud", "sub"]},
             )
         except jwt.PyJWTError as exc:
@@ -154,31 +181,39 @@ class OidcVerifier:
         return self._principal(claims)
 
     def _principal(self, claims: dict[str, Any]) -> Principal:
-        roles = _as_set(claim(claims, self.roles_claim))
+        roles = _as_set(claim(claims, self.claims.roles))
         # Clearance can arrive as its own claim (e.g. a directory attribute) or as an
         # app role such as `Clearance.CUI`, which is how Entra app roles express it.
-        clearances = _as_set(claim(claims, self.clearance_claim)) | {
+        clearances = _as_set(claim(claims, self.claims.clearance)) | {
             role.removeprefix(CLEARANCE_ROLE_PREFIX)
             for role in roles
             if role.startswith(CLEARANCE_ROLE_PREFIX)
         }
         return Principal(
-            subject=claims["sub"],
-            name=claims.get("name"),
-            username=claims.get("preferred_username") or claims.get("upn") or claims.get("email"),
+            subject=str(claims["sub"]),
+            name=_optional_str(claims.get("name")),
+            username=_optional_str(
+                claims.get("preferred_username") or claims.get("upn") or claims.get("email")
+            ),
             roles=frozenset(r for r in roles if not r.startswith(CLEARANCE_ROLE_PREFIX)),
-            groups=_as_set(claim(claims, self.groups_claim)),
+            groups=_as_set(claim(claims, self.claims.groups)),
             clearances=clearances | {BASELINE_CLEARANCE},
         )
 
 
-def verifier_from_settings(settings: Any) -> OidcVerifier:
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def verifier_from_settings(settings: Settings) -> OidcVerifier:
     return OidcVerifier(
         issuer=settings.oidc_issuer,
         audience=settings.oidc_audience,
         keys=RemoteJwks(settings.oidc_issuer, settings.oidc_jwks_uri),
         algorithms=settings.oidc_algorithms,
-        roles_claim=settings.oidc_roles_claim,
-        groups_claim=settings.oidc_groups_claim,
-        clearance_claim=settings.oidc_clearance_claim,
+        claims=ClaimNames(
+            roles=settings.oidc_roles_claim,
+            groups=settings.oidc_groups_claim,
+            clearance=settings.oidc_clearance_claim,
+        ),
     )

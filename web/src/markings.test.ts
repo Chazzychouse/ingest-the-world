@@ -20,6 +20,7 @@ const collection = fc.record({ id: fc.string(), level: fc.constantFrom(...MARKIN
     cui_categories: [],
     dissemination: [],
     retention: { retain_days: null, legal_hold: false, tiering: [] },
+    created_by: 'test',
     created_at: '2026-01-01T00:00:00Z',
   }),
 )
@@ -35,7 +36,7 @@ describe('bannerFor [ACC-3]', () => {
         const top = Math.max(...collections.map((c) => c.marking_rank))
         const banner = bannerFor(collections)
         expect(MARKINGS.find((m) => m.marking === banner.code)?.marking_rank).toBe(top)
-        expect(bannerFor([...collections].reverse())).toEqual(banner)
+        expect(bannerFor(collections.toReversed())).toEqual(banner)
       }),
     )
   })

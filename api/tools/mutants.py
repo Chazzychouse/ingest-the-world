@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-API = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)
@@ -30,24 +31,25 @@ class Mutant:
     caught_by: tuple[str, ...]  # the run must fail at least one of these invariants
 
 
-LIST_AUDIT = (
-    "    audit.record(\n        conn,\n        ctx=ctx,\n        principal=principal,\n"
-    '        action="collection.list",'
+LIST_AUDIT = "    auditor.allowed(\n        AuditAction.COLLECTION_LIST,"
+PUT_GRANT_CHECK = (
+    "row = _readable_or_404(conn, auditor, action, collection_id, principal)\n    store.put_grant("
 )
+ROUTES = "ingest_api/catalog/routes.py"
 
 MUTANTS = [
     Mutant(
         "admin-bypasses-clearance",
-        "migrations/0001_foundation.sql",
-        "    WHERE m.rank <= authz.clearance_rank(clearances)\n      AND (",
-        "    WHERE (m.rank <= authz.clearance_rank(clearances) OR 'Admin' = ANY (roles))\n"
+        "migrations/0002_cleared_for.sql",
+        "    WHERE authz.cleared_for(c.marking, clearances)\n      AND (",
+        "    WHERE (authz.cleared_for(c.marking, clearances) OR 'Admin' = ANY (roles))\n"
         "      AND (",
         # Shows up as reading CUI (ACC-1) or granting on it (ACC-4), whichever runs first.
         ("ACC-1", "ACC-4"),
     ),
     Mutant(
         "group-grant-matches-roles",
-        "migrations/0001_foundation.sql",
+        "migrations/0002_cleared_for.sql",
         "(g.principal_type = 'group' AND g.principal = ANY (groups))",
         "(g.principal_type = 'group' AND g.principal = ANY (roles || groups))",
         ("ACC-1",),
@@ -61,46 +63,46 @@ MUTANTS = [
     ),
     Mutant(
         "forbidden-reveals-existence",
-        "ingest_api/routes/collections.py",
-        "    raise HTTPException(status.HTTP_404_NOT_FOUND, NOT_FOUND)",
-        "    raise HTTPException(\n"
-        "        status.HTTP_403_FORBIDDEN if actual else status.HTTP_404_NOT_FOUND, NOT_FOUND\n"
-        "    )",
+        ROUTES,
+        "status_code=status.HTTP_404_NOT_FOUND,",
+        "status_code=403 if store.marking_of(conn, collection_id) else 404,",
         ("ACC-2",),
     ),
     Mutant(
         "list-not-audited",
-        "ingest_api/routes/collections.py",
+        ROUTES,
         LIST_AUDIT,
-        LIST_AUDIT.replace("audit.record(", "(lambda *_, **__: None)("),
+        LIST_AUDIT.replace("auditor.allowed(", "(lambda *_, **__: None)("),
         ("ACC-5",),
     ),
     Mutant(
         "create-skips-clearance",
-        "ingest_api/routes/collections.py",
-        '    if not cleared["ok"]:',
+        ROUTES,
+        "    if not cleared:",
         "    if False:",
         ("ACC-4",),
     ),
     Mutant(
         "grant-skips-readability",
-        "ingest_api/routes/collections.py",
-        '    row = _readable_or_404(conn, collection_id, principal, ctx, "grant.put")',
-        '    row = conn.execute("SELECT marking FROM catalog.collections WHERE id = %s",'
-        " (collection_id,)).fetchone() or {}",
+        ROUTES,
+        PUT_GRANT_CHECK,
+        PUT_GRANT_CHECK.replace(
+            "principal)",
+            '__import__("dataclasses").replace(principal, clearances=frozenset({"CUI"})))',
+        ),
         ("ACC-4",),
     ),
     Mutant(
         "denial-audit-omits-marking",
-        "ingest_api/routes/collections.py",
-        '        marking=actual["marking"] if actual else None,',
+        ROUTES,
+        "        marking=store.marking_of(conn, collection_id),",
         "        marking=None,",
         ("ACC-5",),
     ),
     Mutant(
         "nul-reaches-postgres",
-        "ingest_api/routes/collections.py",
-        "title: str = Field(min_length=1, max_length=200, pattern=NO_NUL)",
+        "ingest_api/catalog/models.py",
+        "title: str = Field(min_length=1, max_length=200, pattern=NO_NUL_PATTERN)",
         "title: str = Field(min_length=1, max_length=200)",
         ("ROB-1",),
     ),
@@ -114,37 +116,54 @@ MUTANTS = [
 ]
 
 
+# Copied into each mutant's sandbox; everything else is rebuildable or irrelevant to tests.
+SKIP = shutil.ignore_patterns(
+    ".git",
+    ".venv",
+    "node_modules",
+    "dist",
+    ".hypothesis",
+    "reports",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".terraform",
+)
+
+
 def run(mutant: Mutant) -> tuple[bool, str]:
-    path = API / mutant.file
-    original = path.read_text()
-    if original.count(mutant.old) != 1:
-        return False, f"pattern not found exactly once in {mutant.file} (update the mutant)"
-    path.write_text(original.replace(mutant.old, mutant.new))
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            report = Path(tmp) / "report.json"
-            subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "pytest",
-                    "-q",
-                    "-x",
-                    "-p",
-                    "no:cacheprovider",
-                    f"--invariants-report={report}",
-                ],
-                cwd=API,
-                capture_output=True,
-                text=True,
-                check=False,
-                env={**os.environ, "INGEST_HYPOTHESIS_PROFILE": "mutants"},
-            )
-            if not report.exists():
-                return False, "pytest produced no report (collection error?)"
-            failures = json.loads(report.read_text())["failures"]
-    finally:
-        path.write_text(original)
+    """Applies `mutant` to a throwaway copy of the repository and runs the suite there.
+
+    The working tree is never modified, so editing code while mutants run is safe.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        sandbox = Path(tmp) / "repo"
+        shutil.copytree(REPO, sandbox, ignore=SKIP)
+        path = sandbox / "api" / mutant.file
+        original = path.read_text()
+        if original.count(mutant.old) != 1:
+            return False, f"pattern not found exactly once in {mutant.file} (update the mutant)"
+        path.write_text(original.replace(mutant.old, mutant.new))
+        report = Path(tmp) / "report.json"
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-x",
+                "-p",
+                "no:cacheprovider",
+                f"--invariants-report={report}",
+            ],
+            cwd=sandbox / "api",
+            capture_output=True,
+            check=False,
+            env={**os.environ, "INGEST_HYPOTHESIS_PROFILE": "mutants"},
+        )
+        if not report.exists():
+            return False, "pytest produced no report (collection error?)"
+        failures = json.loads(report.read_text())["failures"]
     if not failures:
         return False, "SURVIVED: the suite passed with the bug in place"
     broken = {i for f in failures for i in f["invariants"]}

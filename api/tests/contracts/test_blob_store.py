@@ -8,25 +8,23 @@ import os
 import uuid
 
 import pytest
+from azure.core.exceptions import AzureError, ResourceExistsError
+from azure.storage.blob import BlobServiceClient
 
-from ingest_api.ports import BlobNotFound
+from ingest_api.adapters.azure_blob import AzureBlobStore
+from ingest_api.ports import BlobNotFound, BlobStore
 from tests.fakes import MemoryBlobStore
 
 AZURITE = os.environ.get("INGEST_TEST_AZURITE", "UseDevelopmentStorage=true")
 
 
-def _azurite():
-    from azure.core.exceptions import ResourceExistsError
-    from azure.storage.blob import BlobServiceClient
-
-    from ingest_api.adapters.azure_blob import AzureBlobStore
-
+def _azurite() -> AzureBlobStore:
     service = BlobServiceClient.from_connection_string(AZURITE)
     try:
         service.create_container("contract", timeout=3)
     except ResourceExistsError:
         pass
-    except Exception as exc:  # noqa: BLE001 - any connection failure means "not running"
+    except AzureError as exc:
         if os.environ.get("INGEST_REQUIRE_AZURITE"):
             raise
         pytest.skip(
@@ -36,11 +34,8 @@ def _azurite():
 
 
 @pytest.fixture(params=["memory", "azurite"])
-def store(request):
-    if request.param == "memory":
-        store = MemoryBlobStore()
-        return store
-    return _azurite()
+def store(request: pytest.FixtureRequest) -> BlobStore:
+    return MemoryBlobStore() if request.param == "memory" else _azurite()
 
 
 @pytest.fixture

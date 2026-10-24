@@ -1,40 +1,30 @@
-from fastapi import APIRouter
-from pydantic import BaseModel
+"""Who the caller is, as the platform sees them."""
 
+from fastapi import APIRouter
+
+from ingest_api import authz
 from ingest_api.deps import Conn, CurrentPrincipal
+from ingest_api.schema import ApiModel
 
 router = APIRouter(tags=["identity"])
 
 
-class Marking(BaseModel):
-    code: str
-    label: str
-    banner_color: str
-
-
-class Me(BaseModel):
+class Me(ApiModel):
     subject: str
     name: str | None
     username: str | None
     roles: list[str]
     groups: list[str]
-    clearance: Marking
+    clearance: authz.Marking  # Pydantic serializes the dataclass; no second definition
 
 
 @router.get("/me")
 def me(principal: CurrentPrincipal, conn: Conn) -> Me:
-    clearance = conn.execute(
-        """
-        SELECT code, label, banner_color FROM authz.markings
-        WHERE rank = authz.clearance_rank(%s)
-        """,
-        (list(principal.clearances),),
-    ).fetchone()
     return Me(
         subject=principal.subject,
         name=principal.name,
         username=principal.username,
         roles=sorted(principal.roles),
         groups=sorted(principal.groups),
-        clearance=Marking(**clearance),
+        clearance=authz.highest_clearance(conn, principal),
     )

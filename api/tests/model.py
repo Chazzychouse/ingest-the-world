@@ -28,10 +28,14 @@ class Actor:
         return "Admin" in self.roles
 
     def granted_roles(self) -> frozenset[str]:
-        """Roles a grant can match: those held, plus every hierarchy role below the highest."""
-        ranks = [HIERARCHY.index(r) for r in self.roles if r in HIERARCHY]
+        """Roles a grant can match: those held, plus every hierarchy role below the highest.
+
+        Clearance roles are not access roles: a grant to `Clearance.CUI` matches nobody.
+        """
+        held = {r for r in self.roles if not r.startswith(CLEARANCE_PREFIX)}
+        ranks = [HIERARCHY.index(r) for r in held if r in HIERARCHY]
         below = HIERARCHY[: max(ranks) + 1] if ranks else []
-        return self.roles | frozenset(below)
+        return frozenset(held | set(below))
 
 
 @dataclass(frozen=True)

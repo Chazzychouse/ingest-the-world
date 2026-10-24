@@ -1,6 +1,7 @@
 import type { Collection, Marking } from './api'
 
-export const UNCLASSIFIED: Marking = { code: 'UNCLASSIFIED', label: 'UNCLASSIFIED', banner_color: '#007a33' }
+// The rank-0 baseline (migration 0001), shown before any data has loaded.
+export const UNCLASSIFIED: Marking = { code: 'UNCLASSIFIED', label: 'UNCLASSIFIED', banner_color: '#007a33', rank: 0 }
 
 /**
  * The banner for a screen showing `collections`: the highest-ranked marking among them
@@ -12,5 +13,6 @@ export function bannerFor(collections: Collection[]): Marking {
   for (const c of collections) {
     if (!top || c.marking_rank > top.marking_rank) top = c
   }
-  return top ? { code: top.marking, label: top.marking_label, banner_color: top.marking_color } : UNCLASSIFIED
+  if (!top) return UNCLASSIFIED
+  return { code: top.marking, label: top.marking_label, banner_color: top.marking_color, rank: top.marking_rank }
 }

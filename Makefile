@@ -1,4 +1,4 @@
-.PHONY: up down reset logs test check explore sim soak mutants lint tf-validate token
+.PHONY: up down reset logs test check explore sim soak mutants lint typecheck api-types api-types-check tf-validate token
 
 up:  ## Build and start the local stack (http://localhost:8081)
 	docker compose up -d --build --wait
@@ -24,9 +24,10 @@ check: export INGEST_HYPOTHESIS_PROFILE = ci
 explore sim: export INGEST_HYPOTHESIS_PROFILE = dev
 soak: export INGEST_HYPOTHESIS_PROFILE = soak
 
-check: lint  ## The gate: lint, every test, invariant traceability, JSON report
+check: lint typecheck api-types-check  ## The gate: lint, types, every test, traceability, JSON report
 	docker compose up -d --wait db azurite
 	$(PYTEST) --check-invariants --invariants-report=reports/invariants.json
+	cd web && pnpm test
 
 explore:  ## Property tests and simulation with fresh random inputs
 	docker compose up -d --wait db
@@ -48,6 +49,19 @@ mutants:  ## Plant known bugs and check each is caught by the right invariant
 lint:
 	cd api && uv run ruff check . && uv run ruff format --check .
 	cd web && pnpm lint
+
+typecheck:  ## pyright strict (API) and tsc strict (web)
+	cd api && uv run pyright
+	cd web && pnpm exec tsc -b
+
+OPENAPI = web/src/generated/openapi.json
+api-types:  ## Regenerate the web's API types from the API's OpenAPI schema
+	cd api && PYTHONPATH=. uv run python tools/export_openapi.py ../$(OPENAPI)
+	cd web && pnpm gen:api
+
+api-types-check: api-types  ## Fail if the committed web types are stale
+	git diff --exit-code -- web/src/generated || \
+	  (echo "web/src/generated is stale: run make api-types and commit"; exit 1)
 
 tf-validate:  ## fmt-check and validate the Terraform for both clouds
 	infra/tf.sh fmt -check -recursive

@@ -30,6 +30,11 @@ jobs:
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      - run: uv run pyright
+      - name: OpenAPI schema committed for the web types is current
+        run: |
+          PYTHONPATH=. uv run python tools/export_openapi.py ../web/src/generated/openapi.json
+          git diff --exit-code -- ../web/src/generated/openapi.json
       - name: Tests, simulation, fuzzing and invariant traceability
         run: uv run pytest -q --check-invariants --invariants-report=reports/invariants.json
         env:
@@ -58,6 +63,9 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - name: Generated API types are current
+        run: pnpm gen:api && git diff --exit-code -- src/generated
+      - run: pnpm exec tsc -b
       - run: pnpm test
       - run: pnpm build
 

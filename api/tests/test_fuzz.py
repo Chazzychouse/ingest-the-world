@@ -48,7 +48,7 @@ FUZZ_USERS = ["alice", "carol", "bob"]
 
 
 @pytest.mark.invariant("ROB-1", "ACC-1")
-@schema.parametrize()
+@schema.parametrize()  # pyright: ignore[reportUntypedFunctionDecorator] - schemathesis is untyped here
 def test_fuzz(case, auth, fuzz_database):
     for user in FUZZ_USERS:
         _check_response(case, user, case.call(headers=auth(user)), fuzz_database)

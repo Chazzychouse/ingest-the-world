@@ -4,17 +4,18 @@ import { AuthProvider } from 'react-oidc-context'
 import { WebStorageStateStore } from 'oidc-client-ts'
 import './index.css'
 import App from './App.tsx'
+import type { WebConfig } from './api'
 
-type WebConfig = { oidc: { authority: string; client_id: string; scope: string } }
-
-const root = createRoot(document.getElementById('root')!)
+const container = document.getElementById('root')
+if (!container) throw new Error('index.html has no #root element')
+const root = createRoot(container)
 
 // IdP settings come from the API at runtime, so one build serves Keycloak, commercial
 // Entra ID and Azure Government Entra ID.
 async function boot() {
   const response = await fetch('/api/config')
   if (!response.ok) throw new Error(`GET /api/config failed: ${response.status}`)
-  const { oidc }: WebConfig = await response.json()
+  const { oidc } = (await response.json()) as WebConfig
 
   root.render(
     <StrictMode>

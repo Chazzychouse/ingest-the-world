@@ -1,8 +1,7 @@
 """`BlobStore` over Azure Blob Storage (and Azurite)."""
 
-from __future__ import annotations
-
 from collections.abc import Iterator
+from typing import NoReturn
 
 from azure.core.exceptions import (
     HttpResponseError,
@@ -10,29 +9,34 @@ from azure.core.exceptions import (
     ServiceRequestError,
     ServiceResponseError,
 )
-from azure.storage.blob import BlobServiceClient, ContentSettings
+from azure.storage.blob import BlobProperties, BlobServiceClient, ContentSettings
 
-from ingest_api.ports import BlobNotFound, BlobProps, TransientStorageError
+from ingest_api.ports import BlobNotFound, BlobProps, StorageError, TransientStorageError
+
+# Throttling and server-side failures; anything else is a caller or configuration error.
+TRANSIENT_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+RANGE_NOT_SATISFIABLE = 416
 
 
-def _props(container: str, blob) -> BlobProps:
-    settings = blob.content_settings
+def _props(container: str, blob: BlobProperties) -> BlobProps:
+    settings: ContentSettings | None = blob.content_settings
     return BlobProps(
         container=container,
-        name=blob.name,
-        size=blob.size,
-        etag=blob.etag.strip('"'),
+        name=str(blob.name),
+        size=int(blob.size),
+        etag=str(blob.etag).strip('"'),
         content_type=settings.content_type if settings else None,
         metadata=dict(blob.metadata or {}),
     )
 
 
-def _translate(exc: Exception) -> Exception:
-    if isinstance(exc, ServiceRequestError | ServiceResponseError):
-        return TransientStorageError(str(exc))
-    if isinstance(exc, HttpResponseError) and (exc.status_code or 0) in (408, 429, 500, 503):
-        return TransientStorageError(str(exc))
-    return exc
+def _raise_translated(exc: HttpResponseError | ServiceRequestError) -> NoReturn:
+    """Re-raises an SDK error as the port's error type."""
+    network = isinstance(exc, ServiceRequestError | ServiceResponseError)
+    status = (exc.status_code or 0) if isinstance(exc, HttpResponseError) else 0
+    if network or status in TRANSIENT_STATUS:
+        raise TransientStorageError(str(exc)) from exc
+    raise StorageError(str(exc)) from exc
 
 
 class AzureBlobStore:
@@ -40,10 +44,18 @@ class AzureBlobStore:
         self._service = service
 
     @classmethod
-    def from_connection_string(cls, connection_string: str) -> AzureBlobStore:
+    def from_connection_string(cls, connection_string: str) -> "AzureBlobStore":
         return cls(BlobServiceClient.from_connection_string(connection_string))
 
-    def put(self, container, name, data, *, content_type=None, metadata=None) -> BlobProps:
+    def put(
+        self,
+        container: str,
+        name: str,
+        data: bytes,
+        *,
+        content_type: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> BlobProps:
         blob = self._service.get_blob_client(container, name)
         try:
             blob.upload_blob(
@@ -53,20 +65,19 @@ class AzureBlobStore:
                 content_settings=ContentSettings(content_type=content_type),
             )
             return _props(container, blob.get_blob_properties())
-        except Exception as exc:
-            raise _translate(exc) from exc
+        except (HttpResponseError, ServiceRequestError) as exc:
+            _raise_translated(exc)
 
-    def head(self, container, name) -> BlobProps | None:
+    def head(self, container: str, name: str) -> BlobProps | None:
         try:
-            return _props(
-                container, self._service.get_blob_client(container, name).get_blob_properties()
-            )
+            blob = self._service.get_blob_client(container, name)
+            return _props(container, blob.get_blob_properties())
         except ResourceNotFoundError:
             return None
-        except Exception as exc:
-            raise _translate(exc) from exc
+        except (HttpResponseError, ServiceRequestError) as exc:
+            _raise_translated(exc)
 
-    def read_range(self, container, name, offset, length) -> bytes:
+    def read_range(self, container: str, name: str, offset: int, length: int) -> bytes:
         if length <= 0:
             return b""
         blob = self._service.get_blob_client(container, name)
@@ -75,24 +86,24 @@ class AzureBlobStore:
         except ResourceNotFoundError as exc:
             raise BlobNotFound(f"{container}/{name}") from exc
         except HttpResponseError as exc:
-            if exc.status_code == 416:  # range starts at or past the end
+            if exc.status_code == RANGE_NOT_SATISFIABLE:  # range starts at or past the end
                 return b""
-            raise _translate(exc) from exc
-        except Exception as exc:
-            raise _translate(exc) from exc
+            _raise_translated(exc)
+        except ServiceRequestError as exc:
+            _raise_translated(exc)
 
-    def delete(self, container, name) -> None:
+    def delete(self, container: str, name: str) -> None:
         try:
             self._service.get_blob_client(container, name).delete_blob()
         except ResourceNotFoundError:
-            pass
-        except Exception as exc:
-            raise _translate(exc) from exc
+            return
+        except (HttpResponseError, ServiceRequestError) as exc:
+            _raise_translated(exc)
 
-    def list(self, container, prefix="") -> Iterator[BlobProps]:
+    def list(self, container: str, prefix: str = "") -> Iterator[BlobProps]:
         client = self._service.get_container_client(container)
         try:
             for blob in client.list_blobs(name_starts_with=prefix or None, include=["metadata"]):
                 yield _props(container, blob)
-        except Exception as exc:
-            raise _translate(exc) from exc
+        except (HttpResponseError, ServiceRequestError) as exc:
+            _raise_translated(exc)

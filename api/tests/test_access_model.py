@@ -5,24 +5,12 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from ingest_api import authz
 from ingest_api.auth import ROLE_RANK, Principal
 from tests.invariants import check
-from tests.model import HIERARCHY, Actor, GrantKey, World
-
-ROLES = [*HIERARCHY, "Clearance.CUI", "Clearance.SECRETISH", "Analyst"]
-GROUPS = ["g-alpha", "g-bravo"]
-SUBJECTS = ["s-1", "s-2", "s-3"]
-
-actors = st.builds(
-    Actor,
-    subject=st.sampled_from(SUBJECTS),
-    roles=st.frozensets(st.sampled_from(ROLES), max_size=4),
-    groups=st.frozensets(st.sampled_from(GROUPS), max_size=2),
-)
-# Grantee names deliberately overlap across kinds (a group called "Admin", a user called
-# "g-alpha"): a grant must match on its own kind only, and disjoint names would hide that.
-NAMES = [*ROLES, *GROUPS, *SUBJECTS]
-grant_keys = st.builds(GrantKey, st.sampled_from(["role", "group", "user"]), st.sampled_from(NAMES))
+from tests.model import HIERARCHY, Actor, World
+from tests.strategies import ROLES, actors, grant_keys
+from tests.tokens import TestIdp
 
 
 @st.composite
@@ -71,37 +59,22 @@ def _load(conn, world: World) -> None:
             )
 
 
-def _principal(actor: Actor) -> Principal:
-    clearances = {r.removeprefix("Clearance.") for r in actor.roles if r.startswith("Clearance.")}
-    return Principal(
-        subject=actor.subject,
-        name=None,
-        username=None,
-        roles=actor.roles,
-        groups=actor.groups,
-        clearances=frozenset(clearances | {"UNCLASSIFIED"}),
-    )
+def _principal(idp: TestIdp, actor: Actor) -> Principal:
+    """The Principal production would build from this actor's token."""
+    token = idp.bearer(actor.subject, roles=actor.roles, groups=actor.groups)
+    return idp.verifier().verify(token["Authorization"].removeprefix("Bearer "))
 
 
 @pytest.mark.invariant("ACC-1")
 @given(world=worlds(), actor_list=st.lists(actors, min_size=1, max_size=4))
-def test_sql_predicate_matches_the_model(tx, world, actor_list):
+def test_sql_predicate_matches_the_model(tx, idp, world, actor_list):
     _load(tx, world)
     try:
         full = World.from_db(tx)  # the generated world plus the seeded collections
         for actor in actor_list:
-            principal = _principal(actor)
+            principal = _principal(idp, actor)
             got = {
-                row[0]
-                for row in tx.execute(
-                    "SELECT authz.readable_collections(%s, %s, %s, %s)",
-                    (
-                        principal.subject,
-                        list(principal.effective_roles),
-                        list(principal.groups),
-                        list(principal.clearances),
-                    ),
-                )
+                row[0] for row in tx.execute(authz.READABLE_IDS, authz.principal_args(principal))
             }
             expected = full.readable(actor)
             check(
@@ -115,8 +88,8 @@ def test_sql_predicate_matches_the_model(tx, world, actor_list):
 
 
 @given(roles=st.frozensets(st.sampled_from(ROLES)))
-def test_effective_roles_match_the_model(roles):
+def test_effective_roles_match_the_model(idp, roles):
     actor = Actor("s", roles=roles)
 
-    assert _principal(actor).effective_roles == actor.granted_roles()
+    assert _principal(idp, actor).effective_roles == actor.granted_roles()
     assert set(ROLE_RANK) == set(HIERARCHY)

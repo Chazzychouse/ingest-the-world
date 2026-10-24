@@ -17,7 +17,9 @@ dependencies = [
 [dependency-groups]
 dev = [
     "cryptography>=50.0.2",
+    "httpx2>=2.16.0",
     "hypothesis>=6.170.9",
+    "pyright[nodejs]>=1.1.414",
     "pytest>=9.1.1",
     "ruff>=0.17.2",
     "schemathesis>=4.32.4",
@@ -26,15 +28,48 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+filterwarnings = ["error"]  # Power of 10, rule 10: warnings fail the build
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
-ignore = ["S101"]
+select = [
+    "E", "F", "I", "B", "UP", "S", "ASYNC",
+    "C4", "C90", "SIM", "RET", "PL", "BLE", "PTH", "RUF", "TID", "T20", "FBT", "PERF",
+]
+ignore = [
+    "S101",     # assert is fine in tests; production code raises typed errors (AGENTS.md)
+    "PLR2004",  # magic values: HTTP status codes read better inline
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 6
+max-branches = 10
+max-returns = 6
+max-statements = 40
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.pyright]
+include = ["ingest_api", "tests", "tools"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+# Tests use fixtures and Hypothesis strategies whose types pytest injects at runtime.
+venvPath = "."
+venv = ".venv"
+executionEnvironments = [
+    { root = "ingest_api", extraPaths = ["."] },
+    { root = "tools", extraPaths = ["."] },
+    { root = "tests", extraPaths = ["."], reportUnknownMemberType = false, reportUnknownVariableType = false, reportUnknownArgumentType = false, reportUnknownParameterType = false, reportMissingParameterType = false, reportMissingTypeArgument = false, reportPrivateUsage = false },
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106", "S311"]  # seeded RNGs drive the simulator
-"tools/**" = ["S603"]
+"tools/**" = ["S603", "T201"]  # CLI scripts report on stdout
+"ingest_api/migrate.py" = ["T201"]
