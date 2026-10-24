@@ -1,0 +1,153 @@
+import uuid
+
+import psycopg
+import pytest
+
+
+def last_audit(db, **where) -> dict | None:
+    clause = " AND ".join(f"{column} = %s" for column in where)
+    row = db.execute(
+        f"SELECT action, outcome, marking, actor_name, target_id FROM audit.events "  # noqa: S608
+        f"WHERE {clause} ORDER BY id DESC LIMIT 1",
+        tuple(where.values()),
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(zip(["action", "outcome", "marking", "actor_name", "target_id"], row, strict=True))
+
+
+def new_id() -> str:
+    return f"test-{uuid.uuid4().hex[:8]}"
+
+
+def test_health_and_public_config(client):
+    assert client.get("/healthz").json() == {"status": "ok"}
+    assert client.get("/config").json()["oidc"]["client_id"] == "ingest-web"
+
+
+def test_request_id_is_echoed(client):
+    response = client.get("/healthz", headers={"x-request-id": "abc-123"})
+
+    assert response.headers["x-request-id"] == "abc-123"
+
+
+def test_me_requires_a_token(client):
+    response = client.get("/me")
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"].startswith("Bearer")
+
+
+def test_me_reports_roles_and_highest_clearance(client, auth):
+    body = client.get("/me", headers=auth("carol")).json()
+
+    assert body["username"] == "carol"
+    assert "Contributor" in body["roles"]
+    assert body["clearance"]["code"] == "CUI"
+
+
+def test_me_defaults_to_unclassified(client, auth):
+    assert client.get("/me", headers=auth("bob")).json()["clearance"]["code"] == "UNCLASSIFIED"
+
+
+@pytest.mark.parametrize(
+    ("user", "expected"),
+    [
+        ("alice", {"site-survey-alpha", "bio-lab-readings", "range-ops-cui"}),
+        ("carol", {"site-survey-alpha", "bio-lab-readings", "range-ops-cui"}),
+        ("bob", {"site-survey-alpha", "bio-lab-readings"}),
+        ("nobody", set()),
+    ],
+)
+def test_collection_visibility_combines_grants_and_clearance(client, auth, user, expected):
+    ids = {c["id"] for c in client.get("/collections", headers=auth(user)).json()}
+
+    assert expected <= ids
+    if user != "alice":
+        # Only seeded collections are granted to non-admins; tests may add admin-only ones.
+        assert ids == expected
+
+
+def test_cui_collection_is_hidden_from_uncleared_reader_and_the_attempt_audited(client, auth, db):
+    assert client.get("/collections/range-ops-cui", headers=auth("bob")).status_code == 404
+    assert last_audit(db, target_id="range-ops-cui", actor_name="bob")["outcome"] == "denied"
+
+
+def test_reading_a_collection_is_audited_with_its_marking(client, auth, db):
+    response = client.get("/collections/range-ops-cui", headers=auth("carol"))
+
+    assert response.status_code == 200
+    assert response.json()["cui_categories"] == ["CRIT"]
+    assert last_audit(db, target_id="range-ops-cui", actor_name="carol") == {
+        "action": "collection.read",
+        "outcome": "allowed",
+        "marking": "CUI",
+        "actor_name": "carol",
+        "target_id": "range-ops-cui",
+    }
+
+
+def test_non_admin_cannot_create_collection_and_is_audited(client, auth, db):
+    response = client.post(
+        "/collections", json={"id": new_id(), "title": "Nope"}, headers=auth("bob")
+    )
+
+    assert response.status_code == 403
+    audit = last_audit(db, actor_name="bob", outcome="denied")
+    assert audit["action"] == "POST /collections"
+
+
+def test_admin_creates_collection(client, auth, db):
+    collection_id = new_id()
+    body = {
+        "id": collection_id,
+        "title": "Harbor Scan",
+        "marking": "CUI",
+        "cui_categories": ["CRIT"],
+        "retention": {"retain_days": 365, "legal_hold": True},
+    }
+
+    response = client.post("/collections", json=body, headers=auth("alice"))
+
+    assert response.status_code == 201
+    assert response.json()["marking_label"] == "CUI"
+    assert response.json()["retention"]["legal_hold"] is True
+    assert last_audit(db, target_id=collection_id)["action"] == "collection.create"
+    duplicate = client.post("/collections", json=body, headers=auth("alice"))
+    assert duplicate.status_code == 409
+
+
+def test_admin_cannot_create_above_own_clearance(client, auth, db):
+    collection_id = new_id()
+
+    response = client.post(
+        "/collections",
+        json={"id": collection_id, "title": "Too high", "marking": "CUI"},
+        headers=auth("admin-no-cui"),
+    )
+
+    assert response.status_code == 403
+    assert last_audit(db, target_id=collection_id)["outcome"] == "denied"
+    assert db.execute(
+        "SELECT count(*) FROM catalog.collections WHERE id = %s", (collection_id,)
+    ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"title": "No id"},
+        {"id": "Bad_ID", "title": "Bad id"},
+        {"id": "x-unclassified", "title": "CUI details", "cui_categories": ["CRIT"]},
+        {"id": "x-unknown", "title": "Unknown marking", "marking": "TOP-SECRET"},
+    ],
+)
+def test_rejects_invalid_collections(client, auth, body):
+    assert client.post("/collections", json=body, headers=auth("alice")).status_code == 422
+
+
+def test_audit_log_is_append_only(db):
+    with pytest.raises(psycopg.errors.RaiseException):
+        db.execute("UPDATE audit.events SET outcome = 'allowed'")
+    with pytest.raises(psycopg.errors.RaiseException):
+        db.execute("DELETE FROM audit.events")

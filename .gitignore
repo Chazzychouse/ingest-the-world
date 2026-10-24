@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.env
+
+# Node
+node_modules/
+dist/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.backend.hcl
+!example.backend.hcl
+
+.DS_Store
