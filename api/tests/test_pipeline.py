@@ -19,11 +19,10 @@ from ingest_api.adapters.azure_blob import AzureBlobStore
 from ingest_api.adapters.eicar_scanner import EICAR, EicarScanner
 from ingest_api.events import parse_blob_created
 from ingest_api.ports import BlobProps, BlobStore, Container, TransientStorageError
-from ingest_api.uploads.models import Outcome
+from ingest_api.uploads.models import Outcome, Reason
 from ingest_api.worker.classify import Media
 from ingest_api.worker.extract import MAX_EXTRACT_BYTES
 from ingest_api.worker.formats import READERS
-from ingest_api.worker.jobs import Reason
 from ingest_api.worker.pipeline import SOURCE_ETAG, Pipeline, process
 from tests.conftest import Landed
 from tests.contracts.azurite import azurite
@@ -106,9 +105,15 @@ class Served:
         assert search.status_code == 200, search.text
         return read.status_code != 404 or bool(search.json()["features"])
 
-    def reason(self, upload_id: UUID) -> str | None:
-        """Why the pipeline decided as it did, as the uploader sees it."""
-        return self.client.get(f"/uploads/{upload_id}", headers=self.auth("carol")).json()["reason"]
+    def upload(self, upload_id: UUID) -> dict[str, Any]:
+        """The upload as its uploader sees it."""
+        response = self.client.get(f"/uploads/{upload_id}", headers=self.auth("carol"))
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def progress(self, upload_id: UUID) -> tuple[str, str | None, int]:
+        upload = self.upload(upload_id)
+        return upload["status"], upload["stage"], upload["attempts"]
 
 
 @pytest.fixture
@@ -203,7 +208,8 @@ def test_an_infected_upload_is_quarantined_and_never_served(store, start, db, wo
     assert work(store, props) == "quarantined"
     assert _job(db, props) == ("quarantined", "EICAR-Test-File")
     assert _status(db, landed.upload_id) == "quarantined"
-    assert served.reason(landed.upload_id) == "EICAR-Test-File"
+    upload = served.upload(landed.upload_id)
+    assert (upload["reason"], upload["signature"]) == (None, "EICAR-Test-File")
     assert _item(db, landed.upload_id) is None
     check("ING-4", not served.anywhere(landed.upload_id), "a quarantined file is served")
     assert store.head(RAW, landed.name) is None
@@ -329,6 +335,20 @@ def test_a_job_interrupted_after_any_step_finishes_the_same(start, payload, work
     assert interrupted >= 4, "the job should take several storage calls"
 
 
+def test_an_upload_says_where_the_pipeline_is(start, work, served):
+    landed = start(len(TIFF))
+    assert served.progress(landed.upload_id) == ("pending", "awaiting-bytes", 0)
+
+    memory = MemoryBlobStore()
+    props = memory.put(LANDING, landed.name, TIFF)
+    with contextlib.suppress(TransientStorageError):  # the injected crash
+        work(CrashAfter(memory, 1), props)
+    assert served.progress(landed.upload_id) == ("pending", "processing", 1)
+
+    work(memory, props)
+    assert served.progress(landed.upload_id) == ("cataloged", None, 0)
+
+
 # (payload, bytes declared beyond the real size, the audit event expected)
 AUDITED = [
     ("clean", 0, ("item.catalog", "allowed", None)),
@@ -375,7 +395,8 @@ def test_the_same_bytes_twice_in_one_collection_are_a_duplicate(store, start, db
     assert work(store, props) == "rejected"
     check("ING-9", _job(db, props) == ("rejected", Reason.DUPLICATE), f"{_job(db, props)}")
     assert _status(db, second.upload_id) == "rejected"
-    assert served.reason(second.upload_id) == Reason.DUPLICATE
+    upload = served.upload(second.upload_id)
+    assert (upload["reason"], upload["signature"]) == (Reason.DUPLICATE, None)
     assert (_item(db, first.upload_id), _item(db, second.upload_id)) == (item, None)
     check("ING-4", not served.anywhere(second.upload_id), "a rejected file is served")
     assert served.anywhere(first.upload_id)

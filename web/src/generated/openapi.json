@@ -733,6 +733,21 @@
         "title": "Polygon",
         "type": "object"
       },
+      "Reason": {
+        "description": "Why the pipeline rejected a version. Quarantine's reason is the scanner's signature.",
+        "enum": [
+          "no-upload",
+          "upload-closed",
+          "superseded",
+          "size-mismatch",
+          "checksum-mismatch",
+          "duplicate",
+          "retries-exhausted",
+          "dead-lettered"
+        ],
+        "title": "Reason",
+        "type": "string"
+      },
       "Retention-Input": {
         "properties": {
           "legal_hold": {
@@ -1091,6 +1106,10 @@
       "Upload": {
         "description": "An upload as returned by the API; built straight from `store.UploadRow`.",
         "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
           "collection_id": {
             "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
             "title": "Collection Id",
@@ -1141,13 +1160,12 @@
           "reason": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/Reason"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Reason"
+            ]
           },
           "sha256": {
             "anyOf": [
@@ -1161,11 +1179,37 @@
             ],
             "title": "Sha256"
           },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
+          },
           "size_bytes": {
             "exclusiveMinimum": 0.0,
             "maximum": 1099511627776.0,
             "title": "Size Bytes",
             "type": "integer"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "awaiting-bytes",
+                  "processing"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
           },
           "status": {
             "enum": [
@@ -1199,7 +1243,10 @@
           "tags",
           "id",
           "status",
+          "stage",
+          "attempts",
           "reason",
+          "signature",
           "marking",
           "marking_rank",
           "created_by",
@@ -1271,6 +1318,35 @@
           "size_bytes"
         ],
         "title": "UploadIn",
+        "type": "object"
+      },
+      "UploadPage": {
+        "description": "The caller's own uploads, newest first.",
+        "properties": {
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next"
+          },
+          "uploads": {
+            "items": {
+              "$ref": "#/components/schemas/Upload"
+            },
+            "title": "Uploads",
+            "type": "array"
+          }
+        },
+        "required": [
+          "uploads",
+          "next"
+        ],
+        "title": "UploadPage",
         "type": "object"
       },
       "UploadSession": {
@@ -1855,6 +1931,72 @@
       }
     },
     "/uploads": {
+      "get": {
+        "description": "One page of the caller's own uploads in collections they can still read, newest first.\nPass `next` back as `token` for the following page.",
+        "operationId": "list_uploads_uploads_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Uploads",
+        "tags": [
+          "uploads"
+        ]
+      },
       "post": {
         "operationId": "create_upload_uploads_post",
         "requestBody": {

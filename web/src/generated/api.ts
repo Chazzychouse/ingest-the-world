@@ -173,7 +173,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Uploads
+         * @description One page of the caller's own uploads in collections they can still read, newest first.
+         *     Pass `next` back as `token` for the following page.
+         */
+        get: operations["list_uploads_uploads_get"];
         put?: never;
         /** Create Upload */
         post: operations["create_upload_uploads_post"];
@@ -514,6 +519,12 @@ export interface components {
              */
             type: "Polygon";
         };
+        /**
+         * Reason
+         * @description Why the pipeline rejected a version. Quarantine's reason is the scanner's signature.
+         * @enum {string}
+         */
+        Reason: "no-upload" | "upload-closed" | "superseded" | "size-mismatch" | "checksum-mismatch" | "duplicate" | "retries-exhausted" | "dead-lettered";
         /** Retention */
         "Retention-Input": {
             /**
@@ -625,6 +636,8 @@ export interface components {
          * @description An upload as returned by the API; built straight from `store.UploadRow`.
          */
         Upload: {
+            /** Attempts */
+            attempts: number;
             /** Collection Id */
             collection_id: string;
             /** Content Type */
@@ -647,12 +660,15 @@ export interface components {
             marking: string;
             /** Marking Rank */
             marking_rank: number;
-            /** Reason */
-            reason: string | null;
+            reason: components["schemas"]["Reason"] | null;
             /** Sha256 */
             sha256: string | null;
+            /** Signature */
+            signature: string | null;
             /** Size Bytes */
             size_bytes: number;
+            /** Stage */
+            stage: ("awaiting-bytes" | "processing") | null;
             /**
              * Status
              * @enum {string}
@@ -675,6 +691,16 @@ export interface components {
             size_bytes: number;
             /** Tags */
             tags?: string[];
+        };
+        /**
+         * UploadPage
+         * @description The caller's own uploads, newest first.
+         */
+        UploadPage: {
+            /** Next */
+            next: string | null;
+            /** Uploads */
+            uploads: components["schemas"]["Upload"][];
         };
         /**
          * UploadSession
@@ -1010,6 +1036,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ItemCollection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_uploads_uploads_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                token?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UploadPage"];
                 };
             };
             /** @description Validation Error */

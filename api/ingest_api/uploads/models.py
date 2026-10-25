@@ -1,12 +1,14 @@
 """Request and response shapes for upload sessions."""
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 
 from ingest_api.collections.models import MAX_LIST_ITEMS, NO_NUL_PATTERN, CollectionId
+from ingest_api.paging import MAX_TOKEN_LENGTH, position
 from ingest_api.schema import ApiModel
 
 # One path segment of a blob name: no separators or control characters, and no trailing dot or
@@ -24,6 +26,24 @@ Tag = Annotated[str, Field(min_length=1, max_length=64, pattern=NO_NUL_PATTERN)]
 Outcome = Literal["cataloged", "quarantined", "rejected"]
 # `pending` until the pipeline decides; then the outcome of the version it acted on.
 UploadStatus = Literal["pending", Outcome, "abandoned"]
+# Where a pending upload is: its bytes not yet announced (still transferring, or never sent), or
+# a version of them in the pipeline.
+PendingStage = Literal["awaiting-bytes", "processing"]
+DEFAULT_LIST_PAGE = 50
+MAX_LIST_PAGE = 100
+
+
+class Reason(StrEnum):
+    """Why the pipeline rejected a version. Quarantine's reason is the scanner's signature."""
+
+    NO_UPLOAD = "no-upload"  # nothing was uploaded under this name
+    UPLOAD_CLOSED = "upload-closed"  # the upload already has an outcome
+    SUPERSEDED = "superseded"  # a newer version of the blob replaced this one
+    SIZE_MISMATCH = "size-mismatch"  # the bytes don't match the size the upload declared
+    CHECKSUM_MISMATCH = "checksum-mismatch"  # nor the checksum it declared
+    DUPLICATE = "duplicate"  # its collection already has an item with these bytes (ING-9)
+    RETRIES_EXHAUSTED = "retries-exhausted"  # still failing on its message's last delivery
+    DEAD_LETTERED = "dead-lettered"  # its message was dead-lettered before it had an outcome
 
 
 class UploadIn(ApiModel):
@@ -43,9 +63,10 @@ class Upload(UploadIn):
 
     id: UUID
     status: UploadStatus
-    # Why it was quarantined (the scanner's signature) or rejected (a `worker.jobs.Reason`,
-    # such as `duplicate`); null while pending, once cataloged, or if abandoned.
-    reason: str | None
+    stage: PendingStage | None  # null once the status isn't pending
+    attempts: int  # deliveries so far of the version being processed; 0 when none is
+    reason: Reason | None  # why it was rejected; null unless it was
+    signature: str | None  # what the scanner found, if it was quarantined
     marking: str  # the collection's: everything uploaded into it carries at least this
     marking_rank: int
     created_by: str
@@ -58,3 +79,22 @@ class UploadSession(ApiModel):
     upload: Upload
     upload_url: str
     expires_at: datetime
+
+
+class UploadListIn(ApiModel):
+    limit: int = Field(default=DEFAULT_LIST_PAGE, ge=1, le=MAX_LIST_PAGE)
+    token: str | None = Field(default=None, max_length=MAX_TOKEN_LENGTH)
+
+    @field_validator("token")
+    @classmethod
+    def _token(cls, token: str | None) -> str | None:
+        if token is not None:
+            position(token)
+        return token
+
+
+class UploadPage(ApiModel):
+    """The caller's own uploads, newest first."""
+
+    uploads: list[Upload]
+    next: str | None  # the token for the following page; null on the last

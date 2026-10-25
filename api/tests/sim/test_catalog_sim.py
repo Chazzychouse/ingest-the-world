@@ -1,7 +1,7 @@
 """Stateful simulation of the catalog and upload API against the reference model.
 
 Hypothesis generates sequences of actors and operations (list, read, create, grant, revoke,
-start an upload, read it, renew its URL), runs each against the real app and a fresh
+start an upload, read it, renew its URL, list one's own), runs each against the real app and a fresh
 Postgres database, and after every step checks:
 
 - the response matches what the model says the actor may see or do (ACC-1, ACC-2, ACC-4,
@@ -44,6 +44,7 @@ from tests.tokens import TestIdp
 GHOST = "ghost-collection"  # never created: the baseline for ACC-2
 GHOST_UPLOAD = "00000000-0000-4000-8000-000000000000"
 collection_ids = st.from_regex(r"c-[a-z]{2}", fullmatch=True)
+MAX_PAGES = 50  # far above the uploads one example makes; a runaway token fails, not loops
 filenames = st.sampled_from(["scan.laz", "site model.glb", "100%.tif", "ünï.csv"])
 
 
@@ -302,6 +303,34 @@ class CatalogMachine(RuleBasedStateMachine):
         check("ACC-7", response.status_code == 200, f"{actor} refused renewal: {response.text}")
         self._check_session(response.json())
         self._expect_audit(action, "allowed", marking, upload_id)
+
+    @rule(actor=actors, limit=st.integers(min_value=1, max_value=3))
+    def list_uploads(self, actor, limit):
+        """Pages through the actor's own uploads: exactly those in collections they can read."""
+        expected = {
+            upload_id
+            for upload_id, (cid, creator) in self.uploads.items()
+            if creator == actor.subject and self.world.can_read(actor, cid)
+        }
+        shown: list[str] = []
+        token = None
+        for _ in range(MAX_PAGES):
+            params = {"limit": limit} | ({"token": token} if token else {})
+            response = self._call(actor, "GET", "/uploads", params=params)
+            check("ACC-1", response.status_code == 200, f"{actor} listing: {response.text}")
+            page = [u["id"] for u in response.json()["uploads"]]
+            shown += page
+            self._expect_audit(AuditAction.UPLOAD_LIST, "allowed", self._highest_upload(page))
+            token = response.json()["next"]
+            if token is None:
+                break
+        else:
+            raise InvariantViolation("ACC-1", f"{actor}'s upload list never ended")
+        check("ACC-1", len(shown) == len(set(shown)), f"{actor} was shown an upload twice")
+        check("ACC-1", set(shown) == expected, f"{actor} listed {shown}, model {expected}")
+
+    def _highest_upload(self, upload_ids) -> str | None:
+        return self._highest(self.uploads[u][0] for u in upload_ids)
 
     # -- global checks ----------------------------------------------------------------
 

@@ -160,3 +160,53 @@ def test_out_of_range_fields_are_rejected(client, auth, field):
 def test_upload_ids_are_uuids(client, auth):
     assert client.get("/uploads/not-a-uuid", headers=auth("carol")).status_code == 422
     assert uuid.UUID(_start(client, auth, "carol", "site-survey-alpha").json()["upload"]["id"])
+
+
+def _listed(client, auth, user: str, *, limit: int = 2) -> list[dict]:
+    """Every upload `user` is shown, following `next` page by page."""
+    shown: list[dict] = []
+    token = None
+    for _ in range(500):  # far above the uploads one test run makes
+        params = {"limit": limit} | ({"token": token} if token else {})
+        response = client.get("/uploads", params=params, headers=auth(user))
+        assert response.status_code == 200, response.text
+        page = response.json()
+        assert len(page["uploads"]) <= limit
+        shown += page["uploads"]
+        token = page["next"]
+        if token is None:
+            return shown
+    raise AssertionError("no last page")
+
+
+@pytest.mark.invariant("ACC-1", "ACC-5")
+def test_the_upload_list_is_the_callers_own_newest_first(client, auth, db):
+    mine = {_start(client, auth, "carol", "bio-lab-readings").json()["upload"]["id"] for _ in "abc"}
+    theirs = _start(client, auth, "alice", "bio-lab-readings").json()["upload"]["id"]
+
+    shown = _listed(client, auth, "carol")
+
+    ids = [u["id"] for u in shown]
+    assert mine <= set(ids) and theirs not in ids
+    assert len(ids) == len(set(ids)), "a page repeated an upload"
+    order = [(u["created_at"], u["id"]) for u in shown]
+    assert order == sorted(order, reverse=True)
+    assert {u["created_by"] for u in shown} == {"sub-carol"}
+    event = AuditLog(db).last(action="upload.list", actor_name="carol")
+    assert event.outcome == "allowed"
+
+
+@pytest.mark.invariant("ACC-1")
+def test_an_upload_leaves_the_list_with_access_to_its_collection(client, auth, fresh_collection):
+    grant = f"/collections/{fresh_collection}/grants/role/Contributor"  # the only one it has
+    upload_id = _start(client, auth, "carol", fresh_collection).json()["upload"]["id"]
+    assert upload_id in {u["id"] for u in _listed(client, auth, "carol", limit=100)}
+
+    assert client.delete(grant, headers=auth("alice")).status_code == 204
+
+    assert upload_id not in {u["id"] for u in _listed(client, auth, "carol", limit=100)}
+
+
+@pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 101}, {"token": "not-a-token"}])
+def test_out_of_range_list_parameters_are_rejected(client, auth, params):
+    assert client.get("/uploads", params=params, headers=auth("carol")).status_code == 422

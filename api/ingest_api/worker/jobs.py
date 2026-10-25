@@ -6,7 +6,6 @@ compare-and-set on `received`, and the database refuses to change it afterwards 
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
@@ -16,19 +15,6 @@ from psycopg.rows import TupleRow, class_row
 from ingest_api.uploads.models import Outcome
 
 Stage = Literal["received", Outcome]
-
-
-class Reason(StrEnum):
-    """Why a version was rejected. Quarantine's reason is the scanner's signature."""
-
-    NO_UPLOAD = "no-upload"  # nothing was uploaded under this name
-    UPLOAD_CLOSED = "upload-closed"  # the upload already has an outcome
-    SUPERSEDED = "superseded"  # a newer version of the blob replaced this one
-    SIZE_MISMATCH = "size-mismatch"  # the bytes don't match the size the upload declared
-    CHECKSUM_MISMATCH = "checksum-mismatch"  # nor the checksum it declared
-    DUPLICATE = "duplicate"  # its collection already has an item with these bytes (ING-9)
-    RETRIES_EXHAUSTED = "retries-exhausted"  # still failing on its message's last delivery
-    DEAD_LETTERED = "dead-lettered"  # its message was dead-lettered before it had an outcome
 
 
 @dataclass(frozen=True, slots=True)
