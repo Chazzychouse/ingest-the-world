@@ -30,6 +30,9 @@ All from the repo root. Postgres, Azurite and (once its licence is accepted in `
 | `make soak` | Long simulator run before a milestone. |
 | `make mutants` | After changing tests or checks: plants known bugs and verifies each is caught by the right invariant. |
 | `make up` | Running the full local stack (http://localhost:8081). |
+| `make samples` | Fetching and verifying the sample corpus (`samples/manifest.json`); `LARGE=1` adds multi-GB files. |
+| `make e2e` | After `make up`, when a change touches the pipeline end to end: uploads every sample through the stack and checks its outcome and metadata. |
+| `make image-smoke` | After changing the API image or a native dependency: builds it and runs the worker's `--check`. |
 
 ## Application structure
 
@@ -47,7 +50,7 @@ api/ingest_api/
   schema.py      ApiModel, the base for every request and response model
   ports.py       interfaces to the outside world (clock, ids, blobs, queues)
   adapters/      real implementations of ports (Azure Blob and SAS signing, Service Bus,
-                 the EICAR stand-in scanner)
+                 the EICAR stand-in scanner, the process sandbox format readers run in)
   wiring.py      builds adapters from settings, for the API, the worker and the shim
   events.py      BlobCreated events in the Event Grid schema: parsed by workers, built by the shim
   event_shim.py  local stand-in for Event Grid: announces committed landing blobs on the queue
@@ -59,7 +62,8 @@ api/ingest_api/
                  says), store.py (only the pipeline writes)
   worker/        the pipeline: pipeline.py (one blob version's step machine), classify.py,
                  extract.py (budgeted header reads), formats/ (one reader per format family),
-                 jobs.py (its store), runner.py (queue -> settle), __main__.py (composition)
+                 jobs.py (its store), runner.py (queue -> settle, dead-letter sweep),
+                 selfcheck.py (`--check`), __main__.py (composition)
 api/typings/     local type stubs for the parts of untyped libraries we use (rasterio, pyarrow)
 api/migrations/  numbered SQL, never edited once merged; add a new file instead
 ```
@@ -190,6 +194,9 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
   `test_signed_urls.py` also proves Azurite enforces the limits a signed URL claims (ACC-8).
 - `api/tests/test_fuzz.py`, `test_robustness.py`: schema-driven and targeted fuzzing (ROB-1,
   ACC-1).
+- `api/tests/e2e/` (`make e2e`, deselected from `make check`): the sample corpus through the
+  running stack. Expectations live only in `samples/manifest.json`, taken from sources
+  independent of our readers; a sample that fails there is a finding, not a manifest edit.
 
 ## Conventions
 
