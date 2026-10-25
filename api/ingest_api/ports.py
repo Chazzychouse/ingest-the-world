@@ -22,6 +22,8 @@ class Clock(Protocol):
 
     def monotonic(self) -> float: ...
 
+    def sleep(self, seconds: float) -> None: ...
+
 
 class Ids(Protocol):
     def new(self) -> str: ...
@@ -33,6 +35,9 @@ class SystemClock:
 
     def monotonic(self) -> float:
         return time.monotonic()
+
+    def sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
 
 
 class UuidIds:
@@ -111,7 +116,24 @@ class BlobSigner(Protocol):
         ...
 
 
-@dataclass
+class QueueError(Exception):
+    """Base for queue failures."""
+
+
+class TransientQueueError(QueueError):
+    """Worth retrying: connection loss, timeouts, a busy broker."""
+
+
+class LockLost(QueueError):
+    """The message's lock expired (or it was settled) before this settlement. It has been, or
+    will be, redelivered to someone else, so the work must be safe to repeat (ING-1)."""
+
+
+# The dead-letter reason Service Bus records when a message exhausts its deliveries.
+MAX_DELIVERIES_EXCEEDED = "MaxDeliveryCountExceeded"
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     id: str
     body: dict[str, Any]
@@ -119,17 +141,39 @@ class Message:
     lock_token: str
 
 
+@dataclass(frozen=True, slots=True)
+class DeadLetter:
+    id: str
+    body: dict[str, Any]
+    reason: str
+
+
 class Queue(Protocol):
     """At-least-once, peek-lock delivery, as Service Bus queues provide.
 
     A received message is hidden until completed, abandoned, or its lock expires; then it
-    is redelivered with a higher `delivery_count`. Consumers must be idempotent (ING-1).
+    is redelivered with a higher `delivery_count`. After the queue's maximum deliveries it moves
+    to the dead-letter queue instead. Consumers must be idempotent (ING-1).
+
+    Settling a message whose lock has expired raises `LockLost`.
     """
 
     def send(self, body: dict[str, Any]) -> None: ...
 
-    def receive(self, max_messages: int = 1) -> list[Message]: ...
+    def receive(self, max_messages: int = 1) -> list[Message]:
+        """Up to `max_messages` messages, waiting briefly if none are ready; may be empty."""
+        ...
 
     def complete(self, message: Message) -> None: ...
 
-    def abandon(self, message: Message) -> None: ...
+    def abandon(self, message: Message) -> None:
+        """Releases the lock so the message is redelivered now."""
+        ...
+
+    def dead_letter(self, message: Message, *, reason: str) -> None:
+        """Parks a message that can never succeed, so it stops being redelivered."""
+        ...
+
+    def peek_dead_letters(self, max_messages: int) -> list[DeadLetter]:
+        """The oldest dead-lettered messages, without removing them."""
+        ...

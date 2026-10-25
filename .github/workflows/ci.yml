@@ -27,6 +27,17 @@ jobs:
           until [ "$(docker inspect -f '{{.State.Health.Status}}' db)" = healthy ]; do sleep 1; done
       - name: Start Azurite (blob store contract tests)
         run: docker run -d --name azurite -p 10000:10000 mcr.microsoft.com/azure-storage/azurite:3.37.0 azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+      # The emulator's and SQL Server's licences are accepted per repository, by setting the
+      # repository variable ACCEPT_EULA=Y (see .env.example). Without it the queue tests skip.
+      - name: Start the Service Bus emulator (queue contract tests)
+        if: vars.ACCEPT_EULA == 'Y'
+        working-directory: .
+        env:
+          ACCEPT_EULA: Y
+        run: |
+          docker compose --profile queue up -d --wait servicebus
+          for i in $(seq 60); do curl -sf localhost:5300/health && exit 0; sleep 2; done
+          docker compose logs servicebus; exit 1
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -40,6 +51,7 @@ jobs:
         env:
           INGEST_REQUIRE_DB: "1"
           INGEST_REQUIRE_AZURITE: "1"
+          INGEST_REQUIRE_SERVICEBUS: ${{ vars.ACCEPT_EULA == 'Y' && '1' || '' }}
           INGEST_HYPOTHESIS_PROFILE: ci
       - name: Upload invariant report
         if: always()

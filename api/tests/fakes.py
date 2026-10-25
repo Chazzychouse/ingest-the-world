@@ -13,7 +13,15 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from ingest_api.ports import BlobNotFound, BlobProps, Message, TransientStorageError
+from ingest_api.ports import (
+    MAX_DELIVERIES_EXCEEDED,
+    BlobNotFound,
+    BlobProps,
+    DeadLetter,
+    LockLost,
+    Message,
+    TransientStorageError,
+)
 
 
 class SimClock:
@@ -30,6 +38,9 @@ class SimClock:
     def advance(self, seconds: float) -> None:
         self._now += timedelta(seconds=seconds)
         self._mono += seconds
+
+    def sleep(self, seconds: float) -> None:
+        self.advance(seconds)
 
 
 class SeededIds:
@@ -126,7 +137,7 @@ class SimQueue:
     lock_seconds: float = 60.0
     max_delivery_count: int = 10
     _entries: list[_Entry] = field(default_factory=list)
-    dead_letters: list[dict[str, Any]] = field(default_factory=list)
+    dead_letters: list[DeadLetter] = field(default_factory=list[DeadLetter])
     _seq: int = 0
 
     def _next_id(self) -> str:
@@ -151,8 +162,7 @@ class SimQueue:
             if len(out) == max_messages:
                 break
             if entry.delivery_count >= self.max_delivery_count:
-                self._entries.remove(entry)
-                self.dead_letters.append(entry.body)
+                self._move_to_dead_letters(entry, MAX_DELIVERIES_EXCEEDED)
                 continue
             entry.delivery_count += 1
             entry.locked_until = self.clock.monotonic() + self.lock_seconds
@@ -160,7 +170,7 @@ class SimQueue:
             out.append(Message(entry.id, dict(entry.body), entry.delivery_count, entry.lock_token))
         return out
 
-    def _locked(self, message: Message) -> _Entry | None:
+    def _locked(self, message: Message) -> _Entry:
         now = self.clock.monotonic()
         for entry in self._entries:
             if (
@@ -169,20 +179,26 @@ class SimQueue:
                 and entry.locked_until > now
             ):
                 return entry
-        return None
+        raise LockLost(message.id)
+
+    def _move_to_dead_letters(self, entry: _Entry, reason: str) -> None:
+        self._entries.remove(entry)
+        self.dead_letters.append(DeadLetter(entry.id, entry.body, reason))
 
     def complete(self, message: Message) -> None:
         entry = self._locked(message)
-        if entry is None:
-            return  # lock lost: the message will be redelivered
         if self.faults.lost_complete and self.rng.random() < self.faults.lost_complete:
             return
         self._entries.remove(entry)
 
     def abandon(self, message: Message) -> None:
-        entry = self._locked(message)
-        if entry is not None:
-            entry.locked_until = None
+        self._locked(message).locked_until = None
+
+    def dead_letter(self, message: Message, *, reason: str) -> None:
+        self._move_to_dead_letters(self._locked(message), reason)
+
+    def peek_dead_letters(self, max_messages: int) -> list[DeadLetter]:
+        return self.dead_letters[:max_messages]
 
     def __len__(self) -> int:
         return len(self._entries)

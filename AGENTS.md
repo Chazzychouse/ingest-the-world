@@ -19,7 +19,8 @@ It is the most important document in the repo.
 
 ## Commands
 
-All from the repo root. Postgres and Azurite come up automatically.
+All from the repo root. Postgres, Azurite and (once its licence is accepted in `.env`, see
+`.env.example`) the Service Bus emulator come up automatically.
 
 | Command | Use it when |
 |---|---|
@@ -45,7 +46,9 @@ api/ingest_api/
   audit.py       the Auditor: one way to record allowed and refused actions
   schema.py      ApiModel, the base for every request and response model
   ports.py       interfaces to the outside world (clock, ids, blobs, queues)
-  adapters/      real implementations of ports (Azure Blob and SAS signing, later Service Bus)
+  adapters/      real implementations of ports (Azure Blob and SAS signing, Service Bus)
+  events.py      BlobCreated events in the Event Grid schema: parsed by workers, built by the shim
+  event_shim.py  local stand-in for Event Grid: announces committed landing blobs on the queue
   meta.py        /healthz, /config
   identity.py    /me
   catalog/       collections and grants: models.py, store.py, routes.py
@@ -167,7 +170,7 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
 - `api/tests/strategies.py`: the shared Hypothesis strategies (actors, grantees, names).
 - `api/tests/fakes.py`: seeded, fault-injecting implementations of the ports.
 - `api/tests/contracts/`: one behavioural suite per port, run against the fake *and* the real
-  thing (Azurite today; the Service Bus emulator in M1), so fakes can't drift from reality.
+  thing (Azurite, the Service Bus emulator), so fakes can't drift from reality.
   `test_signed_urls.py` also proves Azurite enforces the limits a signed URL claims (ACC-8).
 - `api/tests/test_fuzz.py`, `test_robustness.py`: schema-driven and targeted fuzzing (ROB-1,
   ACC-1).

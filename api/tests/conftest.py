@@ -51,6 +51,12 @@ REALM = Path(__file__).resolve().parents[2] / "infra" / "keycloak" / "ingest-rea
 AZURITE_KEY = (
     "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
 )
+# The Service Bus emulator's fixed connection string, as seen from the host:
+# https://github.com/Azure/azure-service-bus-emulator-installer#choosing-the-right-connection-string
+EMULATOR_CONNECTION = (
+    "Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;"
+    "SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+)
 
 
 def _realm_users() -> dict[str, list[str]]:
@@ -136,12 +142,14 @@ def idp() -> TestIdp:
 
 
 def app_settings(database_url: str) -> Settings:
-    """Settings for an app under test: the test IdP, and Azurite for signing upload URLs."""
+    """Settings for an app under test: the test IdP, Azurite for signing upload URLs, and the
+    Service Bus emulator."""
     return Settings(
         database_url=database_url,
         oidc_issuer=ISSUER,
         oidc_audience=AUDIENCE,
         blob_account_key=SecretStr(AZURITE_KEY),
+        queue_connection=SecretStr(EMULATOR_CONNECTION),
     )
 
 

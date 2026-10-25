@@ -13,9 +13,15 @@ Built Azure-first and Azure Government-ready, with provider-neutral OIDC.
 Requires Docker. No Azure account needed.
 
 ```sh
-make up          # or: docker compose up -d --build --wait
+cp .env.example .env   # set ACCEPT_EULA=Y to add the queue (see below)
+make up
 open http://localhost:8081
 ```
+
+The ingest queue runs on the Service Bus emulator, which with its SQL Server is licensed under
+Microsoft's EULAs. `ACCEPT_EULA=Y` in `.env` accepts them and adds the emulator and the event
+shim (which announces finished uploads on the queue, standing in for Event Grid) to the stack
+and to `make check`. Without it everything else runs and the queue tests skip.
 
 | User  | Password | Roles | Clearance | Sees |
 |-------|----------|-------|-----------|------|
@@ -32,6 +38,7 @@ Development credentials only, defined in [`infra/keycloak/ingest-realm.json`](in
 | Keycloak (admin / admin) | http://localhost:8080 |
 | Postgres + PostGIS + pgvector | `postgresql://ingest:ingest@localhost:5432/ingest` |
 | Azurite (Blob emulator) | http://localhost:10000 |
+| Service Bus emulator (with `ACCEPT_EULA=Y`) | `amqp://localhost:5672`, health at http://localhost:5300/health |
 
 For hot reload, run `cd web && pnpm dev` (http://localhost:5173, proxies `/api` to :8000).
 
@@ -59,7 +66,7 @@ and the build fails if an `enforced` invariant has no check.
 | Simulator (`api/tests/sim/`) | Hypothesis state machine: random actors create, read, grant and revoke through the real API and Postgres; invariants checked after every step; failures shrink to a minimal replayable sequence |
 | Fuzzing (`api/tests/test_fuzz.py`, `test_robustness.py`) | Schema-driven requests to every route as three users, plus targeted hostile text: no 5xx, no CUI to uncleared users |
 | Ports and fakes (`api/ingest_api/ports.py`, `api/tests/fakes.py`) | Clock, ids, blob store and queue behind interfaces; seeded fakes inject faults (duplicates, reordering, lost acks, transient errors) |
-| Contract tests (`api/tests/contracts/`) | Each fake passes the same suite as the real thing (Azurite), so the simulator can't drift from reality |
+| Contract tests (`api/tests/contracts/`) | Each fake passes the same suite as the real thing (Azurite, the Service Bus emulator), so the simulator can't drift from reality |
 | Planted bugs (`api/tools/mutants.py`) | Injects known bugs one at a time and checks each is caught, by the right invariant |
 
 ```sh

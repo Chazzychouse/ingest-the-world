@@ -1,7 +1,24 @@
-.PHONY: up down reset logs test check explore sim soak mutants lint typecheck api-types api-types-check tf-validate token
+.PHONY: up down reset logs services test check explore sim soak mutants lint typecheck api-types api-types-check tf-validate token
+
+# ACCEPT_EULA=Y in .env accepts the Service Bus emulator's and SQL Server's licences, which
+# adds the queue to the stack and to the tests (see .env.example). Without it both skip.
+-include .env
+ifeq ($(ACCEPT_EULA),Y)
+export COMPOSE_PROFILES = queue
+QUEUE = servicebus
+export INGEST_REQUIRE_SERVICEBUS = 1
+endif
+
+# Waits for the emulator's health endpoint, which compose can't check (the image has no shell).
+define wait_for_queue
+	$(if $(QUEUE),@for i in $$(seq 60); do \
+	  curl -sf http://localhost:5300/health >/dev/null && exit 0; sleep 2; done; \
+	  echo "Service Bus emulator not healthy after 120s: docker compose logs servicebus"; exit 1)
+endef
 
 up:  ## Build and start the local stack (http://localhost:8081)
 	docker compose up -d --build --wait
+	$(wait_for_queue)
 
 down:
 	docker compose down
@@ -10,12 +27,15 @@ reset:  ## Stop and delete local data volumes
 	docker compose down -v
 
 logs:
-	docker compose logs -f api
+	docker compose logs -f api $(if $(QUEUE),event-shim)
+
+services:  # the backing services the tests run against
+	docker compose up -d --wait db azurite $(QUEUE)
+	$(wait_for_queue)
 
 PYTEST = cd api && INGEST_REQUIRE_DB=1 uv run pytest -q
 
-test:  ## API tests against the Compose Postgres (and Azurite)
-	docker compose up -d --wait db azurite
+test: services  ## API tests against the Compose Postgres, Azurite and Service Bus emulator
 	$(PYTEST)
 
 # Hypothesis profile per target (see api/tests/conftest.py). `check` is derandomized so a
@@ -24,8 +44,7 @@ check: export INGEST_HYPOTHESIS_PROFILE = ci
 explore sim: export INGEST_HYPOTHESIS_PROFILE = dev
 soak: export INGEST_HYPOTHESIS_PROFILE = soak
 
-check: lint typecheck api-types-check  ## The gate: lint, types, every test, traceability, JSON report
-	docker compose up -d --wait db azurite
+check: lint typecheck api-types-check services  ## The gate: lint, types, every test, traceability, JSON report
 	$(PYTEST) --check-invariants --invariants-report=reports/invariants.json
 	cd web && pnpm test
 
@@ -42,8 +61,7 @@ soak:  ## Long simulation run (minutes)
 	docker compose up -d --wait db
 	$(PYTEST) tests/sim tests/test_access_model.py
 
-mutants:  ## Plant known bugs and check each is caught by the right invariant
-	docker compose up -d --wait db azurite
+mutants: services  ## Plant known bugs and check each is caught by the right invariant
 	cd api && INGEST_REQUIRE_DB=1 uv run python tools/mutants.py
 
 lint:
