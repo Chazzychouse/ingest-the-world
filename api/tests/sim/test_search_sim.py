@@ -197,6 +197,8 @@ class SearchMachine(RuleBasedStateMachine):
             kind=data.draw(st.sampled_from(list(Kind))),
             bbox=data.draw(footprints()),
             raise_to="CUI" if raised else None,
+            # Drawn, not random: an item cataloged mid-search must sort the same way on replay.
+            id=data.draw(st.uuids(version=4).filter(lambda u: str(u) not in self.items)),
         )
         item = catalog(self.db, new)
         self.items[str(item.id)] = item

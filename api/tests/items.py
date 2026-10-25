@@ -23,6 +23,9 @@ class NewItem:
     kind: Kind = Kind.GENERIC
     bbox: Bbox | None = None
     raise_to: str | None = None  # a marking above its collection's
+    # Its id, which breaks ties in search order: random unless a simulation draws it, so that
+    # where a new item sorts against a page cursor replays exactly.
+    id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,7 +39,7 @@ class Cataloged:
 
 def catalog(db: psycopg.Connection, new: NewItem) -> Cataloged:
     """Catalogs an item as the pipeline would, from an upload of its own."""
-    upload_id = uuid.uuid4()
+    upload_id = new.id or uuid.uuid4()
     upload = UploadIn(
         collection_id=new.collection, filename=new.filename, size_bytes=1, tags=list(new.tags)
     )
