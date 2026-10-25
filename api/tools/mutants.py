@@ -243,14 +243,11 @@ SKIP = shutil.ignore_patterns(
 )
 
 
-def run(mutant: Mutant) -> tuple[bool, str]:
-    """Applies `mutant` to a throwaway copy of the repository and runs the suite there.
-
-    The working tree is never modified, so editing code while mutants run is safe.
-    """
+def run(mutant: Mutant, snapshot: Path) -> tuple[bool, str]:
+    """Applies `mutant` to a throwaway copy of `snapshot` and runs the suite there."""
     with tempfile.TemporaryDirectory() as tmp:
         sandbox = Path(tmp) / "repo"
-        shutil.copytree(REPO, sandbox, ignore=SKIP)
+        shutil.copytree(snapshot, sandbox)
         path = sandbox / "api" / mutant.file
         original = path.read_text()
         if original.count(mutant.old) != 1:
@@ -289,10 +286,15 @@ def run(mutant: Mutant) -> tuple[bool, str]:
 def main(argv: list[str]) -> int:
     selected = [m for m in MUTANTS if not argv or any(a in m.name for a in argv)]
     survived = 0
-    for mutant in selected:
-        ok, message = run(mutant)
-        survived += not ok
-        print(f"{'ok  ' if ok else 'FAIL'} {mutant.name:<30} {message}", flush=True)
+    # Every mutant runs against the tree as it was at the start, so editing code while
+    # mutants run neither breaks the run nor leaks half-made changes into it.
+    with tempfile.TemporaryDirectory() as tmp:
+        snapshot = Path(tmp) / "repo"
+        shutil.copytree(REPO, snapshot, ignore=SKIP)
+        for mutant in selected:
+            ok, message = run(mutant, snapshot)
+            survived += not ok
+            print(f"{'ok  ' if ok else 'FAIL'} {mutant.name:<30} {message}", flush=True)
     print(f"\n{len(selected) - survived}/{len(selected)} mutants caught")
     return 1 if survived else 0
 
