@@ -53,14 +53,16 @@ api/ingest_api/
   event_shim.py  local stand-in for Event Grid: announces committed landing blobs on the queue
   meta.py        /healthz, /config
   identity.py    /me
-  catalog/       collections and grants: models.py, store.py, routes.py
+  collections/   collections and their grants: models.py, store.py, routes.py
   uploads/       upload sessions and their signed URLs: models.py, store.py, routes.py
-  items/         catalog items: kinds.py (what a file is), store.py (only the pipeline writes)
+  items/         cataloged files: kinds.py (what a file is), store.py (only the pipeline writes)
   worker/        the pipeline: pipeline.py (one blob version's step machine), classify.py,
-                 store.py (jobs), runner.py (queue -> settle), __main__.py (composition)
+                 jobs.py (its store), runner.py (queue -> settle), __main__.py (composition)
 api/migrations/  numbered SQL, never edited once merged; add a new file instead
 ```
 
+- **Packages are named for what they own.** The *catalog* is collections plus items (the
+  `catalog` schema); each has its own package because each has its own writer.
 - **A feature is a module; it becomes a package once it owns storage.** A package has
   `models.py` (Pydantic request and response shapes), `store.py` (SQL, typed rows in and out)
   and `routes.py` (HTTP only: parse, call, audit, map errors). Add a feature by adding a

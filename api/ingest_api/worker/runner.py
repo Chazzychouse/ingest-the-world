@@ -19,7 +19,7 @@ from psycopg.rows import TupleRow
 
 from ingest_api.events import BlobCreated, InvalidEvent, parse_blob_created
 from ingest_api.ports import Container, LockLost, Message, Queue, StorageError
-from ingest_api.worker import store as jobs
+from ingest_api.worker import jobs
 from ingest_api.worker.pipeline import Busy, Pipeline, process
 
 log = logging.getLogger("ingest.worker")

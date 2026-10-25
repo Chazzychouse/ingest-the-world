@@ -29,7 +29,7 @@ from hypothesis.stateful import (
 )
 
 from ingest_api.audit import AuditAction
-from ingest_api.catalog.routes import NOT_FOUND
+from ingest_api.collections.routes import NOT_FOUND
 from ingest_api.ports import Container
 from ingest_api.uploads.routes import NOT_FOUND as UPLOAD_NOT_FOUND
 from tests.audit_log import AuditLog

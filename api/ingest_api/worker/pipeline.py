@@ -6,7 +6,7 @@
        (wrong size, wrong checksum, superseded, no or closed upload)     rejected
 
 Every step can fail midway and be retried from the top on redelivery, so each is idempotent:
-the job row (`worker.store`) records the outcome once, copies refuse to overwrite and are
+the job row (`worker.jobs`) records the outcome once, copies refuse to overwrite and are
 recognised by the source etag they carry, and landing is cleared only after the outcome is
 committed (ING-1, ING-2, ING-5). Versions of one blob are processed one at a time, under a
 lock on its name. The scan comes before anything reaches `raw/` (ING-4).
@@ -32,7 +32,7 @@ from ingest_api.ports import (
     TransientStorageError,
 )
 from ingest_api.uploads import store as uploads
-from ingest_api.worker import store as jobs
+from ingest_api.worker import jobs
 from ingest_api.worker.classify import HEAD_BYTES, classify
 
 # Blob metadata naming the landing version a copy was made from.

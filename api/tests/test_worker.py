@@ -8,7 +8,7 @@ import pytest
 
 from ingest_api.adapters.eicar_scanner import EicarScanner
 from ingest_api.ports import BlobProps, Container
-from ingest_api.worker import store as jobs
+from ingest_api.worker import jobs
 from ingest_api.worker.pipeline import Pipeline
 from ingest_api.worker.runner import INVALID_EVENT, run_once
 from tests.fakes import Faults, MemoryBlobStore, SimClock, SimQueue, event_for

@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from ingest_api.catalog.routes import NOT_FOUND as COLLECTION_NOT_FOUND
+from ingest_api.collections.routes import NOT_FOUND as COLLECTION_NOT_FOUND
 from ingest_api.ports import Container
 from ingest_api.uploads.routes import NO_WRITE_ACCESS
 from ingest_api.uploads.routes import NOT_FOUND as UPLOAD_NOT_FOUND

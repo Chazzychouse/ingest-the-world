@@ -35,7 +35,7 @@ LIST_AUDIT = "    auditor.allowed(\n        AuditAction.COLLECTION_LIST,"
 PUT_GRANT_CHECK = (
     "row = readable_or_404(conn, auditor, action, collection_id, principal)\n    store.put_grant("
 )
-ROUTES = "ingest_api/catalog/routes.py"
+ROUTES = "ingest_api/collections/routes.py"
 UPLOAD_ROUTES = "ingest_api/uploads/routes.py"
 # The latest definition of the access functions; earlier migrations' versions are replaced.
 UPLOADS_SQL = "migrations/0003_uploads.sql"
@@ -111,7 +111,7 @@ MUTANTS = [
     ),
     Mutant(
         "nul-reaches-postgres",
-        "ingest_api/catalog/models.py",
+        "ingest_api/collections/models.py",
         "title: str = Field(min_length=1, max_length=200, pattern=NO_NUL_PATTERN)",
         "title: str = Field(min_length=1, max_length=200)",
         ("ROB-1",),

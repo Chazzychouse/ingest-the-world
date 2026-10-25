@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, status
 from ingest_api import authz
 from ingest_api.audit import AuditAction, Auditor, Target
 from ingest_api.auth import Principal
-from ingest_api.catalog.routes import collection_target, readable_or_404
+from ingest_api.collections.routes import collection_target, readable_or_404
 from ingest_api.deps import Audit, Conn, CurrentPrincipal, Rt, Runtime
 from ingest_api.ports import Container
 from ingest_api.uploads import store

@@ -10,7 +10,7 @@ import pytest
 
 from ingest_api.items.kinds import Kind
 from ingest_api.uploads.models import UploadStatus
-from ingest_api.worker.store import Stage
+from ingest_api.worker.jobs import Stage
 
 
 def test_the_database_knows_exactly_the_kinds_the_code_does(db):
