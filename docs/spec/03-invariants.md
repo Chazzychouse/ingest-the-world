@@ -94,6 +94,15 @@ its purpose needs (an upload URL may create and write, never read, list or delet
 expires within one hour. Checked on every issued URL, and against Azurite to prove the
 storage service enforces what the URL says.
 
+### ACC-9 Every byte path asks the same question
+
+Status: planned (M2)
+
+Downloads, thumbnails, preview tokens, raster tiles and footprint tiles serve only items the
+caller may read under `authz.readable_scopes`, and an unreadable item answers exactly like a
+missing one (ACC-1 and ACC-2, extended from rows to bytes). A preview token serves only the item
+it was minted for.
+
 ## Ingest integrity
 
 ### ING-1 Idempotent processing
@@ -187,16 +196,31 @@ the Service Bus emulator.
 
 ### ING-7 Derivatives are rebuildable
 
-Status: planned (M3)
+Status: planned (M2)
 
-Deleting every derivative and rerunning the pipeline yields an equivalent catalog,
-ignoring timestamps.
+Deleting every derivative and rerunning derive yields equivalent assets: the same roles, media
+types and lineage, with equal checksums where the recipe is deterministic, ignoring timestamps.
+
+### ING-11 Deriving never changes an outcome
+
+Status: planned (M2)
+
+A derive job only adds assets to a cataloged item. It never changes the item's identity,
+marking or outcome, and never runs on a version that was quarantined or rejected (ING-4).
+
+### ING-12 One asset per role and recipe
+
+Status: planned (M2)
+
+However often a derive job is redelivered or interrupted, an item ends with at most one asset
+per `(role, recipe_version)`, and every asset row and its blob in `derived/` agree (ING-1 and
+ING-5, extended to derivatives).
 
 ## Lifecycle
 
 ### LIF-1 Legal hold wins
 
-Status: planned (M2)
+Status: planned (M5)
 
 Nothing under legal hold is deleted, or tiered towards deletion, whatever its retention
 policy says.
