@@ -121,10 +121,6 @@ class AzureBlobStore:
     def __init__(self, service: BlobServiceClient):
         self._service = service
 
-    @classmethod
-    def from_connection_string(cls, connection_string: str) -> "AzureBlobStore":
-        return cls(BlobServiceClient.from_connection_string(connection_string))
-
     def put(
         self,
         container: str,

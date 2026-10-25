@@ -1,18 +1,38 @@
 """The database's own guards on items and jobs: the last line behind the pipeline's logic."""
 
+import re
 import uuid
 from datetime import UTC, datetime
+from typing import get_args
 
 import psycopg
 import pytest
 
 from ingest_api.items.kinds import Kind
+from ingest_api.uploads.models import UploadStatus
+from ingest_api.worker.store import Stage
 
 
 def test_the_database_knows_exactly_the_kinds_the_code_does(db):
     rows = db.execute("SELECT code FROM catalog.kinds").fetchall()
 
     assert {code for (code,) in rows} == set(Kind)
+
+
+def _allowed(db, constraint: str) -> set[str]:
+    """The values a `CHECK (column IN (...))` constraint admits."""
+    [(definition,)] = db.execute(
+        "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = %s", (constraint,)
+    ).fetchall()
+    return set(re.findall(r"'([^']+)'::text", definition))
+
+
+@pytest.mark.parametrize(
+    ("constraint", "values"),
+    [("uploads_status_check", UploadStatus), ("jobs_stage_check", Stage)],
+)
+def test_the_database_admits_exactly_the_states_the_code_has(db, constraint, values):
+    assert _allowed(db, constraint) == set(get_args(values))
 
 
 def _upload(db, collection: str) -> uuid.UUID:

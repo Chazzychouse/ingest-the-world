@@ -146,7 +146,7 @@ def idp() -> TestIdp:
 
 def app_settings(database_url: str) -> Settings:
     """Settings for an app under test: the test IdP, the tests' Azurite account for signing
-    upload URLs, and the Service Bus emulator."""
+    upload URLs, and the Service Bus emulator with short receive waits."""
     return Settings(
         database_url=database_url,
         oidc_issuer=ISSUER,
@@ -154,6 +154,7 @@ def app_settings(database_url: str) -> Settings:
         blob_account_url=TEST_ACCOUNT_URL,
         blob_account_key=SecretStr(TEST_ACCOUNT_KEY),
         queue_connection=SecretStr(EMULATOR_CONNECTION),
+        queue_max_wait_seconds=1.0,
     )
 
 

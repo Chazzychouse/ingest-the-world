@@ -46,7 +46,9 @@ api/ingest_api/
   audit.py       the Auditor: one way to record allowed and refused actions
   schema.py      ApiModel, the base for every request and response model
   ports.py       interfaces to the outside world (clock, ids, blobs, queues)
-  adapters/      real implementations of ports (Azure Blob and SAS signing, Service Bus)
+  adapters/      real implementations of ports (Azure Blob and SAS signing, Service Bus,
+                 the EICAR stand-in scanner)
+  wiring.py      builds adapters from settings, for the API, the worker and the shim
   events.py      BlobCreated events in the Event Grid schema: parsed by workers, built by the shim
   event_shim.py  local stand-in for Event Grid: announces committed landing blobs on the queue
   meta.py        /healthz, /config
@@ -74,8 +76,9 @@ api/migrations/  numbered SQL, never edited once merged; add a new file instead
 - **Side effects go through ports.** Production code never calls `time`, `uuid`, `random` or
   a cloud SDK directly outside `adapters/`; it takes a port, so the simulator can substitute a
   seeded fake.
-- **Composition happens once,** in `app.py` (and test fixtures). No module-level clients,
-  pools or singletons elsewhere.
+- **Composition happens once per process,** at startup: `app.py` for the API,
+  `worker/__main__.py` and `event_shim.run` for the daemons, and test fixtures. Each builds
+  its adapters with `wiring.py`, never by hand. No module-level clients, pools or singletons.
 
 ## Code standards
 

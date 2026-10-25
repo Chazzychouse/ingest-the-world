@@ -13,7 +13,7 @@ from psycopg.rows import TupleRow, class_row
 
 from ingest_api import authz
 from ingest_api.auth import Principal
-from ingest_api.uploads.models import ClosedStatus, UploadIn, UploadStatus
+from ingest_api.uploads.models import Outcome, UploadIn, UploadStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,7 +135,7 @@ def landed(conn: Connection[TupleRow], name: str) -> LandedUpload | None:
         ).fetchone()
 
 
-def close(conn: Connection[TupleRow], upload_id: UUID, status: ClosedStatus) -> None:
+def close(conn: Connection[TupleRow], upload_id: UUID, status: Outcome) -> None:
     """Records the pipeline's outcome for a still-pending upload."""
     conn.execute(
         "UPDATE ingest.uploads SET status = %s WHERE id = %s AND status = 'pending'",

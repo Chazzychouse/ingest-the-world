@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ingest_api.events import blob_created
 from ingest_api.ports import (
     MAX_DELIVERIES_EXCEEDED,
     BlobChanged,
@@ -24,6 +25,14 @@ from ingest_api.ports import (
     Message,
     TransientStorageError,
 )
+
+
+def event_for(props: BlobProps) -> dict[str, Any]:
+    """The BlobCreated event Event Grid would send for `props`; one per version, so its id is
+    the etag."""
+    return blob_created(
+        props, account_url="http://sim", event_id=props.etag, event_time=SimClock().now()
+    )
 
 
 class SimClock:

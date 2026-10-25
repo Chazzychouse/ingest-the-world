@@ -13,8 +13,9 @@ from uuid import UUID
 from psycopg import Connection
 from psycopg.rows import TupleRow, class_row
 
-Outcome = Literal["cataloged", "quarantined", "rejected"]
-Stage = Literal["received"] | Outcome
+from ingest_api.uploads.models import Outcome
+
+Stage = Literal["received", Outcome]
 
 
 class Reason(StrEnum):

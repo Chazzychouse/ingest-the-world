@@ -32,7 +32,6 @@ from ingest_api.ports import (
     TransientStorageError,
 )
 from ingest_api.uploads import store as uploads
-from ingest_api.uploads.models import ClosedStatus
 from ingest_api.worker import store as jobs
 from ingest_api.worker.classify import HEAD_BYTES, classify
 
@@ -108,7 +107,7 @@ def _finish(
     conn: Connection[TupleRow],
     p: Pipeline,
     event: BlobCreated,
-    outcome: ClosedStatus,
+    outcome: jobs.Outcome,
     *,
     reason: str | None = None,
     closes: uploads.LandedUpload | None = None,

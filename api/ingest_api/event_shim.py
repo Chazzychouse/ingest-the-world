@@ -13,8 +13,7 @@ import logging
 from collections.abc import Mapping
 from itertools import islice
 
-from ingest_api.adapters.azure_blob import AzureBlobStore, ensure_containers, service_client
-from ingest_api.adapters.service_bus import ServiceBusQueue
+from ingest_api import wiring
 from ingest_api.events import blob_created
 from ingest_api.ports import (
     BlobStore,
@@ -64,17 +63,8 @@ def announce(
 
 
 def run(settings: Settings, clock: Clock, ids: Ids) -> None:
-    key = settings.blob_account_key.get_secret_value() if settings.blob_account_key else None
-    service = service_client(settings.blob_account_url, key)
-    ensure_containers(service, Container)
-    store = AzureBlobStore(service)
-    connection = settings.queue_connection
-    with ServiceBusQueue.connect(
-        settings.queue_name,
-        connection_string=connection.get_secret_value() if connection else None,
-        namespace=settings.queue_namespace,
-        max_wait_seconds=settings.queue_max_wait_seconds,
-    ) as queue:
+    store = wiring.blob_store(settings)
+    with wiring.queue(settings) as queue:
         log.info("watching %s/%s", settings.blob_account_url, Container.LANDING)
         announced: Announced = {}
         while True:  # unbounded by design: a daemon that runs until its container stops
@@ -93,6 +83,5 @@ def run(settings: Settings, clock: Clock, ids: Ids) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    logging.getLogger("azure").setLevel(logging.WARNING)  # it logs every HTTP request at INFO
+    wiring.configure_logging()
     run(Settings(), SystemClock(), UuidIds())

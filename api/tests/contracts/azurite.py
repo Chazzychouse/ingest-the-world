@@ -6,16 +6,15 @@ import os
 import pytest
 from azure.storage.blob import BlobServiceClient
 
-from ingest_api.adapters.azure_blob import ensure_containers, service_client
+from ingest_api import wiring
+from ingest_api.adapters.azure_blob import ensure_containers
 from ingest_api.ports import StorageError
 from tests.conftest import app_settings
 
 
 def azurite(*containers: str) -> BlobServiceClient:
     """A key-authenticated client for Azurite, with `containers` created if missing."""
-    settings = app_settings(database_url="")
-    key = settings.blob_account_key.get_secret_value() if settings.blob_account_key else None
-    service = service_client(settings.blob_account_url, key)
+    service = wiring.blob_service(app_settings(database_url=""))
     try:
         ensure_containers(service, containers)
     except StorageError as exc:

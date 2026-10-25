@@ -8,7 +8,6 @@ import contextlib
 import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from uuid import UUID
 
 import psycopg
@@ -16,12 +15,13 @@ import pytest
 
 from ingest_api.adapters.azure_blob import AzureBlobStore
 from ingest_api.adapters.eicar_scanner import EICAR, EicarScanner
-from ingest_api.events import blob_created, parse_blob_created
+from ingest_api.events import parse_blob_created
 from ingest_api.ports import BlobProps, BlobStore, Container, TransientStorageError
+from ingest_api.uploads.models import Outcome
 from ingest_api.worker.pipeline import SOURCE_ETAG, Pipeline, process
-from ingest_api.worker.store import Outcome, Reason
+from ingest_api.worker.store import Reason
 from tests.contracts.azurite import azurite
-from tests.fakes import CrashAfter, MemoryBlobStore, SimClock
+from tests.fakes import CrashAfter, MemoryBlobStore, SimClock, event_for
 
 LANDING, RAW, QUARANTINE = Container.LANDING, Container.RAW, Container.QUARANTINE
 TIFF = b"II*\x00" + bytes(range(256)) * 4
@@ -57,9 +57,7 @@ def start(client, auth, db) -> Callable[..., Landed]:
 
 def _work(database_url: str, store: BlobStore, props: BlobProps) -> Outcome:
     """Runs the pipeline on the event announcing `props`, in the wire format."""
-    event = parse_blob_created(
-        blob_created(props, account_url="http://test", event_id="e", event_time=datetime.now(UTC))
-    )
+    event = parse_blob_created(event_for(props))
     pipeline = Pipeline(store=store, scanner=EicarScanner(store), clock=SimClock())
     with psycopg.connect(database_url) as conn:
         return process(conn, pipeline, event)

@@ -30,12 +30,11 @@ from hypothesis.stateful import (
 )
 
 from ingest_api.adapters.eicar_scanner import EICAR, EicarScanner
-from ingest_api.events import blob_created
-from ingest_api.ports import BlobProps, Container
+from ingest_api.ports import Container
 from ingest_api.worker.pipeline import Pipeline
 from ingest_api.worker.runner import run_once
 from tests.conftest import make_app, reset_catalog
-from tests.fakes import Faults, MemoryBlobStore, SimClock, SimQueue
+from tests.fakes import Faults, MemoryBlobStore, SimClock, SimQueue, event_for
 from tests.invariants import check
 from tests.tokens import TestIdp
 
@@ -139,7 +138,7 @@ class PipelineMachine(RuleBasedStateMachine):
         faults, self.store.faults = self.store.faults, Faults.none()  # the browser's write
         props = self.store.put(LANDING, upload.name, data)
         self.store.faults = faults
-        event = _event(props)
+        event = event_for(props)
         self.versions[(props.name, props.etag)] = Version(upload, data, event)
         self.queue.send(event)
 
@@ -261,12 +260,6 @@ class PipelineMachine(RuleBasedStateMachine):
         uploads = self.db.execute("SELECT id, status FROM ingest.uploads ORDER BY id").fetchall()
         storage = {c: {n: self.store.content(c, n) for n in self.store.names(c)} for c in Container}
         return self._jobs(), self._items(), uploads, storage
-
-
-def _event(props: BlobProps) -> dict[str, object]:
-    return blob_created(
-        props, account_url="http://sim", event_id=props.etag, event_time=SimClock().now()
-    )
 
 
 @pytest.mark.invariant("ING-1", "ING-2", "ING-3", "ING-4", "ING-5")

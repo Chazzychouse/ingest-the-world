@@ -2,18 +2,16 @@
 
 import random
 from collections.abc import Iterator
-from datetime import UTC, datetime
 
 import psycopg
 import pytest
 
 from ingest_api.adapters.eicar_scanner import EicarScanner
-from ingest_api.events import blob_created
 from ingest_api.ports import BlobProps, Container
 from ingest_api.worker import store as jobs
 from ingest_api.worker.pipeline import Pipeline
 from ingest_api.worker.runner import INVALID_EVENT, run_once
-from tests.fakes import Faults, MemoryBlobStore, SimClock, SimQueue
+from tests.fakes import Faults, MemoryBlobStore, SimClock, SimQueue, event_for
 
 
 @pytest.fixture
@@ -38,9 +36,7 @@ def work(database_url, memory, queue, clock):
 
 
 def _announce(queue: SimQueue, props: BlobProps) -> None:
-    queue.send(
-        blob_created(props, account_url="http://test", event_id="e", event_time=datetime.now(UTC))
-    )
+    queue.send(event_for(props))
 
 
 def test_a_handled_event_is_completed(memory, queue, work):
