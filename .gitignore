@@ -22,3 +22,6 @@ dist/
 # Test reports
 api/reports/
 .hypothesis/
+
+# Sample corpus (samples/manifest.json); fetched by `make samples`
+samples/.cache/

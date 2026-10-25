@@ -1,4 +1,4 @@
-.PHONY: up down reset logs services test check explore sim soak mutants lint typecheck api-types api-types-check tf-validate token
+.PHONY: up down reset logs services test check explore sim soak mutants lint typecheck api-types api-types-check tf-validate token samples e2e
 
 # ACCEPT_EULA=Y in .env accepts the Service Bus emulator's and SQL Server's licences, which
 # adds the queue to the stack and to the tests (see .env.example). Without it both skip.
@@ -63,6 +63,13 @@ soak:  ## Long simulation run (minutes)
 
 mutants: services  ## Plant known bugs and check each is caught by the right invariant
 	cd api && INGEST_REQUIRE_DB=1 uv run python tools/mutants.py
+
+LARGE ?=
+samples:  ## Fetch, make and verify the sample corpus (samples/manifest.json): LARGE=1 for multi-GB
+	cd api && PYTHONPATH=. uv run python tools/samples.py $(if $(LARGE),--large)
+
+e2e: samples  ## Upload the corpus through the running stack (make up) and check every outcome
+	cd api && $(if $(LARGE),INGEST_E2E_LARGE=1) uv run pytest -q -m e2e tests/e2e
 
 lint:
 	cd api && uv run ruff check . && uv run ruff format --check .

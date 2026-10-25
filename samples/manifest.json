@@ -1,0 +1,619 @@
+{
+  "about": "The sample corpus for `make samples` and `make e2e`. Each sample is downloaded from the cited primary source, generated, or derived from another sample, and kept only if its sha256 matches. `uploads` says how the e2e suite uploads it (filename, which of the run's collections, declared checksum) and what each upload must become; fields left out are not checked. Mesh extents are POSITION accessor bounds in model space; footprints are WGS84 west, south, east, north.",
+  "samples": [
+    {
+      "name": "S2A_10SEG_20230618_0_L2A_TCI.tif",
+      "set": "default",
+      "sha256": "279d40c27265fce19166d8712f80850c5fa0764f6738d2222b6a892d48c5e5c8",
+      "size": 358259985,
+      "source": {
+        "url": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/10/S/EG/2023/6/S2A_10SEG_20230618_0_L2A/TCI.tif",
+        "page": "https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/S2A_10SEG_20230618_0_L2A",
+        "licence": "Copernicus Sentinel Data Terms (free, full and open; attribution required)",
+        "licence_url": "https://sentinel.esa.int/documents/247904/690755/Sentinel_Data_Legal_Notice"
+      },
+      "notes": "crs, bbox (WGS84), proj:shape, proj:transform from the Earth Search STAC item (assets.visual, properties.proj:epsg); band count from the item's eo:bands (red, green, blue). Cross-checked by hand-parsing the TIFF IFD with struct: 10980x10980, 3x8-bit, 1024 tiles, deflate (code 8), ProjectedCSTypeGeoKey 32610, nodata 0; proj:bbox is native UTM 10N from tiepoint+scale. Licence is Copernicus' own terms, not an SPDX id: free use incl. commercial, attribution 'Contains modified Copernicus Sentinel data [year]'.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:32610",
+            "bbox": [
+              -123.00021625365562,
+              36.951488600423914,
+              -121.75065723902861,
+              37.947580558603775
+            ],
+            "properties": {
+              "raster:band_count": 3,
+              "proj:shape": [
+                10980,
+                10980
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "byte.tif",
+      "set": "default",
+      "sha256": "59ed6e9dd19291bbdc230092ab7f6bc46fb0537ee4c9eec15dd58021cd9c12be",
+      "size": 736,
+      "source": {
+        "url": "https://raw.githubusercontent.com/OSGeo/gdal/739fcf03bfcc075e300dbd45743187b380a17cdc/autotest/gcore/data/byte.tif",
+        "page": "https://github.com/OSGeo/gdal/blob/739fcf03bfcc075e300dbd45743187b380a17cdc/autotest/gcore/data/byte.tif",
+        "licence": "MIT",
+        "licence_url": "https://github.com/OSGeo/gdal/blob/739fcf03bfcc075e300dbd45743187b380a17cdc/LICENSE.TXT"
+      },
+      "notes": "Hand-parsed TIFF IFD/GeoKeys with struct: 20x20, 1x8-bit, stripped (RowsPerStrip 20, uncompressed), ProjectedCSTypeGeoKey 26711 (NAD27 / UTM 11N), 60 m pixels, tiepoint (440720, 3751320). proj:bbox is native CRS; no independent WGS84 bbox computed (bbox null). Licence: GDAL LICENSE.TXT says GDAL is 'in general' MIT-style; the test file has no per-file notice.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:26711",
+            "properties": {
+              "raster:band_count": 1,
+              "proj:shape": [
+                20,
+                20
+              ]
+            }
+          }
+        },
+        {
+          "declared_sha256": "wrong",
+          "expect": {
+            "outcome": "rejected",
+            "reason": "checksum-mismatch"
+          }
+        }
+      ]
+    },
+    {
+      "name": "WaterBottle_emissive.png",
+      "set": "default",
+      "sha256": "e9b03ea395b0182917f876befda2d31639ce46058c832dd64e5ad02cde5bddb9",
+      "size": 59102,
+      "source": {
+        "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/WaterBottle/glTF/WaterBottle_emissive.png",
+        "page": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/WaterBottle/README.md",
+        "licence": "CC0-1.0",
+        "licence_url": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/WaterBottle/metadata.json"
+      },
+      "notes": "Hand-parsed PNG IHDR: 2048x2048, 8-bit, colour type 2 (RGB, 3 bands), not interlaced; chunks are only IHDR/IDAT/IEND, so no georeferencing. Licence from the model's metadata.json legal block (CC0-1.0, Microsoft).",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/png",
+            "extraction": "extracted",
+            "properties": {
+              "raster:band_count": 3,
+              "proj:shape": [
+                2048,
+                2048
+              ],
+              "raster:driver": "PNG"
+            }
+          }
+        },
+        {
+          "filename": "scan.laz",
+          "collection": "mislabelled",
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/png",
+            "extraction": "extracted"
+          }
+        }
+      ]
+    },
+    {
+      "name": "USGS_LPC_CO_DRCOG_2020_B20_w0476n4425.laz",
+      "set": "default",
+      "sha256": "80eb9d7c873bfafa1a5b339b07ca270f641b51275c1916cc311ecc636ae6d3a6",
+      "size": 110539971,
+      "source": {
+        "url": "https://rockyweb.usgs.gov/vdelivery/Datasets/Staged/Elevation/LPC/Projects/CO_DRCOG_2020_B20/CO_DRCOG_1_2020/LAZ/USGS_LPC_CO_DRCOG_2020_B20_w0476n4425.laz",
+        "page": "https://www.sciencebase.gov/catalog/item/61c41978d34e2ca389dae687",
+        "licence": "Public domain (USGS)",
+        "licence_url": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits"
+      },
+      "notes": "Header parsed by hand with struct: LAS 1.4, point format 6 (LAZ bit set), 16389299 points (64-bit count; legacy count 0), bounds 476000-476999.999 E, 4425000-4425999.999 N, z 1732.885-1923.166. CRS from the WKT VLR (LASF_Projection 2112): COMPD_CS NAD83(2011) / UTM 13N (EPSG:6342) + NAVD88 Geoid18 (EPSG:5703); compound has no single EPSG code. Point count and native bbox agree with USGS's project VPC (https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/LPC/Projects/CO_DRCOG_2020_B20/CO_DRCOG_1_2020/CO_DRCOG_1_2020.vpc); WGS84 bbox from the ScienceBase item / TNM API and the FGDC XML bounding.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "pointcloud",
+            "media_type": "application/vnd.laszip",
+            "extraction": "extracted",
+            "crs": "EPSG:6342+5703",
+            "bbox": [
+              -105.28109662208078,
+              39.97481721553587,
+              -105.26934902269787,
+              39.98385474462711
+            ],
+            "properties": {
+              "pc:count": 16389299,
+              "las:version": "1.4",
+              "las:point_format": 6,
+              "pc:encoding": "laszip"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "autzen-classified.copc.laz",
+      "set": "default",
+      "sha256": "db2d56cdfa058bffccdc5d6019dae2fc9c6a551df10a5523c06c76a3e25a27fa",
+      "size": 81123042,
+      "source": {
+        "url": "https://media.githubusercontent.com/media/PDAL/data/ce0024257c573526389c4db9ab26e82739b8aaa9/autzen/autzen-classified.copc.laz",
+        "page": "https://github.com/PDAL/data/blob/ce0024257c573526389c4db9ab26e82739b8aaa9/autzen/README.md",
+        "licence": "CC-BY-4.0",
+        "licence_url": "https://github.com/PDAL/data/blob/ce0024257c573526389c4db9ab26e82739b8aaa9/LICENSE"
+      },
+      "notes": "Header parsed by hand: LAS 1.4, point format 7, 10653336 points (matches the README's 10,653,336), first VLR is 'copc' record 1 (COPC info), bounds in US survey feet. WKT VLR: NAD83 / Oregon GIC Lambert (ft) (EPSG:2992) + NAVD88 ftUS, compound EPSG:6360. sha256/size match the git-lfs pointer in the repo (oid db2d56cd..., 81123042). WGS84 bbox not independently available.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "pointcloud",
+            "media_type": "application/vnd.laszip",
+            "extraction": "extracted",
+            "crs": "EPSG:2992+6360",
+            "properties": {
+              "pc:count": 10653336,
+              "las:version": "1.4",
+              "las:point_format": 7,
+              "pc:encoding": "copc"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Box.glb",
+      "set": "default",
+      "sha256": "ed52f7192b8311d700ac0ce80644e3852cd01537e4d62241b9acba023da3d54e",
+      "size": 1664,
+      "source": {
+        "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/Box/glTF-Binary/Box.glb",
+        "page": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/Box/README.md",
+        "licence": "CC-BY-4.0",
+        "licence_url": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/Box/metadata.json"
+      },
+      "notes": "GLB JSON chunk parsed by hand with struct+json: counts are len() of the top-level arrays; position_min/max is the component-wise union of every primitive's POSITION accessor min/max (untransformed, mesh-local; node transforms not applied). Licence from the model's metadata.json legal block.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "model/gltf-binary",
+            "extraction": "extracted",
+            "properties": {
+              "mesh:meshes": 1,
+              "mesh:primitives": 1,
+              "mesh:nodes": 2,
+              "mesh:materials": 1,
+              "mesh:extensions": [],
+              "mesh:extent": {
+                "min": [
+                  -0.5,
+                  -0.5,
+                  -0.5
+                ],
+                "max": [
+                  0.5,
+                  0.5,
+                  0.5
+                ]
+              }
+            }
+          }
+        },
+        {
+          "expect": {
+            "outcome": "rejected",
+            "reason": "duplicate"
+          }
+        },
+        {
+          "filename": "box.tif",
+          "collection": "mislabelled",
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "model/gltf-binary"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fox.glb",
+      "set": "default",
+      "sha256": "d97044e701822bac5a62696459b27d7b375aada5de8574ed4362edbba94771f7",
+      "size": 162852,
+      "source": {
+        "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/Fox/glTF-Binary/Fox.glb",
+        "page": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/Fox/README.md",
+        "licence": "CC0-1.0 AND CC-BY-4.0",
+        "licence_url": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/Fox/metadata.json"
+      },
+      "notes": "GLB JSON chunk parsed by hand with struct+json: counts are len() of the top-level arrays; position_min/max is the component-wise union of every primitive's POSITION accessor min/max (untransformed, mesh-local; node transforms not applied). Licence from the model's metadata.json legal block (Fox: CC0 model by PixelMannen, CC-BY-4.0 rigging/animation by tomkranis and glTF conversion).",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "model/gltf-binary",
+            "extraction": "extracted",
+            "properties": {
+              "mesh:meshes": 1,
+              "mesh:primitives": 1,
+              "mesh:nodes": 26,
+              "mesh:materials": 1,
+              "mesh:extensions": [],
+              "mesh:extent": {
+                "min": [
+                  -12.592718124389648,
+                  -0.12174476683139801,
+                  -88.09500122070312
+                ],
+                "max": [
+                  12.592718124389648,
+                  78.90718841552734,
+                  66.62486267089844
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "WaterBottle.glb",
+      "set": "default",
+      "sha256": "b337e526fd6a162013c2984aeec163f5fbb4f717252724dfc3f3458bd51df94b",
+      "size": 8966700,
+      "source": {
+        "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/WaterBottle/glTF-Binary/WaterBottle.glb",
+        "page": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/WaterBottle/README.md",
+        "licence": "CC0-1.0",
+        "licence_url": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/WaterBottle/metadata.json"
+      },
+      "notes": "GLB JSON chunk parsed by hand with struct+json: counts are len() of the top-level arrays; position_min/max is the component-wise union of every primitive's POSITION accessor min/max (untransformed, mesh-local; node transforms not applied). Licence from the model's metadata.json legal block.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "model/gltf-binary",
+            "extraction": "extracted",
+            "properties": {
+              "mesh:meshes": 1,
+              "mesh:primitives": 1,
+              "mesh:nodes": 1,
+              "mesh:materials": 1,
+              "mesh:extensions": [],
+              "mesh:extent": {
+                "min": [
+                  -0.05445001,
+                  -0.130220339,
+                  -0.0544500239
+                ],
+                "max": [
+                  0.05445001,
+                  0.130220339,
+                  0.0544500239
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ABeautifulGame.glb",
+      "set": "default",
+      "sha256": "bd7133b4b322aae97c589b8839dae8155ad2546acb35ae32a127e722a959d007",
+      "size": 42977928,
+      "source": {
+        "url": "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/ABeautifulGame/glTF-Binary/ABeautifulGame.glb",
+        "page": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/ABeautifulGame/README.md",
+        "licence": "CC-BY-4.0",
+        "licence_url": "https://github.com/KhronosGroup/glTF-Sample-Assets/blob/8f492390ddc7a2ae221a1369ef560589cf8c70fb/Models/ABeautifulGame/metadata.json"
+      },
+      "notes": "GLB JSON chunk parsed by hand with struct+json: counts are len() of the top-level arrays; position_min/max is the component-wise union of every primitive's POSITION accessor min/max (untransformed, mesh-local; node transforms not applied). Licence from the model's metadata.json legal block.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "model/gltf-binary",
+            "extraction": "extracted",
+            "properties": {
+              "mesh:meshes": 15,
+              "mesh:primitives": 15,
+              "mesh:nodes": 49,
+              "mesh:materials": 15,
+              "mesh:extensions": [
+                "KHR_materials_transmission",
+                "KHR_materials_volume"
+              ],
+              "mesh:extent": {
+                "min": [
+                  -0.3527080714702606,
+                  -0.00039617158472537994,
+                  -0.3527080714702606
+                ],
+                "max": [
+                  0.3527080714702606,
+                  0.15154190361499786,
+                  0.3527080714702606
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "example.parquet",
+      "set": "default",
+      "sha256": "ff90b4800d71b94c6f0e2bb813835f6d85828a82d991a1fe71c80cc756f38767",
+      "size": 28438,
+      "source": {
+        "url": "https://raw.githubusercontent.com/opengeospatial/geoparquet/1edd56fb020a188fcb35fd8babe89c41e241288e/examples/example.parquet",
+        "page": "https://github.com/opengeospatial/geoparquet/tree/1edd56fb020a188fcb35fd8babe89c41e241288e/examples",
+        "licence": "Apache-2.0",
+        "licence_url": "https://github.com/opengeospatial/geoparquet/blob/1edd56fb020a188fcb35fd8babe89c41e241288e/LICENSE"
+      },
+      "notes": "Parquet footer read with pyarrow 'read_metadata'/'read_schema' (uv-provided pyarrow, python -I). 'geo' key: version 2.0.0, crs is PROJJSON WGS 84 (CRS84) = OGC:CRS84 (lon/lat), bbox from the column metadata. 5 Natural Earth countries.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "vector",
+            "media_type": "application/vnd.apache.parquet",
+            "extraction": "extracted",
+            "crs": "OGC:CRS84",
+            "bbox": [
+              -180.0,
+              -18.28799,
+              180.0,
+              83.23324000000001
+            ],
+            "properties": {
+              "table:row_count": 5,
+              "geoparquet:geometry_column": "geometry"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "alltypes_plain.parquet",
+      "set": "default",
+      "sha256": "12a618d20a59ee0967fef45e7ec1ff6d451e724838edc1bbeac780ca15e8fcc4",
+      "size": 1851,
+      "source": {
+        "url": "https://raw.githubusercontent.com/apache/parquet-testing/3acde70509f990c4ddfe34bf3ab05890657e766c/data/alltypes_plain.parquet",
+        "page": "https://github.com/apache/parquet-testing/tree/3acde70509f990c4ddfe34bf3ab05890657e766c/data",
+        "licence": "Apache-2.0",
+        "licence_url": "https://github.com/apache/parquet-testing/blob/3acde70509f990c4ddfe34bf3ab05890657e766c/LICENSE.txt"
+      },
+      "notes": "Parquet footer via pyarrow (as above); no 'geo' key. Written by Impala 1.3.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "tabular",
+            "media_type": "application/vnd.apache.parquet",
+            "extraction": "extracted",
+            "properties": {
+              "table:row_count": 8,
+              "table:column_count": 11
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "usgs_quakes_m4.5_2020-01.csv",
+      "set": "default",
+      "sha256": "10bffe6bbcdd59a3f89edaef1522816cbacbbf27459522be4d221288457b7b7a",
+      "size": 24365,
+      "source": {
+        "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&starttime=2020-01-01T00:00:00&endtime=2020-01-08T00:00:00&minmagnitude=4.5&orderby=time-asc",
+        "page": "https://earthquake.usgs.gov/fdsnws/event/1/",
+        "licence": "Public domain (USGS)",
+        "licence_url": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits"
+      },
+      "notes": "Rows and columns from python's csv module (132 data rows + header). Values lon/lat in WGS84 but it is a plain CSV, so crs/bbox are null; extent given for reference. CAUTION: a live FDSN query; event revisions ('updated' column) can change the bytes, so pin to the cached sha256, not the URL.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "tabular",
+            "media_type": "text/csv",
+            "extraction": "unsupported"
+          }
+        }
+      ]
+    },
+    {
+      "name": "stress-192mib.glb",
+      "set": "default",
+      "sha256": "7ee11f39d759a0e68fc27571efcb7f8da062a67384f1d062db405001e22c3652",
+      "size": 201326332,
+      "generate": {
+        "by": "glb",
+        "seed": 1,
+        "mib": 192
+      },
+      "notes": "One triangle mesh whose binary chunk is the whole file; its header is a few hundred bytes.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "model/gltf-binary",
+            "extraction": "extracted",
+            "properties": {
+              "mesh:vertices": 16777152,
+              "mesh:triangles": 5592384,
+              "mesh:extent": {
+                "min": [
+                  -36.563575744628906,
+                  9.90870189666748,
+                  -40.61404037475586
+                ],
+                "max": [
+                  15.159296989440918,
+                  16.94867515563965,
+                  26.37746238708496
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "stress-3gib.glb",
+      "set": "large",
+      "sha256": "d2d272dc0576c9b09e7d6593fd7832c0f5299453f939adb1962ff44b25a81413",
+      "size": 3221213696,
+      "generate": {
+        "by": "glb",
+        "seed": 1,
+        "mib": 3072
+      },
+      "notes": "Multi-GB: the copy and hash take long enough that the message lock must be renewed (ING-10).",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "model/gltf-binary",
+            "extraction": "extracted",
+            "properties": {
+              "mesh:vertices": 268434432,
+              "mesh:triangles": 89478144,
+              "mesh:extent": {
+                "min": [
+                  -36.563575744628906,
+                  9.90870189666748,
+                  -40.61404037475586
+                ],
+                "max": [
+                  15.159296989440918,
+                  16.94867515563965,
+                  26.37746238708496
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "readings-kits.csv",
+      "set": "default",
+      "sha256": "efcf2f34b8000c74e9c443a9f02437d8f08a0953589b068236934e607874a402",
+      "size": 1586378,
+      "generate": {
+        "by": "readings-csv",
+        "seed": 2,
+        "minutes": 1440,
+        "devices": 24
+      },
+      "notes": "A day of minute readings from 24 field kits. Readings ingestion (D2) comes later.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "tabular",
+            "media_type": "text/csv",
+            "extraction": "unsupported"
+          }
+        }
+      ]
+    },
+    {
+      "name": "readings-kits.jsonl",
+      "set": "default",
+      "sha256": "8016fbf1421b23109c8a1e6410268e298695a27f5360a3ca141fc6063b045b90",
+      "size": 3970918,
+      "generate": {
+        "by": "readings-jsonl",
+        "seed": 3,
+        "minutes": 1440,
+        "devices": 24
+      },
+      "notes": "The same shape as JSON Lines.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "tabular",
+            "media_type": "application/jsonl",
+            "extraction": "unsupported"
+          }
+        }
+      ]
+    },
+    {
+      "name": "eicar.com",
+      "set": "default",
+      "sha256": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f",
+      "size": 68,
+      "generate": {
+        "by": "eicar"
+      },
+      "notes": "The EICAR anti-malware test file: harmless, flagged by every scanner (ING-4).",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "quarantined",
+            "reason": "EICAR-Test-File"
+          }
+        }
+      ]
+    },
+    {
+      "name": "truncated-tci.tif",
+      "set": "default",
+      "sha256": "d0dfc72e60047df03cc91bcbdac274976ecd2924467f25139ec2a41130cb5fd8",
+      "size": 4194304,
+      "derive": {
+        "from": "S2A_10SEG_20230618_0_L2A_TCI.tif",
+        "by": "truncate",
+        "keep_bytes": 4194304
+      },
+      "notes": "The Sentinel-2 COG cut off after 4 MiB, committed as if complete: the header and IFDs are intact, the tiles they point at aren't there.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "unreadable"
+          }
+        }
+      ]
+    }
+  ]
+}
