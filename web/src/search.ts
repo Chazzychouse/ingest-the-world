@@ -36,11 +36,15 @@ export type Filters = {
   q: string
   kinds: Kind[] // none ticked means any kind
   collections: string[] // none chosen means every readable collection
-  from: Day // the first day included, UTC
-  to: Day // the last day included, UTC
+  // When the data was captured (or uploaded, if the file doesn't say): first and last day, UTC
+  from: Day
+  to: Day
+  // When it was uploaded: first and last day, UTC
+  uploadedFrom: Day
+  uploadedTo: Day
 }
 
-export const NO_FILTERS: Filters = { q: '', kinds: [], collections: [], from: '', to: '' }
+export const NO_FILTERS: Filters = { q: '', kinds: [], collections: [], from: '', to: '', uploadedFrom: '', uploadedTo: '' }
 
 /** The STAC interval covering the days `from` to `to` inclusive, or undefined for any time. */
 export function interval(from: Day, to: Day): string | undefined {
@@ -61,6 +65,8 @@ export function searchBody(filters: Filters, area: Bbox | undefined): SearchIn {
   if (filters.collections.length) body.collections = filters.collections
   const datetime = interval(filters.from, filters.to)
   if (datetime) body.datetime = datetime
+  const created = interval(filters.uploadedFrom, filters.uploadedTo)
+  if (created) body.created = created
   if (area) body.bbox = area
   return body
 }

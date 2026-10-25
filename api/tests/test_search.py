@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from psycopg.types.json import Jsonb
 
-from ingest_api.items.metadata import Bbox
+from ingest_api.items.metadata import Bbox, Captured
 from ingest_api.items.models import FILE_EXTENSION, MAX_TERMS
 from tests.audit_log import AuditLog
 from tests.invariants import check
@@ -48,6 +48,49 @@ def test_an_item_is_a_stac_item(client, auth, db):
     assert (properties["title"], properties["keywords"]) == ("f.tif", ["survey"])
     assert properties["file:checksum"] == "1220" + sha256
     assert {link["rel"] for link in item["links"]} == {"self", "collection"}
+
+
+def _properties(client, auth, item: Cataloged) -> dict:
+    return client.get(f"/items/{item.id}", headers=auth("bob")).json()["properties"]
+
+
+def test_an_item_shows_when_it_was_captured(client, auth, db):
+    day = datetime(2023, 6, 1, tzinfo=UTC)
+    instant = _item(db, captured=Captured(day, day))
+    ranged = _item(db, captured=Captured(day, day + timedelta(hours=6)))
+    unknown = _item(db)
+
+    assert _properties(client, auth, instant)["datetime"] == "2023-06-01T00:00:00Z"
+    shown = _properties(client, auth, ranged)
+    assert (shown["datetime"], shown["start_datetime"], shown["end_datetime"]) == (
+        None,
+        "2023-06-01T00:00:00Z",
+        "2023-06-01T06:00:00Z",
+    )
+    assert _properties(client, auth, unknown)["datetime"] == "2026-10-25T12:00:00Z"  # cataloged
+    assert "start_datetime" not in _properties(client, auth, unknown)
+
+
+@pytest.mark.invariant("SRCH-1")
+def test_datetime_matches_capture_time_and_created_matches_cataloging(client, auth, db):
+    june = datetime(2023, 6, 1, tzinfo=UTC)
+    tag = f"t{uuid.uuid4().hex[:8]}"  # this test's own items, among everything else cataloged
+    flight = _item(db, tags=(tag,), captured=Captured(june, june + timedelta(days=1)))
+    unknown = _item(db, tags=(tag,))
+
+    def found(**body) -> set[str]:
+        return set(_search(client, auth, "bob", q=tag, **body))
+
+    both = {str(flight.id), str(unknown.id)}
+    cases = [
+        ({"datetime": "2023-06-01T12:00:00Z"}, {str(flight.id)}),  # inside the range
+        ({"datetime": "2023-06-02T00:00:00Z/.."}, both),  # its last instant, and after
+        ({"datetime": "../2023-05-31T23:59:59Z"}, set()),
+        ({"created": "2026-10-25T12:00:00Z"}, both),
+        ({"created": "../2026-01-01T00:00:00Z"}, set()),
+    ]
+    for body, expected in cases:
+        check("SRCH-1", found(**body) == expected, f"{body} found {found(**body)}")
 
 
 def test_an_item_with_no_footprint_has_no_bbox(client, auth, db):
@@ -134,6 +177,7 @@ def _ring(*corners):
         {"datetime": "2026-01-01"},  # no UTC offset
         {"datetime": "2026-02-01T00:00:00Z/2026-01-01T00:00:00Z"},
         {"datetime": "a/b/c"},
+        {"created": "2026-02-01T00:00:00Z/2026-01-01T00:00:00Z"},
         {"datetime": "../.."[:2]},
         {"q": " ".join(["t"] * (MAX_TERMS + 1))},
         {"limit": 0},

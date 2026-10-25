@@ -9,6 +9,7 @@ import io
 import json
 import struct
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
 
@@ -24,7 +25,7 @@ from rasterio.errors import NotGeoreferencedWarning
 from rasterio.transform import from_origin
 
 from ingest_api.items.kinds import Kind
-from ingest_api.items.metadata import Bbox
+from ingest_api.items.metadata import Bbox, Captured
 from ingest_api.ports import Container, StorageError
 from ingest_api.worker.classify import Media
 from ingest_api.worker.extract import MAX_EXTRACT_BYTES, Budget, Extraction, extract
@@ -40,8 +41,11 @@ UTM_13N = "EPSG:32613"
 ORIGIN_X, ORIGIN_Y, SIDE_METRES = 500_000.0, 4_500_000.0, 4096.0
 
 
-def geotiff(tmp_path, *, crs: str | None = UTM_13N) -> bytes:
-    """A tiled, uncompressed GeoTIFF bigger than the budget."""
+def geotiff(
+    tmp_path, *, crs: str | None = UTM_13N, tags: Mapping[str, Mapping[str, str]] | None = None
+) -> bytes:
+    """A tiled, uncompressed GeoTIFF bigger than the budget, with metadata `tags` by domain
+    ("" for the default one)."""
     pixels = int((BIG**0.5) // 512 + 1) * 512
     path = tmp_path / "ortho.tif"
     profile: dict[str, Any] = {
@@ -59,10 +63,14 @@ def geotiff(tmp_path, *, crs: str | None = UTM_13N) -> bytes:
         profile["crs"] = crs
     with rasterio.open(str(path), "w", **profile) as dataset:
         dataset.write(np.zeros((1, pixels, pixels), dtype="uint8"))
+        for domain, values in (tags or {}).items():
+            dataset.update_tags(ns=domain or None, **values)
     return path.read_bytes()
 
 
-def las_file(*, point_count: int = 50_000_000, wkt: str | None = None) -> bytes:
+def las_file(
+    *, point_count: int = 50_000_000, wkt: str | None = None, created: tuple[int, int] = (0, 0)
+) -> bytes:
     """A LAS 1.4 header (and optionally a WKT CRS record) followed by BIG bytes of points."""
     vlr = b""
     if wkt is not None:
@@ -79,6 +87,7 @@ def las_file(*, point_count: int = 50_000_000, wkt: str | None = None) -> bytes:
     min_x, min_y = ORIGIN_X, ORIGIN_Y - SIDE_METRES
     las.BOUNDS.pack_into(header, 179, max_x, min_x, max_y, min_y, 1700.0, 1500.0)
     las.POINT_COUNT_14.pack_into(header, 247, point_count)
+    las.CREATED.pack_into(header, 90, *created)
     return bytes(header) + vlr + bytes(BIG)
 
 
@@ -181,6 +190,47 @@ def test_a_las_header_yields_count_bounds_and_crs():
     assert metadata.properties["pc:count"] == 50_000_000
     assert metadata.properties["pc:encoding"] == "las"
     assert metadata.properties["las:version"] == "1.4"
+
+
+UTC_TIME = "2023-05-31T09:00:00Z"
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        (
+            {
+                "IMAGERY": {"ACQUISITIONDATETIME": UTC_TIME},
+                "": {"TIFFTAG_DATETIME": "2024:01:01 00:00:00"},
+            },
+            UTC_TIME,
+        ),
+        ({"": {"TIFFTAG_DATETIME": "2023:06:01 10:20:30"}}, "2023-06-01T10:20:30Z"),
+        ({"IMAGERY": {"ACQUISITIONDATETIME": "2023-05-31T11:00:00+02:00"}}, UTC_TIME),
+        ({"": {"TIFFTAG_DATETIME": "0000:00:00 00:00:00"}}, None),
+        ({"": {"TIFFTAG_DATETIME": "1066:10:14 09:00:00"}}, None),
+        ({}, None),
+    ],
+    ids=["acquisition-first", "tiff-datetime", "offset", "zeroed", "implausible", "none"],
+)
+def test_a_raster_says_when_it_was_captured_if_its_header_does(tmp_path, tags, expected):
+    data = geotiff(tmp_path, tags=tags)
+    captured = _extract(MemoryBlobStore(), Media.TIFF, data).metadata.captured
+
+    moment = datetime.fromisoformat(expected) if expected else None
+    assert captured == (Captured(moment, moment) if moment else None)
+
+
+@pytest.mark.parametrize(
+    ("created", "day"),
+    [((152, 2023), datetime(2023, 6, 1, tzinfo=UTC)), ((0, 0), None), ((366, 2023), None)],
+    ids=["june-1", "unset", "no-day-366"],
+)
+def test_a_las_file_was_captured_on_its_creation_day(created, day):
+    captured = _extract(MemoryBlobStore(), Media.LAS, las_file(created=created)).metadata.captured
+
+    expected = Captured(day, day + timedelta(days=1, microseconds=-1)) if day else None
+    assert captured == expected
 
 
 def test_a_plain_png_is_a_raster_without_a_footprint(tmp_path):

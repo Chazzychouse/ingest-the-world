@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from ingest_api.items.kinds import Kind
-from ingest_api.items.metadata import Bbox, Json, Metadata, Status
+from ingest_api.items.metadata import Bbox, Captured, Json, Metadata, Status
 from ingest_api.ports import StorageError
 
 log = logging.getLogger("ingest.worker")
@@ -49,6 +49,7 @@ class Found:
     bbox: Bbox | None = None
     crs: str | None = None
     kind: Kind | None = None  # a refinement of the classifier's kind (GeoParquet is vector)
+    captured: Captured | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,7 +214,9 @@ def extract(reader: Reader | None, budget: Budget, sandbox: Sandbox) -> Extracti
         return _without("failed", budget)
     if found is None:
         return _without("unreadable", budget)
-    metadata = Metadata("extracted", budget.fetched, found.properties, found.bbox, found.crs)
+    metadata = Metadata(
+        "extracted", budget.fetched, found.properties, found.bbox, found.crs, found.captured
+    )
     return Extraction(metadata, found.kind)
 
 

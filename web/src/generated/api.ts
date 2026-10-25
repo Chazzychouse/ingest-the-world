@@ -361,11 +361,8 @@ export interface components {
              * Format: date-time
              */
             created: string;
-            /**
-             * Datetime
-             * Format: date-time
-             */
-            datetime: string;
+            /** Datetime */
+            datetime: string | null;
             /** File:Checksum */
             "file:checksum": string;
             /** File:Size */
@@ -564,6 +561,8 @@ export interface components {
             ] | null;
             /** Collections */
             collections?: string[] | null;
+            /** Created */
+            created?: string | null;
             /** Datetime */
             datetime?: string | null;
             /** Ids */

@@ -26,12 +26,13 @@ const state: fc.Arbitrary<SearchUrl> = fc
     kinds: fc.uniqueArray(fc.constantFrom(...KINDS)),
     collections: fc.uniqueArray(fc.stringMatching(COLLECTION_ID), { maxLength: 5 }),
     range,
+    uploaded: range,
     inArea: fc.boolean(),
     item: fc.option(fc.uuid(), { nil: undefined }),
     view: fc.option(mapView, { nil: undefined }),
   })
-  .map(({ q, kinds, collections, range: [from = '', to = ''], inArea, item, view }) => ({
-    filters: { q, kinds, collections, from, to },
+  .map(({ q, kinds, collections, range: [from = '', to = ''], uploaded: [uploadedFrom = '', uploadedTo = ''], inArea, item, view }) => ({
+    filters: { q, kinds, collections, from, to, uploadedFrom, uploadedTo },
     inArea,
     item,
     view,
@@ -41,7 +42,7 @@ const state: fc.Arbitrary<SearchUrl> = fc
 const query = fc
   .array(
     fc.tuple(
-      fc.constantFrom('q', 'kind', 'collection', 'from', 'to', 'anywhere', 'item', 'map', 'other'),
+      fc.constantFrom('q', 'kind', 'collection', 'from', 'to', 'uploaded-from', 'uploaded-to', 'anywhere', 'item', 'map', 'other'),
       fc.oneof(fc.string(), fc.constantFrom(...KINDS), day, fc.uuid(), fc.constant('1/2/3'), fc.constant('a\0b')),
     ),
     { maxLength: 150 },
@@ -73,8 +74,13 @@ describe('search links', () => {
         }
         expect(filters.kinds.every((k) => KINDS.includes(k))).toBe(true)
         expect(filters.collections.every((c) => COLLECTION_ID.test(c))).toBe(true)
-        for (const d of [filters.from, filters.to]) expect(d === '' || !Number.isNaN(Date.parse(d))).toBe(true)
-        expect(filters.from && filters.to ? filters.from <= filters.to : true).toBe(true)
+        for (const [from, to] of [
+          [filters.from, filters.to],
+          [filters.uploadedFrom, filters.uploadedTo],
+        ]) {
+          for (const d of [from, to]) expect(d === '' || !Number.isNaN(Date.parse(d ?? ''))).toBe(true)
+          expect(from && to ? from <= to : true).toBe(true)
+        }
         expect(item === undefined || /^[0-9a-f-]{36}$/.test(item)).toBe(true)
         if (view) expect(Math.abs(view.lat) <= 90 && Math.abs(view.lon) <= 180).toBe(true)
       }),

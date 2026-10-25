@@ -33,7 +33,7 @@ from hypothesis.stateful import (
 
 from ingest_api.audit import AuditAction
 from ingest_api.items.kinds import Kind
-from ingest_api.items.metadata import Bbox
+from ingest_api.items.metadata import Bbox, Captured
 from ingest_api.items.routes import NOT_FOUND
 from tests.audit_log import AuditLog
 from tests.conftest import make_app, reset_catalog
@@ -65,6 +65,8 @@ class Query:
     box: tuple[int, int, int, int] | None = None  # sent as a GeoJSON polygon
     start: datetime | None = None
     end: datetime | None = None
+    created_start: datetime | None = None
+    created_end: datetime | None = None
     terms: tuple[str, ...] = ()
     collections: tuple[str, ...] | None = None
     kinds: tuple[Kind, ...] | None = None
@@ -80,9 +82,13 @@ class Query:
             w, s, e, n = self.box
             ring = [[w, s], [e, s], [e, n], [w, n], [w, s]]
             body["intersects"] = {"type": "Polygon", "coordinates": [ring]}
-        if self.start or self.end:
-            ends = [t.isoformat() if t else ".." for t in (self.start, self.end)]
-            body["datetime"] = ends[0] if self.start == self.end else "/".join(ends)
+        for name, start, end in (
+            ("datetime", self.start, self.end),
+            ("created", self.created_start, self.created_end),
+        ):
+            if start or end:
+                ends = [t.isoformat() if t else ".." for t in (start, end)]
+                body[name] = ends[0] if start == end else "/".join(ends)
         if self.terms:
             body["q"] = " ".join(self.terms)
         for name in ("collections", "kinds", "ids"):
@@ -116,19 +122,53 @@ def _spatial(query: Query, footprint: Bbox | None) -> bool:
     return query.box is not None and _overlaps(query.box, footprint)
 
 
+def _within(start: datetime | None, end: datetime | None, first: datetime, last: datetime) -> bool:
+    """Whether [first, last] overlaps the interval from `start` to `end` (None is open)."""
+    return (start is None or start <= last) and (end is None or first <= end)
+
+
 def matches(query: Query, cataloged: Cataloged) -> bool:
-    """SRCH-1's definition: the item satisfies every filter the query gives."""
+    """SRCH-1's definition: the item satisfies every filter the query gives. An item's time is
+    when it was captured, or the instant it was cataloged when that isn't known."""
     item = cataloged.item
     text = [item.filename.lower(), *(tag.lower() for tag in item.tags)]
+    first, last = (
+        (item.captured.start, item.captured.end) if item.captured else (item.created_at,) * 2
+    )
+    created = item.created_at
     return (
         _spatial(query, item.bbox)
-        and (query.start is None or query.start <= item.created_at)
-        and (query.end is None or item.created_at <= query.end)
+        and _within(query.start, query.end, first, last)
+        and _within(query.created_start, query.created_end, created, created)
         and all(any(term.lower() in field for field in text) for term in query.terms)
         and (query.collections is None or item.collection in query.collections)
         and (query.kinds is None or item.kind in query.kinds)
         and (query.ids is None or str(cataloged.id) in query.ids)
     )
+
+
+@st.composite
+def intervals(draw) -> tuple[datetime | None, datetime | None]:
+    """A time filter: none, an instant, a closed range or a range open at one end."""
+    shape = draw(st.sampled_from(["any", "instant", "between", "since", "until"]))
+    a, b = sorted(draw(st.lists(st.sampled_from(TIMES), min_size=2, max_size=2)))
+    return {
+        "any": (None, None),
+        "instant": (a, a),
+        "between": (a, b),
+        "since": (a, None),
+        "until": (None, b),
+    }[shape]
+
+
+@st.composite
+def captures(draw) -> Captured | None:
+    """When an item was captured, if its header said: an instant or a range, among the times
+    items are cataloged at, so the two kinds of time interleave."""
+    if draw(st.booleans()):
+        return None
+    first, last = sorted(draw(st.lists(st.sampled_from(TIMES), min_size=2, max_size=2)))
+    return Captured(first, first if draw(st.booleans()) else last)
 
 
 lons = st.integers(-180, 180).map(lambda v: v - v % 30)
@@ -199,6 +239,7 @@ class SearchMachine(RuleBasedStateMachine):
             kind=data.draw(st.sampled_from(list(Kind))),
             bbox=data.draw(footprints()),
             raise_to="CUI" if raised else None,
+            captured=data.draw(captures()),
             # Drawn, not random: an item cataloged mid-search must sort the same way on replay.
             id=data.draw(st.uuids(version=4).filter(lambda u: str(u) not in self.items)),
         )
@@ -241,16 +282,8 @@ class SearchMachine(RuleBasedStateMachine):
         box = data.draw(boxes()) if geometry == "box" else None
         if box is not None:  # a GeoJSON polygon is planar: it never wraps the antimeridian
             box = (min(box[0], box[2]), box[1], max(box[0], box[2]), box[3])
-        when = data.draw(st.sampled_from(["any", "instant", "between", "since", "until"]))
-        a, b = sorted(data.draw(st.lists(st.sampled_from(TIMES), min_size=2, max_size=2)))
-        interval = {
-            "any": (None, None),
-            "instant": (a, a),
-            "between": (a, b),
-            "since": (a, None),
-            "until": (None, b),
-        }
-        start, end = interval[when]
+        start, end = data.draw(intervals())
+        created_start, created_end = data.draw(intervals())
         # Insertion order, not sorted: ids are random, and draws must not depend on their values.
         ids = st.lists(st.sampled_from([*self.items, GHOST_ITEM]), max_size=4).map(tuple)
         return Query(
@@ -259,6 +292,8 @@ class SearchMachine(RuleBasedStateMachine):
             box=box,
             start=start,
             end=end,
+            created_start=created_start,
+            created_end=created_end,
             terms=tuple(data.draw(st.lists(st.sampled_from(TERMS), max_size=2))),
             collections=data.draw(
                 st.none()

@@ -232,8 +232,9 @@ policy says.
 Status: enforced
 
 Every result of a search matches every filter it was given: its footprint intersects the
-query's `bbox` or `intersects` geometry (boundaries touching counts), its `datetime` is in the
-query's interval, each `q` term appears in its filename or a tag, and its collection, kind and
+query's `bbox` or `intersects` geometry (boundaries touching counts), its time (when it was
+captured, or when it was cataloged if that isn't known) overlaps the `datetime` interval, its
+cataloging time is in the `created` interval, each `q` term appears in its filename or a tag, and its collection, kind and
 id are among those asked for. Checked by a simulation that compares each page against an
 independent model of the filters.
 

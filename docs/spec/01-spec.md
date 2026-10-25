@@ -87,7 +87,8 @@ An internal platform that takes in any file a geospatial organization produces (
 
 - `catalog.items` — one row per cataloged file, and the source of truth for search (D7): `id` (the upload's), `collection_id`, `kind`, `media_type`, `filename`, `tags text[]`, `marking`, `size_bytes`, `sha256`, `raw_blob`, `created_by`, `created_at`, header metadata (`extraction`, `crs`, `footprint geometry(Polygon,4326)`, `properties jsonb` with STAC extension fields), and `search_text`, generated from filename and tags.
   - Indexes: GIST(footprint), GIN(search_text gin_trgm_ops), btree on (created_at, id) for keyset paging and on (collection_id, created_at).
-  - Later: `datetime_range tstzrange` once acquisition times are extracted, `title`/`description` once items can be edited, `fts tsvector` over extracted text and `embedding vector(1536)` (M5), each with its index.
+  - `captured tstzrange`, when the header says when the data was captured, and `datetime_range`, generated from it or, failing that, from `created_at` (GiST-indexed, M2).
+  - Later: `title`/`description` once items can be edited, `fts tsvector` over extracted text and `embedding vector(1536)` (M5), each with its index.
 - `ingest.uploads`, `ingest.jobs` (stage, attempts, error, timings), `ingest.outbox`.
 - `readings.measurements` — a TimescaleDB hypertable `(device_id, ts, metric, value, item_id)`.
 - `authz.collection_grants` — collection → role/group grants. Items inherit their collection's grant.
@@ -101,10 +102,10 @@ An internal platform that takes in any file a geospatial organization produces (
 `POST /search` (M1) takes any combination of:
 
 - **Spatial:** `bbox` (`[west, south, east, north]`; `west > east` crosses the antimeridian) or `intersects` (a GeoJSON Point, Polygon or MultiPolygon, at most 10,000 positions), never both. Items with no footprint match neither.
-- **Temporal:** `datetime`, an RFC 3339 instant or a closed or half-open interval (`start/end`, `..` for open), matched against the item's `datetime`. Until acquisition times are extracted that is when the item was cataloged.
+- **Temporal:** `datetime`, an RFC 3339 instant or a closed or half-open interval (`start/end`, `..` for open), matched by overlap against the item's time: when it was captured (a TIFF/EXIF/imagery tag, or a LAS file's creation day) or, when its header doesn't say, the instant it was cataloged. That is also what its STAC `datetime` shows, or `start_datetime`/`end_datetime` for a range. `created` takes the same forms and matches when it was cataloged.
 - **Text:** `q`, whitespace-separated terms, each of which must appear (case-insensitively, as a substring) in the filename or a tag. Substrings rather than words because filenames are written as `site-alpha_ortho_2024.tif`, which a word tokenizer keeps as one token; served by a trigram index.
 - **Facets:** `collections`, `kinds`, `ids`.
-- **Paging:** `limit` (1–100, default 20) and the `token` from the previous page's `next` link. Results are ordered newest first by `(datetime, id)`, a total order, so the cursor is a position in it and paging is keyset, never offset: every item that matched when paging began is returned exactly once (SRCH-2), however many items arrive meanwhile.
+- **Paging:** `limit` (1–100, default 20) and the `token` from the previous page's `next` link. Results are ordered newest cataloged first by `(created_at, id)`, a total order, so the cursor is a position in it and paging is keyset, never offset: every item that matched when paging began is returned exactly once (SRCH-2), however many items arrive meanwhile.
 
 Every query filters through `authz.readable_scopes` (ACC-1), and each page is one audited request (ACC-5).
 
