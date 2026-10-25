@@ -27,6 +27,7 @@ class UploadRow:
     tags: list[str]
     blob_name: str
     status: UploadStatus
+    reason: str | None
     marking: str
     marking_rank: int
     created_by: str
@@ -42,9 +43,15 @@ def blob_name(collection_id: str, upload_id: UUID, filename: str) -> str:
 
 _SELECT_READABLE = f"""
     SELECT u.id, u.collection_id, u.filename, u.size_bytes, u.content_type, u.sha256, u.tags,
-           u.blob_name, u.status, c.marking, m.rank AS marking_rank, u.created_by,
+           u.blob_name, u.status, j.reason, c.marking, m.rank AS marking_rank, u.created_by,
            u.created_at, u.url_expires_at
     FROM ingest.uploads u
+    -- Why the pipeline decided as it did: the reason of the job whose outcome the upload took.
+    LEFT JOIN LATERAL (
+        SELECT reason FROM ingest.jobs
+        WHERE upload_id = u.id AND stage = u.status
+        ORDER BY updated_at DESC LIMIT 1
+    ) j ON true
     JOIN catalog.collections c ON c.id = u.collection_id
     JOIN authz.markings m ON m.code = c.marking
     WHERE u.collection_id IN ({authz.READABLE_IDS})

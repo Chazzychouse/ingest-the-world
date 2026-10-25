@@ -26,8 +26,10 @@ A response only ever contains resources the caller may read. "May read" is defin
 reference model in `api/tests/model.py`, which is written independently of
 `authz.readable_collections` and checked against it: a principal reads a collection when
 their clearance covers its marking **and** they are an Admin or hold a grant through a
-role (after role hierarchy), group or their own subject. Applies to every list, get,
-search, STAC, tile and download route, and to every signed URL the API hands out.
+role (after role hierarchy), group or their own subject. A principal reads an item when they
+read its collection **and** their clearance covers the item's own marking, which may be higher
+than its collection's (ACC-3). Applies to every list, get, search, STAC, tile and download
+route, and to every signed URL the API hands out.
 
 ### ACC-2 Non-disclosure
 
@@ -130,10 +132,12 @@ referred to it.)
 
 ### ING-4 Quarantine is sealed
 
-Status: enforced (pipeline); planned for serving and search (M1 slice 5)
+Status: enforced
 
 A blob the scanner flags never reaches `raw/` and never becomes an item, so nothing can
-extract, serve, sign or return it.
+extract, serve, sign or return it. Checked in the pipeline simulation, and after it drains by
+asking the API for every quarantined or rejected upload as an Admin: no item route or search
+returns one.
 
 ### ING-5 Catalog and storage agree
 
@@ -201,16 +205,22 @@ policy says.
 
 ### SRCH-1 Filters are honest
 
-Status: planned (M1)
+Status: enforced
 
-Every result of a spatial search intersects the query geometry, and every result of a
-facet filter matches it.
+Every result of a search matches every filter it was given: its footprint intersects the
+query's `bbox` or `intersects` geometry (boundaries touching counts), its `datetime` is in the
+query's interval, each `q` term appears in its filename or a tag, and its collection, kind and
+id are among those asked for. Checked by a simulation that compares each page against an
+independent model of the filters.
 
 ### SRCH-2 Pagination is complete
 
-Status: planned (M1)
+Status: enforced
 
-Paging through a search returns every match exactly once.
+Paging through a search with its `next` tokens returns every item that matched when paging
+began exactly once, in a fixed order, however many items are cataloged between pages (those
+appear at most once), and the last page says there is no next. Checked with items that share a
+timestamp and items cataloged mid-search.
 
 ### RDG-1 Compaction conserves readings
 

@@ -6,11 +6,12 @@ them on a faulty queue (duplicates, reordering, lost completions), and runs the 
 a faulty blob store (transient errors, writes whose acknowledgement is lost) and Postgres.
 
 After every step it checks that catalog and storage agree (ING-5), that nothing flagged left
-quarantine (ING-4), that cataloged originals never change (ING-3), that no outcome ever
-changes or contradicts its bytes (ING-2), and that extraction kept to its budget (ING-6). At
-the end it turns faults off, drains the queue, sweeps the dead letters as the worker does (giving
-up their versions), and checks that every version reached exactly one outcome (ING-2); then it
-delivers every event again and checks nothing moved (ING-1).
+quarantine (ING-4), that cataloged originals never change (ING-3), that no outcome ever changes
+or contradicts its bytes (ING-2), and that extraction kept to its budget (ING-6). At the end it
+turns faults off, drains the queue, sweeps the dead letters as the worker does (giving up their
+versions), and checks that every version reached exactly one outcome (ING-2) and that the API
+serves exactly the cataloged ones as items (ING-4); then it delivers every event again and
+checks nothing moved (ING-1).
 """
 
 import hashlib
@@ -31,6 +32,7 @@ from hypothesis.stateful import (
 )
 
 from ingest_api.adapters.eicar_scanner import EICAR, EicarScanner
+from ingest_api.items.models import MAX_PAGE
 from ingest_api.ports import Container
 from ingest_api.worker.extract import MAX_EXTRACT_BYTES, Sandbox
 from ingest_api.worker.pipeline import Pipeline
@@ -289,6 +291,7 @@ class PipelineMachine(RuleBasedStateMachine):
             return
         self._drain()
         self._check_every_version_settled()
+        self._check_only_items_are_served()
         before = self._snapshot()
         for version in self.versions.values():
             self.queue.send(version.event)
@@ -326,6 +329,21 @@ class PipelineMachine(RuleBasedStateMachine):
         check("ING-2", self.store.names(LANDING) == [], "versions left in landing")
         cataloged = {raw for raw, _ in self._items().values()}
         check("ING-5", set(self.store.names(RAW)) == cataloged, "raw holds uncataloged blobs")
+
+    def _check_only_items_are_served(self) -> None:
+        """An Admin cleared for everything is served exactly the cataloged uploads, whether
+        asking for each upload by id or searching for all of them (ING-4)."""
+        headers = self.idp.bearer("s-admin", **ADMIN)
+        uploads = [str(row[0]) for row in self.db.execute("SELECT id FROM ingest.uploads")]
+        cataloged = {str(item_id) for item_id in self._items()}
+        read = {u for u in uploads if self.client.get(f"/items/{u}", headers=headers).is_success}
+        check("ING-4", read == cataloged, f"served {read - cataloged}, not {cataloged - read}")
+        found: set[str] = set()
+        for start in range(0, len(uploads), MAX_PAGE):
+            body = {"ids": uploads[start : start + MAX_PAGE], "limit": MAX_PAGE}
+            page = self.client.post("/search", json=body, headers=headers).json()
+            found |= {feature["id"] for feature in page["features"]}
+        check("ING-4", found == cataloged, f"search found {found - cataloged}")
 
     def _snapshot(self):
         uploads = self.db.execute("SELECT id, status FROM ingest.uploads ORDER BY id").fetchall()

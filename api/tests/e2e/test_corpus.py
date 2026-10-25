@@ -5,8 +5,8 @@ manifest says: the right outcome, and for cataloged files the right kind and met
 
 Each run makes its own collections (as alice), so reruns never meet an earlier run's files,
 and uploads as carol, a Contributor granted write on them. The outcome is read through the API
-as the web app will; the item's metadata from the stack's database, until items have a route of
-their own (slice 5). Expectations live only in the manifest.
+as the web app will, and so is the item, which must also be found by searching for it (by its
+footprint, where the manifest gives one). Expectations live only in the manifest.
 """
 
 import os
@@ -16,10 +16,10 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import httpx
-import psycopg
 import pytest
 
-from tests.e2e.stack import API_URL, DATABASE_URL, TIMEOUT, Api, sign_in, upload_blocks
+from ingest_api.items.routes import SHA256_MULTIHASH
+from tests.e2e.stack import API_URL, TIMEOUT, Api, sign_in, upload_blocks
 from tests.invariants import check
 from tools import samples
 
@@ -57,12 +57,6 @@ def collection(http: httpx.Client) -> Callable[[str], str]:
     return get
 
 
-@pytest.fixture(scope="module")
-def stack_db() -> Iterator[psycopg.Connection]:
-    with psycopg.connect(DATABASE_URL, autocommit=True) as conn:
-        yield conn
-
-
 def _declared(sample: samples.Sample, upload: samples.Upload) -> str | None:
     match upload.declared_sha256:
         case "right":
@@ -73,49 +67,41 @@ def _declared(sample: samples.Sample, upload: samples.Upload) -> str | None:
             return None
 
 
-def _await_outcome(api: Api, upload_id: str, size: int) -> str:
+def _await_outcome(api: Api, upload_id: str, size: int) -> dict[str, Any]:
     deadline = time.monotonic() + BASE_WAIT_SECONDS + size / WAIT_BYTES_PER_SECOND
     polls = int((deadline - time.monotonic()) / POLL_SECONDS) + 1
     for _ in range(polls):
-        status = api.get(f"/uploads/{upload_id}")["status"]
-        if status != "pending":
-            return status
+        upload = api.get(f"/uploads/{upload_id}")
+        if upload["status"] != "pending":
+            return upload
         time.sleep(POLL_SECONDS)
     pytest.fail(f"upload {upload_id} still pending after {polls} polls")
 
 
-def _job_reason(db: psycopg.Connection, upload_id: str) -> str | None:
-    row = db.execute(
-        "SELECT reason FROM ingest.jobs WHERE upload_id = %s AND stage <> 'received' "
-        "ORDER BY updated_at DESC LIMIT 1",
-        (upload_id,),
-    ).fetchone()
-    return row[0] if row else None
-
-
-def _item(db: psycopg.Connection, upload_id: str) -> dict[str, Any] | None:
-    row = db.execute(
-        """
-        SELECT kind, media_type, sha256, size_bytes, extraction, crs, properties,
-               ST_XMin(footprint), ST_YMin(footprint), ST_XMax(footprint), ST_YMax(footprint)
-        FROM catalog.items WHERE id = %s
-        """,
-        (upload_id,),
-    ).fetchone()
-    if row is None:
+def _item(api: Api, upload_id: str) -> dict[str, Any] | None:
+    """The item as the API serves it, in the manifest's terms."""
+    stac = api.find(f"/items/{upload_id}")
+    if stac is None:
         return None
-    kind, media, sha, size, extraction, crs, properties, *box = row
-    bbox = None if box[0] is None else tuple(box)
+    properties = stac["properties"]
     return {
-        "kind": kind,
-        "media_type": media,
-        "sha256": sha,
-        "size": size,
-        "extraction": extraction,
-        "crs": crs,
+        "kind": properties["ingest:kind"],
+        "media_type": properties["ingest:media_type"],
+        "sha256": properties["file:checksum"].removeprefix(SHA256_MULTIHASH),
+        "size": properties["file:size"],
+        "extraction": properties["ingest:extraction"],
+        "crs": properties["proj:code"] or properties["proj:wkt2"],
         "properties": properties,
-        "bbox": bbox,
+        "bbox": tuple(stac["bbox"]) if "bbox" in stac else None,
     }
+
+
+def _found(api: Api, upload_id: str, expect: samples.Expect) -> bool:
+    """Whether searching for the item finds it: by id, and inside its expected footprint."""
+    body: dict[str, Any] = {"ids": [upload_id]}
+    if expect.bbox is not None:
+        body["bbox"] = list(expect.bbox)
+    return [f["id"] for f in api.post("/search", body)["features"]] == [upload_id]
 
 
 def _check_item(label: str, item: dict[str, Any], sample: samples.Sample, e: samples.Expect):
@@ -134,10 +120,9 @@ def _check_item(label: str, item: dict[str, Any], sample: samples.Sample, e: sam
         )
 
 
-@pytest.mark.invariant("ING-2", "ING-5", "ING-6")
+@pytest.mark.invariant("ING-2", "ING-4", "ING-5", "ING-6", "SRCH-1")
 @pytest.mark.parametrize("sample", CORPUS, ids=[s.name for s in CORPUS])
-def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collection, stack_db):
-    db = stack_db
+def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collection):
     if not sample.path.exists():
         pytest.fail(f"{sample.path} is missing: run `make samples`")
     api = Api(http, sign_in("carol"))
@@ -155,13 +140,13 @@ def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collectio
         with httpx.Client(timeout=TIMEOUT) as storage:
             upload_blocks(storage, session["upload_url"], sample.path)
 
-        status = _await_outcome(api, upload_id, sample.size)
-        expect = upload.expect
+        outcome = _await_outcome(api, upload_id, sample.size)
+        status, reason, expect = outcome["status"], outcome["reason"], upload.expect
         check("ING-2", status == expect.outcome, f"{label}: {status}, wanted {expect.outcome}")
         if expect.reason is not None:
-            reason = _job_reason(db, upload_id)
             assert reason == expect.reason, f"{label}: reason {reason!r}, wanted {expect.reason!r}"
-        item = _item(db, upload_id)
-        check("ING-2", (item is not None) == (status == "cataloged"), f"{label}: item {item}")
+        item = _item(api, upload_id)
+        check("ING-4", (item is not None) == (status == "cataloged"), f"{label}: item {item}")
         if item is not None:
             _check_item(label, item, sample, expect)
+            check("SRCH-1", _found(api, upload_id, expect), f"{label}: search didn't find it")

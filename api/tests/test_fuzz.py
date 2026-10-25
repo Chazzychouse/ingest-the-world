@@ -27,9 +27,10 @@ def api_schema(fuzz_database, idp):
 
 
 def _markings(body) -> list[str]:
-    """Every `marking` value anywhere in a JSON body."""
+    """Every marking anywhere in a JSON body: `marking`, or `ingest:marking` in a STAC item."""
     if isinstance(body, dict):
-        found = [body["marking"]] if isinstance(body.get("marking"), str) else []
+        keys = ("marking", "ingest:marking")
+        found = [body[k] for k in keys if isinstance(body.get(k), str)]
         return found + [m for value in body.values() for m in _markings(value)]
     if isinstance(body, list):
         return [m for value in body for m in _markings(value)]

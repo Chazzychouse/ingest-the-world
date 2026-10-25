@@ -1,6 +1,37 @@
 {
   "components": {
     "schemas": {
+      "Asset": {
+        "properties": {
+          "href": {
+            "title": "Href",
+            "type": "string"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Roles",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "href",
+          "type",
+          "title",
+          "roles"
+        ],
+        "title": "Asset",
+        "type": "object"
+      },
       "Collection": {
         "description": "A collection as returned by the API; built straight from `store.CollectionRow`.",
         "properties": {
@@ -234,6 +265,178 @@
         "title": "Health",
         "type": "object"
       },
+      "ItemCollection": {
+        "properties": {
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/StacItem"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/NextLink"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "numberReturned": {
+            "title": "Numberreturned",
+            "type": "integer"
+          },
+          "type": {
+            "const": "FeatureCollection",
+            "default": "FeatureCollection",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "features",
+          "links",
+          "numberReturned"
+        ],
+        "title": "ItemCollection",
+        "type": "object"
+      },
+      "ItemProperties": {
+        "additionalProperties": true,
+        "description": "Core fields plus whatever the header said (`proj:shape`, `raster:bands`, `pc:count`,\n`mesh:triangles`, ...), which is why other keys are allowed.",
+        "properties": {
+          "created": {
+            "format": "date-time",
+            "title": "Created",
+            "type": "string"
+          },
+          "datetime": {
+            "format": "date-time",
+            "title": "Datetime",
+            "type": "string"
+          },
+          "file:checksum": {
+            "title": "File:Checksum",
+            "type": "string"
+          },
+          "file:size": {
+            "title": "File:Size",
+            "type": "integer"
+          },
+          "ingest:extraction": {
+            "enum": [
+              "extracted",
+              "unsupported",
+              "unreadable",
+              "over-budget",
+              "failed"
+            ],
+            "title": "Ingest:Extraction",
+            "type": "string"
+          },
+          "ingest:kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "ingest:marking": {
+            "title": "Ingest:Marking",
+            "type": "string"
+          },
+          "ingest:marking_rank": {
+            "title": "Ingest:Marking Rank",
+            "type": "integer"
+          },
+          "ingest:media_type": {
+            "title": "Ingest:Media Type",
+            "type": "string"
+          },
+          "keywords": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Keywords",
+            "type": "array"
+          },
+          "proj:code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proj:Code"
+          },
+          "proj:wkt2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proj:Wkt2"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "datetime",
+          "created",
+          "title",
+          "keywords",
+          "ingest:kind",
+          "ingest:media_type",
+          "ingest:marking",
+          "ingest:marking_rank",
+          "ingest:extraction",
+          "file:size",
+          "file:checksum",
+          "proj:code",
+          "proj:wkt2"
+        ],
+        "title": "ItemProperties",
+        "type": "object"
+      },
+      "Kind": {
+        "enum": [
+          "raster",
+          "vector",
+          "pointcloud",
+          "mesh",
+          "tabular",
+          "document",
+          "generic"
+        ],
+        "title": "Kind",
+        "type": "string"
+      },
+      "Link": {
+        "properties": {
+          "href": {
+            "title": "Href",
+            "type": "string"
+          },
+          "rel": {
+            "title": "Rel",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rel",
+          "href",
+          "type"
+        ],
+        "title": "Link",
+        "type": "object"
+      },
       "Marking": {
         "properties": {
           "banner_color": {
@@ -319,6 +522,113 @@
         "title": "Me",
         "type": "object"
       },
+      "MultiPolygon": {
+        "properties": {
+          "coordinates": {
+            "items": {
+              "items": {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "maximum": 180.0,
+                      "minimum": -180.0,
+                      "type": "number"
+                    },
+                    {
+                      "maximum": 90.0,
+                      "minimum": -90.0,
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "maxItems": 10000,
+                "minItems": 4,
+                "type": "array"
+              },
+              "maxItems": 64,
+              "minItems": 1,
+              "type": "array"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "type": {
+            "const": "MultiPolygon",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "coordinates"
+        ],
+        "title": "MultiPolygon",
+        "type": "object"
+      },
+      "NextBody": {
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "NextBody",
+        "type": "object"
+      },
+      "NextLink": {
+        "description": "STAC's link to the next page of a POST search: repeat the request with `body` merged\ninto it.",
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/NextBody"
+          },
+          "href": {
+            "title": "Href",
+            "type": "string"
+          },
+          "merge": {
+            "const": true,
+            "default": true,
+            "title": "Merge",
+            "type": "boolean"
+          },
+          "method": {
+            "const": "POST",
+            "default": "POST",
+            "title": "Method",
+            "type": "string"
+          },
+          "rel": {
+            "const": "next",
+            "default": "next",
+            "title": "Rel",
+            "type": "string"
+          },
+          "type": {
+            "const": "application/geo+json",
+            "default": "application/geo+json",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rel",
+          "href",
+          "type",
+          "method",
+          "body",
+          "merge"
+        ],
+        "title": "NextLink",
+        "type": "object"
+      },
       "OidcClientConfig": {
         "properties": {
           "authority": {
@@ -340,6 +650,82 @@
           "scope"
         ],
         "title": "OidcClientConfig",
+        "type": "object"
+      },
+      "Point": {
+        "properties": {
+          "coordinates": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "maximum": 180.0,
+                "minimum": -180.0,
+                "type": "number"
+              },
+              {
+                "maximum": 90.0,
+                "minimum": -90.0,
+                "type": "number"
+              }
+            ],
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "type": {
+            "const": "Point",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "coordinates"
+        ],
+        "title": "Point",
+        "type": "object"
+      },
+      "Polygon": {
+        "properties": {
+          "coordinates": {
+            "items": {
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "maximum": 180.0,
+                    "minimum": -180.0,
+                    "type": "number"
+                  },
+                  {
+                    "maximum": 90.0,
+                    "minimum": -90.0,
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              "maxItems": 10000,
+              "minItems": 4,
+              "type": "array"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "type": {
+            "const": "Polygon",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "coordinates"
+        ],
+        "title": "Polygon",
         "type": "object"
       },
       "Retention-Input": {
@@ -409,6 +795,267 @@
           "legal_hold"
         ],
         "title": "Retention",
+        "type": "object"
+      },
+      "SearchIn": {
+        "description": "Every filter given must hold for every result (SRCH-1); a list filter that is empty\nmatches nothing.",
+        "properties": {
+          "bbox": {
+            "anyOf": [
+              {
+                "maxItems": 4,
+                "minItems": 4,
+                "prefixItems": [
+                  {
+                    "maximum": 180.0,
+                    "minimum": -180.0,
+                    "type": "number"
+                  },
+                  {
+                    "maximum": 90.0,
+                    "minimum": -90.0,
+                    "type": "number"
+                  },
+                  {
+                    "maximum": 180.0,
+                    "minimum": -180.0,
+                    "type": "number"
+                  },
+                  {
+                    "maximum": 90.0,
+                    "minimum": -90.0,
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "collections": {
+            "anyOf": [
+              {
+                "items": {
+                  "pattern": "^[a-z0-9][a-z0-9-]{1,62}$",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collections"
+          },
+          "datetime": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Datetime"
+          },
+          "ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ids"
+          },
+          "intersects": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "MultiPolygon": "#/components/schemas/MultiPolygon",
+                    "Point": "#/components/schemas/Point",
+                    "Polygon": "#/components/schemas/Polygon"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Point"
+                  },
+                  {
+                    "$ref": "#/components/schemas/Polygon"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MultiPolygon"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intersects"
+          },
+          "kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Kind"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kinds"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "q": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          }
+        },
+        "title": "SearchIn",
+        "type": "object"
+      },
+      "StacItem": {
+        "properties": {
+          "assets": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Asset"
+            },
+            "title": "Assets",
+            "type": "object"
+          },
+          "bbox": {
+            "anyOf": [
+              {
+                "maxItems": 4,
+                "minItems": 4,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bbox"
+          },
+          "collection": {
+            "title": "Collection",
+            "type": "string"
+          },
+          "geometry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Polygon"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/Link"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "properties": {
+            "$ref": "#/components/schemas/ItemProperties"
+          },
+          "stac_extensions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stac Extensions",
+            "type": "array"
+          },
+          "stac_version": {
+            "const": "1.1.0",
+            "default": "1.1.0",
+            "title": "Stac Version",
+            "type": "string"
+          },
+          "type": {
+            "const": "Feature",
+            "default": "Feature",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "stac_version",
+          "stac_extensions",
+          "id",
+          "collection",
+          "geometry",
+          "properties",
+          "links",
+          "assets"
+        ],
+        "title": "StacItem",
         "type": "object"
       },
       "TierStep": {
@@ -486,6 +1133,17 @@
             "title": "Marking Rank",
             "type": "integer"
           },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
           "sha256": {
             "anyOf": [
               {
@@ -536,6 +1194,7 @@
           "tags",
           "id",
           "status",
+          "reason",
           "marking",
           "marking_rank",
           "created_by",
@@ -1069,6 +1728,54 @@
         ]
       }
     },
+    "/items/{item_id}": {
+      "get": {
+        "operationId": "get_item_items__item_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StacItem"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Item",
+        "tags": [
+          "items"
+        ]
+      }
+    },
     "/me": {
       "get": {
         "operationId": "me_me_get",
@@ -1092,6 +1799,53 @@
         "summary": "Me",
         "tags": [
           "identity"
+        ]
+      }
+    },
+    "/search": {
+      "post": {
+        "description": "One page of readable items matching every filter, newest first. Follow the `next` link,\nmerging its body into this request, for the following page.",
+        "operationId": "search_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemCollection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search",
+        "tags": [
+          "items"
         ]
       }
     },

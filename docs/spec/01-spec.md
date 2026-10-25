@@ -14,7 +14,7 @@ An internal platform that takes in any file a geospatial organization produces (
 | **Asset** | One stored file (original or derived), with size, checksum, media type, and role. |
 | **Item** | The catalog record for one logical dataset. It is a STAC 1.1 Item and owns one or more Assets. |
 | **Bundle** | Multiple files that form one dataset (`.shp/.dbf/.prj`, `.gltf + .bin`, zipped File Geodatabase). |
-| **Collection** | A project-scoped group of Items. This is the pgSTAC partition key. |
+| **Collection** | A project-scoped group of Items, and the unit of access: grants and markings are set per collection. |
 | **Derivative** | An optimized copy made from an original: COG, COPC, GeoParquet, Zarr, 3D Tiles, proxy GLB, thumbnail. |
 | **Kind** | The classifier's output, e.g. `raster.cog`, `vector.shapefile`, `pointcloud.copc`, `mesh.glb`, `tabular.readings`. |
 
@@ -22,8 +22,8 @@ An internal platform that takes in any file a geospatial organization produces (
 
 ```
  Browser (React SPA, OIDC PKCE)
-   │ 1. POST /uploads  ──────────────►  Platform API (FastAPI) ── Postgres (catalog, pgSTAC, uploads)
-   │ ◄── per-blob write-only SAS           │  mounts STAC API (stac-fastapi-pgstac)
+   │ 1. POST /uploads  ──────────────►  Platform API (FastAPI) ── Postgres (catalog, uploads)
+   │ ◄── per-blob write-only SAS           │  STAC-shaped item + search API (D7)
    │ 2. PUT blocks in parallel ──────►  Blob: landing/
    │ 3. Put Block List (commit)
    ▼
@@ -72,7 +72,7 @@ An internal platform that takes in any file a geospatial organization produces (
    - tabular readings → per-device-per-day Parquet, plus TimescaleDB rows
    
    Each derivative is an Asset with STAC `processing:` lineage.
-8. **Index.** The Item is upserted into pgSTAC and the `catalog` search row in one transaction, and an outbox event is written. The embed worker builds a text description and stores its embedding.
+8. **Index.** The Item row in `catalog.items` is the search row: it is written once, in the same transaction as the outcome and its audit event, and an outbox event is written. The embed worker builds a text description and stores its embedding.
 9. **Notify.** Status updates stream to the UI over SSE: `uploading → queued → classifying → extracting → deriving → ready | failed`.
 
 ### 4.1 Streaming readings (D2)
@@ -85,9 +85,9 @@ An internal platform that takes in any file a geospatial organization produces (
 
 ## 5. Data model (Postgres)
 
-- `pgstac.*` — managed by pgSTAC, the source of truth for Items, Collections and Assets.
-- `catalog.items_search` — `item_id`, `collection`, `kind`, `media_type`, `owner`, `tags text[]`, `datetime_range tstzrange`, `footprint geometry(Geometry,4326)`, `size_bytes`, `title`, `description`, `fts tsvector` (weighted: title A, tags B, description C, extracted text D), `embedding vector(1536)`, `status`, `updated_at`.
-  - Indexes: GIST(footprint), GIST(datetime_range), GIN(fts), GIN(tags), GIN(title gin_trgm_ops), HNSW(embedding), btree on (collection, kind, owner).
+- `catalog.items` — one row per cataloged file, and the source of truth for search (D7): `id` (the upload's), `collection_id`, `kind`, `media_type`, `filename`, `tags text[]`, `marking`, `size_bytes`, `sha256`, `raw_blob`, `created_by`, `created_at`, header metadata (`extraction`, `crs`, `footprint geometry(Polygon,4326)`, `properties jsonb` with STAC extension fields), and `search_text`, generated from filename and tags.
+  - Indexes: GIST(footprint), GIN(search_text gin_trgm_ops), btree on (created_at, id) for keyset paging and on (collection_id, created_at).
+  - Later: `datetime_range tstzrange` once acquisition times are extracted, `title`/`description` once items can be edited, `fts tsvector` over extracted text and `embedding vector(1536)` (M5), each with its index.
 - `ingest.uploads`, `ingest.jobs` (stage, attempts, error, timings), `ingest.outbox`.
 - `readings.measurements` — a TimescaleDB hypertable `(device_id, ts, metric, value, item_id)`.
 - `authz.collection_grants` — collection → role/group grants. Items inherit their collection's grant.
@@ -96,22 +96,25 @@ An internal platform that takes in any file a geospatial organization produces (
 
 ## 6. Search
 
-One endpoint, `POST /search`, combines:
+`GET /items/{id}` returns one Item and `POST /search` searches them. Both speak STAC: an Item is a STAC 1.1 Item (GeoJSON Feature, `proj:`/`raster:`/`pc:`/`table:` and our `mesh:` fields in `properties`), and a search returns an ItemCollection whose `next` link carries the cursor. Item ids are UUIDs; an unreadable item answers exactly like a missing one (ACC-2).
 
-- **Text:** `websearch_to_tsquery` over `fts`, plus `pg_trgm` similarity on title for typos.
-- **Facets:** kind, media type, collection, owner, tags, size range. Counts come back in the response.
-- **Spatial:** `bbox`, `intersects` (GeoJSON), and `within_distance` (point + meters, via geography).
-- **Temporal:** overlap with `datetime_range`.
-- **Semantic (optional `mode=hybrid`):** query embedding → HNSW top-k with iterative scan when filters are on, fused with the text ranking by RRF (k = 60).
-- **Sort / page:** by relevance, date or size; keyset pagination.
+`POST /search` (M1) takes any combination of:
 
-The STAC API (`/stac/search`, CQL2) is exposed as-is for standards-based clients such as QGIS, pystac-client and STAC Browser.
+- **Spatial:** `bbox` (`[west, south, east, north]`; `west > east` crosses the antimeridian) or `intersects` (a GeoJSON Point, Polygon or MultiPolygon, at most 10,000 positions), never both. Items with no footprint match neither.
+- **Temporal:** `datetime`, an RFC 3339 instant or a closed or half-open interval (`start/end`, `..` for open), matched against the item's `datetime`. Until acquisition times are extracted that is when the item was cataloged.
+- **Text:** `q`, whitespace-separated terms, each of which must appear (case-insensitively, as a substring) in the filename or a tag. Substrings rather than words because filenames are written as `site-alpha_ortho_2024.tif`, which a word tokenizer keeps as one token; served by a trigram index.
+- **Facets:** `collections`, `kinds`, `ids`.
+- **Paging:** `limit` (1–100, default 20) and the `token` from the previous page's `next` link. Results are ordered newest first by `(datetime, id)`, a total order, so the cursor is a position in it and paging is keyset, never offset: every item that matched when paging began is returned exactly once (SRCH-2), however many items arrive meanwhile.
+
+Every query filters through `authz.readable_scopes` (ACC-1), and each page is one audited request (ACC-5).
+
+Later: relevance and size sorting, facet counts, `within_distance`, fuzzy title matching with `pg_trgm` similarity, semantic search fused with keyword ranking by RRF (M5), and a conformant STAC API at `/stac` (landing page, conformance classes, `GET /search`, CQL2) for QGIS, pystac-client and STAC Browser.
 
 ## 7. Auth and authorization
 
 - OIDC only. The SPA uses auth code + PKCE. The API validates JWTs against discovered JWKS. Issuer, audience and authority host are configuration, so the same build runs against commercial Entra, Gov Entra (`login.microsoftonline.us`) or local Keycloak.
 - Roles (Entra app roles, a `roles` claim): `Reader`, `Contributor` (upload, edit own items), `Curator` (edit any item in granted collections), `Admin`.
-- Access is **attribute-based** (D3): a user sees an Item only if they hold a grant on its collection *and* their clearance attribute covers the Item's marking. Clearance comes from an app role or a directory attribute claim. This is enforced in SQL on every search and STAC query (row-level security on `catalog.items_search`, with the authz predicate injected for pgSTAC), never in the UI.
+- Access is **attribute-based** (D3): a user sees an Item only if they hold a grant on its collection *and* their clearance attribute covers the Item's marking. Clearance comes from an app role or a directory attribute claim. This is enforced in SQL on every item read and search, by filtering through `authz.readable_scopes`, never in the UI.
 - The UI shows a marking banner for the highest marking on screen. Downloads and exports record the marking in the audit log.
 - Services use Managed Identity, and blob access uses user-delegation SAS. Shared-key access is disabled on the storage account.
 - Every upload, download, metadata edit and grant change goes to an audit log table, mirrored to Azure Monitor.
@@ -156,3 +159,13 @@ True lat/lon world anchoring (ARCore Geospatial, native Unity) is out of scope f
 ## 11. Decisions
 
 D1–D6 are recorded in `00-requirements-brief.md` § Resolved questions and are reflected throughout this spec.
+
+**D7 — STAC is the contract; `catalog.items` is the store (M1 slice 5).** The stack first chose pgSTAC as the system of record with stac-fastapi in front of it. We serve STAC-shaped Items and searches from our own `catalog.items` table instead, because:
+
+- **One writer, one row.** pgSTAC beside `catalog.items` means every item is written twice, in two shapes, by two schemas' rules, and kept in step forever. Duplicated state is a defect here (AGENTS.md), and the pipeline's guarantees (ING-1, ING-2, ING-9) are proved against one table in one transaction.
+- **Authorization lives in one SQL function.** ACC-1 requires every read to filter through the database's access rule. pgSTAC builds its own dynamic SQL from CQL2 and registers searches for the tiler to replay; making it honour `authz.readable_scopes` means injecting a predicate into, or row-level security under, code we don't own, and re-proving ACC-1 and ACC-2 after every upgrade.
+- **Spike S3 stays a spike.** pgSTAC on Azure Flexible Server without superuser is unverified (S3), and was on M1's critical path only because pgSTAC was. Our schema uses only extensions already allow-listed (PostGIS, pg_trgm, btree_gist).
+- **pgSTAC's free text is unindexed** (research 03 §2.1), so search needed our own table anyway.
+
+What we give up, and how it comes back: CQL2 and the stac-fastapi extensions (we add the filters we need, and a conformant `/stac` façade later), and titiler-pgstac's registered-search mosaics (M2). If M2 needs those, pgSTAC becomes a **derived read model**: fed from the outbox, reached only through searches the API has already filtered by `authz.readable_scopes`, never asked an access question itself, and rebuildable like any derivative (ING-7). S3 is then spiked for M2, not M1.
+

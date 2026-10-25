@@ -16,11 +16,11 @@ Status: proposed, 2026-10-24. Each choice links to the research that justifies i
 | Mesh normalizers (D1) | Assimp / headless Blender (FBX, OBJ), IfcOpenShell (IFC), usd-core (USD/USDZ), each converting to glTF | Plugins behind one interface; licenses to be checked per tool in M3 |
 | Malware scan (D3) | Defender for Storage malware scanning (cloud), ClamAV container (local) | Gov availability of on-upload scanning is **unverified**; ClamAV worker is the fallback |
 | Database | **PostgreSQL 16+ (Azure Flexible Server)** + PostGIS, pgvector, pg_trgm, btree_gist, pg_partman, TimescaleDB | All listed extensions supported; available in Gov AZ/TX/VA (02 §1, 03 §3) |
-| Catalog | **pgSTAC 0.9.x (pinned)** + **stac-fastapi-pgstac** | Same core as Planetary Computer; titiler-pgstac not yet certified on pgstac 0.10 (03 §1–2) |
-| Search | A `catalog` schema beside pgSTAC: facet columns, `tsvector` FTS, `pg_trgm` fuzzy matching, **pgvector HNSW** embeddings, keyword + semantic results merged by **reciprocal rank fusion** in SQL | pgSTAC's own free-text search is unindexed; Azure AI Search can't index polygon footprints (03 §3–4) |
+| Catalog | **STAC-shaped API over our own `catalog.items`** (spec D7); pgSTAC 0.9.x only as a derived read model if titiler-pgstac mosaics need it (M2) | One writer and one access rule for every item; pgSTAC's free text is unindexed and S3 is unverified (03 §1–2) |
+| Search | The `catalog` schema: facet columns, substring search over a `pg_trgm` index (M1); later `tsvector` FTS over extracted text, `pg_trgm` fuzzy matching, **pgvector HNSW** embeddings, keyword + semantic results merged by **reciprocal rank fusion** in SQL | pgSTAC's own free-text search is unindexed; Azure AI Search can't index polygon footprints (03 §3–4) |
 | Embeddings | Azure OpenAI `text-embedding-3-small` (1536-d), behind a provider interface; keyword-only fallback locally | Available in Gov; under pgvector's 2000-d HNSW limit (03 §4) |
 | Small readings | Batched to per-device-per-day **Parquet** (one STAC Item each) + TimescaleDB hypertable for queryable readings | Avoid one catalog row per reading (01 §3, 02 §4) |
-| Platform API | **Python FastAPI**; mounts the STAC API; OIDC JWT validation against discovered JWKS | One language with workers and stac-fastapi |
+| Platform API | **Python FastAPI**; serves the STAC-shaped item and search API; OIDC JWT validation against discovered JWKS | One language with workers and stac-fastapi |
 | Auth | Generic OIDC (auth code + PKCE in the SPA); **Entra ID app roles** for RBAC; authority host + tenant are config (`login.microsoftonline.com` / `.us`); Managed Identity service-to-service | Gov apps can sign in commercial or Gov tenants; groups claim overflows past 200 groups (02 §5) |
 | Map tiles / previews | **TiTiler-pgstac** (COG previews/mosaics), **Martin** or **tipg** (footprint vector tiles) | eoAPI / Planetary Computer pattern (03 §6) |
 | Web UI | **React + TypeScript + Vite** SPA; **MapLibre GL** for catalog browsing; **three.js + 3DTilesRendererJS** with **WebXR** for the 3D/XR viewer; `<model-viewer>` for phone AR (USDZ Quick Look on iOS); optional CesiumJS page | CesiumJS can't enter WebXR; Quest Browser is the strongest XR target (04 §4–5) |
@@ -45,6 +45,6 @@ Status: proposed, 2026-10-24. Each choice links to the research that justifies i
 |---|-------|---------------|
 | S1 | mago-3d-tiler on a 2–4 GB GLB | Valid 3D Tiles 1.1 (3d-tiles-tools validate), streams in 3DTilesRendererJS, peak RAM recorded |
 | S2 | Browser block upload of a 10 GB file to Azurite and to real Blob, with a mid-upload reload | Resumes from IndexedDB state; commit triggers exactly one processed record |
-| S3 | pgSTAC 0.9.x install on Azure Flexible Server | Migrations run without superuser-only steps |
+| S3 | pgSTAC 0.9.x install on Azure Flexible Server (needed only if M2 adds pgSTAC as a derived read model, spec D7) | Migrations run without superuser-only steps |
 | S4 | ~~GDAL `/vsiaz/` against a Gov-style endpoint with an externally supplied token~~ Replaced in M1 slice 4: GDAL reads through the blob store port, so it needs no endpoint or token of its own | Range-only reads proven locally (a 64 MiB tiled GeoTIFF in one 64 KiB request); the Gov endpoint itself is the blob adapter's, verified with it |
 | S5 | WebXR on Quest Browser: tiled model in VR + passthrough AR hit-test placement | 72 fps on a mid-size tileset |

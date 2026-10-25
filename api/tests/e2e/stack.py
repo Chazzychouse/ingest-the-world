@@ -10,6 +10,7 @@ import json
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -21,9 +22,6 @@ from tests.conftest import REALM
 API_URL = os.environ.get("INGEST_E2E_API", "http://localhost:8000")
 TOKEN_URL = os.environ.get(
     "INGEST_E2E_TOKEN_URL", "http://localhost:8080/realms/ingest/protocol/openid-connect/token"
-)
-DATABASE_URL = os.environ.get(
-    "INGEST_E2E_DATABASE_URL", "postgresql://ingest:ingest@localhost:5432/ingest"
 )
 WEB_CLIENT = "ingest-web"
 # The Blob service REST version the browser's requests name.
@@ -75,7 +73,16 @@ class Api:
         return response.json()
 
     def get(self, path: str) -> dict[str, Any]:
+        found = self.find(path)
+        if found is None:
+            raise LookupError(f"{path} not found")
+        return found
+
+    def find(self, path: str) -> dict[str, Any] | None:
+        """The resource, or None if the API says it doesn't exist (or isn't ours to see)."""
         response = self.client.get(path, headers=self.headers)
+        if response.status_code == HTTPStatus.NOT_FOUND:
+            return None
         response.raise_for_status()
         return response.json()
 

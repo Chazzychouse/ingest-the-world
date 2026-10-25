@@ -12,6 +12,7 @@ from ingest_api import identity, meta, wiring
 from ingest_api.auth import AuthError, OidcVerifier, verifier_from_settings
 from ingest_api.collections import routes as collections
 from ingest_api.deps import Runtime
+from ingest_api.items import routes as items
 from ingest_api.ports import BlobSigner, Clock, Ids, StorageError, SystemClock, UuidIds
 from ingest_api.settings import Settings, get_settings
 from ingest_api.uploads import routes as uploads
@@ -85,6 +86,6 @@ def create_app(
             headers={"Retry-After": "5"},
         )
 
-    for router in (meta.router, identity.router, collections.router, uploads.router):
+    for router in (meta.router, identity.router, collections.router, uploads.router, items.router):
         app.include_router(router)
     return app

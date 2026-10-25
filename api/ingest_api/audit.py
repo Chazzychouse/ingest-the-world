@@ -28,6 +28,8 @@ class AuditAction(StrEnum):
     UPLOAD_CREATE = "upload.create"
     UPLOAD_READ = "upload.read"
     UPLOAD_RENEW = "upload.renew"
+    ITEM_READ = "item.read"
+    ITEM_SEARCH = "item.search"
     ROLE_CHECK = "authz.role"
     # The pipeline's outcomes for a landed blob version.
     ITEM_CATALOG = "item.catalog"

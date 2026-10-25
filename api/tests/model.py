@@ -84,6 +84,10 @@ class World:
     def readable(self, actor: Actor) -> set[str]:
         return {c for c in self.collections if self.can_read(actor, c)}
 
+    def can_read_item(self, actor: Actor, collection_id: str, marking: str) -> bool:
+        """An item can be marked above its collection; reading it takes clearance for both."""
+        return self.can_read(actor, collection_id) and self.cleared_for(actor, marking)
+
     def can_write(self, actor: Actor, collection_id: str) -> bool:
         if not self.can_read(actor, collection_id):
             return False
