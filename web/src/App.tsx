@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { useApi, type Collection, type Marking, type Me, type StacItem } from './api'
-import { bannerFor } from './markings'
+import { bannerFor, markingText } from './markings'
 import { Search } from './Search'
+import { Upload } from './Upload'
+import { useUploads } from './useUploads'
 
 function MarkingBanner({ marking, position }: { marking: Marking; position: 'top' | 'bottom' }) {
   return (
@@ -71,7 +73,7 @@ function Collections({ collections }: { collections: Collection[] }) {
             <tr key={c.id}>
               <td>
                 <span className="chip" style={{ background: c.marking_color }}>
-                  {[c.marking_label, ...c.cui_categories].join('//')}
+                  {markingText(c)}
                 </span>
               </td>
               <td>
@@ -91,7 +93,8 @@ function Collections({ collections }: { collections: Collection[] }) {
   )
 }
 
-type Tab = 'search' | 'collections'
+type Tab = 'search' | 'upload' | 'collections'
+const TABS: Record<Tab, string> = { search: 'Search', upload: 'Upload', collections: 'Collections' }
 
 function Workspace() {
   const auth = useAuth()
@@ -99,6 +102,14 @@ function Workspace() {
   const collections = useApi<Collection[]>('/collections')
   const [tab, setTab] = useState<Tab>('search')
   const [shown, setShown] = useState<StacItem[]>([])
+  const { uploads, entries } = useUploads()
+  const active = entries.filter((e) => ['queued', 'uploading', 'processing'].includes(e.phase)).length
+
+  // Search reads its state from the URL when it opens, so an item opens by link.
+  const openItem = (id: string) => {
+    window.history.replaceState(window.history.state, '', `?item=${encodeURIComponent(id)}`)
+    setTab('search')
+  }
 
   // The highest marking on screen: the collections listed, and on the search tab its results.
   const banner = bannerFor(collections.data ?? [], tab === 'search' ? shown : [])
@@ -109,9 +120,10 @@ function Workspace() {
       <header className="topbar">
         <span className="brand">Ingest the World</span>
         <nav className="tabs">
-          {(['search', 'collections'] as const).map((t) => (
+          {(Object.keys(TABS) as Tab[]).map((t) => (
             <button key={t} className={`link${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
-              {t === 'search' ? 'Search' : 'Collections'}
+              {TABS[t]}
+              {t === 'upload' && active > 0 && <span className="count">{active}</span>}
             </button>
           ))}
         </nav>
@@ -120,9 +132,11 @@ function Workspace() {
         </button>
       </header>
       {collections.error && <p className="error">Couldn't load collections: {collections.error.message}</p>}
-      {tab === 'search' ? (
-        <Search collections={collections.data ?? []} onShown={setShown} />
-      ) : (
+      {tab === 'search' && <Search collections={collections.data ?? []} onShown={setShown} />}
+      {tab === 'upload' && (
+        <Upload collections={collections.data ?? []} uploads={uploads} entries={entries} onOpenItem={openItem} />
+      )}
+      {tab === 'collections' && (
         <main className="workspace">
           {me.error && <p className="error">Couldn't load your profile: {me.error.message}</p>}
           {me.data && <Identity me={me.data} />}

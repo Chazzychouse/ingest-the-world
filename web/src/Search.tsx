@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useApi, type Collection, type StacItem } from './api'
+import { bytes } from './format'
 import { MapView } from './MapView'
 import { itemMarking } from './markings'
 import { KINDS, MAX_QUERY_LENGTH } from './schema'
@@ -16,12 +17,6 @@ const TYPING_MS = 300
 
 function toggle<T>(values: T[], value: T): T[] {
   return values.includes(value) ? values.filter((v) => v !== value) : [...values, value]
-}
-
-function bytes(size: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const power = Math.min(units.length - 1, Math.floor(Math.log(Math.max(size, 1)) / Math.log(1024)))
-  return `${(size / 1024 ** power).toFixed(power ? 1 : 0)} ${units[power]}`
 }
 
 function when(datetime: string): string {

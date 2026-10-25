@@ -18,3 +18,11 @@ export const KINDS = schemas.Kind.enum as Kind[]
 export const MAX_QUERY_LENGTH = present<{ maxLength: number }>(search.q).maxLength
 export const MAX_FILTER_VALUES = present<{ maxItems: number }>(search.collections).maxItems
 export const COLLECTION_ID = new RegExp(present<{ items: { pattern: string } }>(search.collections).items.pattern)
+
+const upload = schemas.UploadIn.properties
+export const FILENAME = new RegExp(upload.filename.pattern)
+export const MAX_FILENAME_LENGTH = upload.filename.maxLength
+export const MAX_UPLOAD_BYTES = upload.size_bytes.maximum
+export const MEDIA_TYPE = new RegExp(present<{ pattern: string }>(upload.content_type).pattern)
+export const MAX_TAGS = upload.tags.maxItems
+export const MAX_TAG_LENGTH = upload.tags.items.maxLength

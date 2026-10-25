@@ -35,6 +35,10 @@
       "Collection": {
         "description": "A collection as returned by the API; built straight from `store.CollectionRow`.",
         "properties": {
+          "can_upload": {
+            "title": "Can Upload",
+            "type": "boolean"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -121,7 +125,8 @@
           "marking_color",
           "marking_rank",
           "created_by",
-          "created_at"
+          "created_at",
+          "can_upload"
         ],
         "title": "Collection",
         "type": "object"

@@ -22,6 +22,7 @@ const collection = fc.record({ id: fc.string(), level: fc.constantFrom(...MARKIN
     retention: { retain_days: null, legal_hold: false, tiering: [] },
     created_by: 'test',
     created_at: '2026-01-01T00:00:00Z',
+    can_upload: false,
   }),
 )
 

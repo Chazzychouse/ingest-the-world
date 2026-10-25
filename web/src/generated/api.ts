@@ -240,6 +240,8 @@ export interface components {
          * @description A collection as returned by the API; built straight from `store.CollectionRow`.
          */
         Collection: {
+            /** Can Upload */
+            can_upload: boolean;
             /**
              * Created At
              * Format: date-time

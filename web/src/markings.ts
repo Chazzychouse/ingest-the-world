@@ -34,3 +34,8 @@ export function highest(markings: Marking[]): Marking {
 export function bannerFor(collections: Collection[], items: StacItem[] = []): Marking {
   return highest([...collections.map(collectionMarking), ...items.map((i) => itemMarking(i, collections))])
 }
+
+/** A collection's full marking as banners and lists write it: `CUI//SP-PRVCY`. */
+export function markingText(c: Collection): string {
+  return [c.marking_label, ...c.cui_categories].join('//')
+}
