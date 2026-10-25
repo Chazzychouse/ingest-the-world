@@ -352,7 +352,8 @@ MUTANTS = [
         ITEM_STORE,
         "    if west <= east:\n        return [bbox]",
         "    if True:\n        return [bbox]",
-        ("SRCH-1",),
+        # Wrapping the wrong way both returns items off the query and misses ones on it.
+        ("SRCH-1", "SRCH-2"),
     ),
     Mutant(
         "search-terms-unescaped",
