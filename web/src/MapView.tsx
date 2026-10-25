@@ -4,6 +4,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState } from 'react'
 import type { StacItem } from './api'
 import { viewportBbox, type Bbox } from './search'
+import type { View } from './searchUrl'
 
 // Any MapLibre style: Azure Maps (atlas.azure.us in Government), self-hosted tiles, or this
 // default demo style, which needs no key.
@@ -14,8 +15,12 @@ type Props = {
   items: StacItem[]
   selected: string | undefined
   onSelect: (id: string) => void
-  onViewport: (bbox: Bbox) => void
+  onViewport: (bbox: Bbox, view: View) => void
+  initialView: View | undefined // read once, when the map is made
+  fit: { bbox: Bbox } | undefined // each new request moves the map to show its bbox
 }
+
+const WORLD_VIEW: View = { lon: 0, lat: 20, zoom: 1.4 }
 
 function footprints(items: StacItem[]): FeatureCollection {
   return {
@@ -37,21 +42,29 @@ function bounds([west, south, east, north]: Bbox): LngLatBoundsLike {
 }
 
 /** The search map: footprints of the results, kept in step with the viewport. */
-export function MapView({ items, selected, onSelect, onViewport }: Props) {
+export function MapView({ items, selected, onSelect, onViewport, initialView, fit }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | undefined>(undefined)
   const [ready, setReady] = useState(false)
   // The map outlives renders; it calls whichever handlers are current.
-  const handlers = useRef({ onSelect, onViewport })
-  handlers.current = { onSelect, onViewport }
+  const handlers = useRef({ onSelect, onViewport, initialView })
+  useEffect(() => {
+    handlers.current = { onSelect, onViewport, initialView }
+  })
 
   useEffect(() => {
     if (!container.current) return
-    const m = new maplibregl.Map({ container: container.current, style: STYLE, center: [0, 20], zoom: 1.4 })
+    const { lon, lat, zoom } = handlers.current.initialView ?? WORLD_VIEW
+    const m = new maplibregl.Map({ container: container.current, style: STYLE, center: [lon, lat], zoom })
     map.current = m
     const report = () => {
       const b = m.getBounds()
-      handlers.current.onViewport(viewportBbox(b.getWest(), b.getSouth(), b.getEast(), b.getNorth()))
+      const centre = m.getCenter().wrap()
+      handlers.current.onViewport(viewportBbox(b.getWest(), b.getSouth(), b.getEast(), b.getNorth()), {
+        lon: centre.lng,
+        lat: centre.lat,
+        zoom: m.getZoom(),
+      })
     }
     m.on('load', () => {
       m.addSource(SOURCE, { type: 'geojson', data: footprints([]) })
@@ -86,13 +99,12 @@ export function MapView({ items, selected, onSelect, onViewport }: Props) {
   }, [ready, items])
 
   useEffect(() => {
-    const m = map.current
-    if (!ready || !m) return
-    m.setFilter('selected', ['==', ['get', 'id'], selected ?? ''])
-    const bbox = items.find((item) => item.id === selected)?.bbox
-    if (bbox) m.fitBounds(bounds(bbox), { padding: 80, maxZoom: 14, duration: 600 })
-    // Fit only when the selection changes, not when more results arrive.
+    if (ready) map.current?.setFilter('selected', ['==', ['get', 'id'], selected ?? ''])
   }, [ready, selected])
+
+  useEffect(() => {
+    if (ready && fit) map.current?.fitBounds(bounds(fit.bbox), { padding: 80, maxZoom: 14, duration: 600 })
+  }, [ready, fit])
 
   return <div ref={container} className="map" />
 }

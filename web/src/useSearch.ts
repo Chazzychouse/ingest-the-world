@@ -18,11 +18,11 @@ export type SearchState = {
 }
 
 /**
- * Results of `body`, a page at a time. A new body starts over (cancelling a page in flight, and
+ * Results of `body`, a page at a time, once `enabled`. A new body starts over (cancelling a page in flight, and
  * showing the previous results until the new ones arrive); `loadMore` follows the last page's
  * `next` link, so every match arrives once (SRCH-2).
  */
-export function useSearch(body: SearchIn): SearchState {
+export function useSearch(body: SearchIn, { enabled }: { enabled: boolean }): SearchState {
   const token = useAuth().user?.access_token
   const key = JSON.stringify(body)
   const [loaded, setLoaded] = useState<Loaded | undefined>(undefined)
@@ -45,6 +45,7 @@ export function useSearch(body: SearchIn): SearchState {
   )
 
   useEffect(() => {
+    if (!enabled) return
     const request = JSON.parse(key) as SearchIn
     fetchPage(
       request,
@@ -52,7 +53,7 @@ export function useSearch(body: SearchIn): SearchState {
       (error) => setLoaded({ key, items: [], next: undefined, error }),
     )
     return () => inflight.current?.abort()
-  }, [key, fetchPage])
+  }, [key, enabled, fetchPage])
 
   const current = loaded?.key === key ? loaded : undefined
   const request = current?.next

@@ -1,7 +1,7 @@
 // SRCH-1 starts in the browser: the bbox sent for a viewport must cover exactly what's on screen.
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { nextPage, searchBody, viewportBbox, type Bbox } from './search'
+import { interval, nextPage, NO_FILTERS, searchBody, viewportBbox, type Bbox } from './search'
 
 /** Whether a STAC bbox covers longitude `lon` (in [-180, 180]). */
 function covers([west, , east]: Bbox, lon: number): boolean {
@@ -46,14 +46,40 @@ describe('viewportBbox [SRCH-1]', () => {
 
 describe('searchBody', () => {
   it('leaves out empty filters, which the API would read as "match nothing"', () => {
-    const body = searchBody({ q: '  ', kinds: [], collections: [], area: undefined })
+    const body = searchBody({ ...NO_FILTERS, q: '  ' }, undefined)
     expect(Object.keys(body)).toEqual(['limit'])
+  })
+})
+
+// Days in years a date input writes with four digits.
+const day = fc
+  .date({ min: new Date('1900-01-01T00:00:00Z'), max: new Date('2199-12-31T00:00:00Z'), noInvalidDate: true })
+  .map((d) => d.toISOString().slice(0, 10))
+
+describe('interval [SRCH-1]', () => {
+  it('matches exactly the instants on the days chosen, either end open', () => {
+    const instant = fc.date({ min: new Date('1899-12-31T00:00:00Z'), max: new Date('2200-01-01T23:59:59Z'), noInvalidDate: true })
+    const end = fc.option(day, { nil: '' })
+    fc.assert(
+      fc.property(end, end, instant, (from, to, at) => {
+        fc.pre(!(from && to && from > to))
+        const text = interval(from, to)
+        if (!from && !to) {
+          expect(text).toBeUndefined()
+          return
+        }
+        const [start, stop] = (text ?? '').split('/').map((t) => (t === '..' ? undefined : Date.parse(t)))
+        const inside = (start === undefined || start <= at.getTime()) && (stop === undefined || at.getTime() <= stop)
+        const onDays = (!from || from <= at.toISOString().slice(0, 10)) && (!to || at.toISOString().slice(0, 10) <= to)
+        expect(inside).toBe(onDays)
+      }),
+    )
   })
 })
 
 describe('nextPage [SRCH-2]', () => {
   it("keeps the query and takes the next link's token", () => {
-    const body = searchBody({ q: 'alpha', kinds: ['raster'], collections: [], area: undefined })
+    const body = searchBody({ ...NO_FILTERS, q: 'alpha', kinds: ['raster'] }, undefined)
     const link = {
       rel: 'next' as const,
       href: '/search',

@@ -29,22 +29,39 @@ export function viewportBbox(west: number, south: number, east: number, north: n
   return [wrapWest(west), s, wrapEast(east), n]
 }
 
+/** A calendar day, `YYYY-MM-DD`, as a date input gives it; '' leaves that end open. */
+export type Day = string
+
 export type Filters = {
   q: string
   kinds: Kind[] // none ticked means any kind
   collections: string[] // none chosen means every readable collection
-  area: Bbox | undefined // undefined: anywhere, footprint or not
+  from: Day // the first day included, UTC
+  to: Day // the last day included, UTC
 }
 
-/** The first page's request for `filters`. Empty filters are left out, not sent empty: the
- * API reads an empty list as "match nothing". */
-export function searchBody(filters: Filters): SearchIn {
+export const NO_FILTERS: Filters = { q: '', kinds: [], collections: [], from: '', to: '' }
+
+/** The STAC interval covering the days `from` to `to` inclusive, or undefined for any time. */
+export function interval(from: Day, to: Day): string | undefined {
+  if (!from && !to) return undefined
+  const start = from ? `${from}T00:00:00Z` : '..'
+  const end = to ? `${to}T23:59:59.999Z` : '..'
+  return `${start}/${end}`
+}
+
+/** The first page's request for `filters` within `area` (undefined: anywhere, footprint or
+ * not). Empty filters are left out, not sent empty: the API reads an empty list as "match
+ * nothing". */
+export function searchBody(filters: Filters, area: Bbox | undefined): SearchIn {
   const body: SearchIn = { limit: PAGE_SIZE }
   const q = filters.q.trim()
   if (q) body.q = q
   if (filters.kinds.length) body.kinds = filters.kinds
   if (filters.collections.length) body.collections = filters.collections
-  if (filters.area) body.bbox = filters.area
+  const datetime = interval(filters.from, filters.to)
+  if (datetime) body.datetime = datetime
+  if (area) body.bbox = area
   return body
 }
 

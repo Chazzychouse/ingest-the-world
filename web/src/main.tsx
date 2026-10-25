@@ -6,6 +6,11 @@ import './index.css'
 import App from './App.tsx'
 import type { WebConfig } from './api'
 
+/** The query string a sign-in started from (see `SignIn`), so a shared link survives it. */
+function returnQuery(state: unknown): string {
+  return typeof state === 'string' && state.startsWith('?') ? state : ''
+}
+
 const container = document.getElementById('root')
 if (!container) throw new Error('index.html has no #root element')
 const root = createRoot(container)
@@ -26,7 +31,7 @@ async function boot() {
         redirect_uri={`${window.location.origin}/`}
         post_logout_redirect_uri={`${window.location.origin}/`}
         userStore={new WebStorageStateStore({ store: window.sessionStorage })}
-        onSigninCallback={() => window.history.replaceState({}, document.title, '/')}
+        onSigninCallback={(user) => window.history.replaceState({}, document.title, `/${returnQuery(user?.state)}`)}
       >
         <App />
       </AuthProvider>

@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import type { Collection, Kind, StacItem } from './api'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useApi, type Collection, type StacItem } from './api'
 import { MapView } from './MapView'
 import { itemMarking } from './markings'
+import { KINDS, MAX_QUERY_LENGTH } from './schema'
 import { searchBody, type Bbox, type Filters } from './search'
+import { fromQuery, toQuery, type View } from './searchUrl'
 import { MAX_RESULTS, useSearch } from './useSearch'
 
-const KINDS: Kind[] = ['raster', 'vector', 'pointcloud', 'mesh', 'tabular', 'document', 'generic']
 // Shown first in an item's details; the rest follow alphabetically.
 const CORE = ['datetime', 'ingest:kind', 'ingest:media_type', 'file:size', 'proj:code', 'ingest:extraction']
 
@@ -47,7 +48,7 @@ function FilterPanel({ collections, filters, onChange, inArea, onInArea }: Filte
           onChange={(e) => setText(e.target.value)}
           placeholder="Filename or tag, e.g. ortho 2024"
           aria-label="Search text"
-          maxLength={256}
+          maxLength={MAX_QUERY_LENGTH}
         />
         <button type="submit">Search</button>
       </form>
@@ -55,6 +56,27 @@ function FilterPanel({ collections, filters, onChange, inArea, onInArea }: Filte
         <input type="checkbox" checked={inArea} onChange={(e) => onInArea(e.target.checked)} />
         Only what's in the map view
       </label>
+      <fieldset className="dates">
+        <legend>Date (UTC)</legend>
+        <label>
+          From
+          <input
+            type="date"
+            value={filters.from}
+            max={filters.to || undefined}
+            onChange={(e) => onChange({ ...filters, from: e.target.value })}
+          />
+        </label>
+        <label>
+          To
+          <input
+            type="date"
+            value={filters.to}
+            min={filters.from || undefined}
+            onChange={(e) => onChange({ ...filters, to: e.target.value })}
+          />
+        </label>
+      </fieldset>
       <fieldset>
         <legend>Kind</legend>
         {KINDS.map((kind) => (
@@ -85,8 +107,23 @@ function FilterPanel({ collections, filters, onChange, inArea, onInArea }: Filte
   )
 }
 
-function ItemDetails({ item, collections }: { item: StacItem; collections: Collection[] }) {
+type DetailsProps = {
+  item: StacItem
+  collections: Collection[]
+  onZoom: (bbox: Bbox) => void
+  onClose: () => void
+}
+
+function ItemDetails({ item, collections, onZoom, onClose }: DetailsProps) {
+  const [copied, setCopied] = useState(false)
   const marking = itemMarking(item, collections)
+  const bbox = item.bbox
+  const copy = () => {
+    navigator.clipboard.writeText(window.location.href).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    )
+  }
   const props = item.properties as Record<string, unknown>
   const rest = Object.keys(props)
     .filter((k) => !CORE.includes(k) && !['title', 'created', 'keywords'].includes(k) && !k.startsWith('ingest:marking'))
@@ -95,6 +132,19 @@ function ItemDetails({ item, collections }: { item: StacItem; collections: Colle
     <section className="panel details">
       <h2>Item</h2>
       <div className="title">{item.properties.title}</div>
+      <div className="actions">
+        {bbox && (
+          <button className="link" onClick={() => onZoom(bbox)}>
+            Zoom to
+          </button>
+        )}
+        <button className="link" onClick={copy}>
+          {copied ? 'Link copied' : 'Copy link'}
+        </button>
+        <button className="link" onClick={onClose}>
+          Close
+        </button>
+      </div>
       <span className="chip" style={{ background: marking.banner_color }}>
         {marking.label}
       </span>{' '}
@@ -156,43 +206,112 @@ function Results({ items, collections, selected, onSelect }: ResultsProps) {
   )
 }
 
-const NO_FILTERS: Filters = { q: '', kinds: [], collections: [], area: undefined }
+/** The item shown in detail: from the results when it's among them, else fetched by id. */
+function useSelectedItem(id: string | undefined, shown: StacItem[]) {
+  const listed = shown.find((i) => i.id === id)
+  const fetched = useApi<StacItem>(id && !listed ? `/items/${id}` : undefined)
+  return { item: listed ?? fetched.data, listed: listed !== undefined, error: fetched.error }
+}
 
-/** Search the catalog on a map. Reports what it shows, so the page banner covers it (ACC-3). */
+/** Search the catalog on a map, its state kept in the page's URL so a link reopens it. Reports
+ * what it shows, so the page banner covers it (ACC-3). */
 export function Search({ collections, onShown }: { collections: Collection[]; onShown: (items: StacItem[]) => void }) {
-  const [filters, setFilters] = useState<Filters>(NO_FILTERS)
-  const [inArea, setInArea] = useState(true)
+  const [initial] = useState(() => fromQuery(window.location.search))
+  const [filters, setFilters] = useState<Filters>(initial.filters)
+  const [inArea, setInArea] = useState(initial.inArea)
   const [viewport, setViewport] = useState<Bbox | undefined>(undefined)
-  const [selected, setSelected] = useState<string | undefined>(undefined)
+  const [view, setView] = useState<View | undefined>(initial.view)
+  const [selected, setSelected] = useState<string | undefined>(initial.item)
+  const [fit, setFit] = useState<{ bbox: Bbox } | undefined>(undefined)
+  // A link to an item without a map view shows the item once it loads.
+  const fitOnLoad = useRef(initial.item !== undefined && initial.view === undefined)
 
-  const body = useMemo(() => searchBody({ ...filters, area: inArea ? viewport : undefined }), [filters, inArea, viewport])
-  const search = useSearch(body)
-  const shown = search.items
+  // Wait for the map's first viewport before searching only what's in it.
+  const area = inArea ? viewport : undefined
+  const body = useMemo(() => searchBody(filters, area), [filters, area])
+  const search = useSearch(body, { enabled: !inArea || viewport !== undefined })
+  const selection = useSelectedItem(selected, search.items)
+  const item = selection.item
+
+  // An item opened from a link may be outside the results; it's on screen all the same.
+  const shown = useMemo(
+    () => (item && !selection.listed ? [...search.items, item] : search.items),
+    [search.items, item, selection.listed],
+  )
   useEffect(() => onShown(shown), [shown, onShown])
-  const item = shown.find((i) => i.id === selected)
+
+  useEffect(() => {
+    const query = toQuery({ filters, inArea, item: selected, view })
+    window.history.replaceState(window.history.state, '', query ? `?${query}` : window.location.pathname)
+  }, [filters, inArea, selected, view])
+
+  useEffect(() => {
+    const bbox = item?.bbox
+    if (!fitOnLoad.current || !bbox) return
+    fitOnLoad.current = false
+    setFit({ bbox })
+  }, [item])
+
+  const select = (id: string) => {
+    setSelected(id)
+    const bbox = shown.find((i) => i.id === id)?.bbox
+    if (bbox) setFit({ bbox })
+  }
+  const onViewport = (bbox: Bbox, next: View) => {
+    setViewport(bbox)
+    setView(next)
+  }
 
   return (
     <div className="search">
       <aside className="sidebar">
         <FilterPanel collections={collections} filters={filters} onChange={setFilters} inArea={inArea} onInArea={setInArea} />
-        {item && <ItemDetails item={item} collections={collections} />}
+        {item && (
+          <ItemDetails
+            key={item.id}
+            item={item}
+            collections={collections}
+            onZoom={(bbox) => setFit({ bbox })}
+            onClose={() => setSelected(undefined)}
+          />
+        )}
+        {selection.error && (
+          <section className="panel">
+            <p className="error">
+              {selection.error.status === 404
+                ? "That item doesn't exist or isn't shared with you."
+                : `Couldn't load the item: ${selection.error.message}`}
+            </p>
+          </section>
+        )}
         <section className="panel">
           <h2>
-            {shown.length} {shown.length === 1 ? 'item' : 'items'}
+            {search.items.length} {search.items.length === 1 ? 'item' : 'items'}
             {search.loading && ' · searching…'}
           </h2>
           {search.error && <p className="error">Search failed: {search.error}</p>}
-          {!search.loading && shown.length === 0 && <p className="muted">Nothing matches. Try zooming out or clearing filters.</p>}
-          <Results items={shown} collections={collections} selected={selected} onSelect={setSelected} />
+          {!search.loading && search.items.length === 0 && (
+            <p className="muted">Nothing matches. Try zooming out or clearing filters.</p>
+          )}
+          <Results items={search.items} collections={collections} selected={selected} onSelect={select} />
           {search.more && (
             <button onClick={search.loadMore} disabled={search.loading}>
               Load more
             </button>
           )}
-          {shown.length >= MAX_RESULTS && <p className="muted">Showing the newest {MAX_RESULTS}; narrow the search to see others.</p>}
+          {search.items.length >= MAX_RESULTS && (
+            <p className="muted">Showing the newest {MAX_RESULTS}; narrow the search to see others.</p>
+          )}
         </section>
       </aside>
-      <MapView items={shown} selected={selected} onSelect={setSelected} onViewport={setViewport} />
+      <MapView
+        items={shown}
+        selected={selected}
+        onSelect={select}
+        onViewport={onViewport}
+        initialView={initial.view}
+        fit={fit}
+      />
     </div>
   )
 }

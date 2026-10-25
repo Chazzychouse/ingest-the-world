@@ -18,7 +18,7 @@ function SignIn() {
     <main className="signin">
       <h1>Ingest the World</h1>
       <p>Geospatial data ingestion, cataloging and search.</p>
-      <button onClick={() => auth.signinRedirect()} disabled={auth.isLoading}>
+      <button onClick={() => auth.signinRedirect({ state: window.location.search })} disabled={auth.isLoading}>
         Sign in with your organization
       </button>
       {auth.error && <p className="error">Sign-in failed: {auth.error.message}</p>}
@@ -119,12 +119,12 @@ function Workspace() {
           Sign out
         </button>
       </header>
-      {collections.error && <p className="error">Couldn't load collections: {collections.error}</p>}
+      {collections.error && <p className="error">Couldn't load collections: {collections.error.message}</p>}
       {tab === 'search' ? (
         <Search collections={collections.data ?? []} onShown={setShown} />
       ) : (
         <main className="workspace">
-          {me.error && <p className="error">Couldn't load your profile: {me.error}</p>}
+          {me.error && <p className="error">Couldn't load your profile: {me.error.message}</p>}
           {me.data && <Identity me={me.data} />}
           {collections.data && <Collections collections={collections.data} />}
         </main>
