@@ -58,6 +58,7 @@ class Collection(CollectionIn):
     marking_rank: int
     created_by: str
     created_at: datetime
+    can_upload: bool  # whether the caller may upload into it (ACC-7), so clients needn't guess
 
 
 class GrantIn(ApiModel):

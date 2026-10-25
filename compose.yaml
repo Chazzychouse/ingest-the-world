@@ -67,6 +67,8 @@ services:
       INGEST_BLOB_ACCOUNT_URL: http://azurite:10000/devstoreaccount1
       INGEST_BLOB_ACCOUNT_KEY: Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
       INGEST_BLOB_PUBLIC_URL: http://localhost:10000/devstoreaccount1
+      # The web app's origins (Vite, nginx): Azurite has no CORS rule until one is set.
+      INGEST_BLOB_CORS_ORIGINS: '["http://localhost:5173", "http://localhost:8081"]'
       # The emulator's fixed connection string; the cloud uses managed identity instead.
       INGEST_QUEUE_CONNECTION: Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;
     depends_on:

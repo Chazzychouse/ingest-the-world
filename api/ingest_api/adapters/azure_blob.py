@@ -19,6 +19,7 @@ from azure.storage.blob import (
     BlobSasPermissions,
     BlobServiceClient,
     ContentSettings,
+    CorsRule,
     UserDelegationKey,
     generate_blob_sas,
 )
@@ -76,6 +77,22 @@ def service_client(account_url: str, account_key: str | None) -> BlobServiceClie
         return BlobServiceClient(account_url, credential=DefaultAzureCredential())
     credential = {"account_name": account_name(account_url), "account_key": account_key}
     return BlobServiceClient(account_url, credential=credential)
+
+
+def allow_browser_uploads(service: BlobServiceClient, origins: list[str]) -> None:
+    """Lets `origins` upload blocks with a signed URL: the rule `infra/terraform/storage.tf`
+    gives the cloud account, for an emulator that has none."""
+    rule = CorsRule(
+        origins,
+        ["GET", "HEAD", "PUT", "OPTIONS"],
+        allowed_headers=["*"],
+        exposed_headers=["ETag", "x-ms-request-id", "x-ms-version", "Content-Length"],
+        max_age_in_seconds=3600,
+    )
+    try:
+        service.set_service_properties(cors=[rule])
+    except (HttpResponseError, ServiceRequestError) as exc:
+        _raise_translated(exc)
 
 
 def ensure_containers(service: BlobServiceClient, containers: Iterable[str]) -> None:

@@ -106,6 +106,9 @@ class CatalogMachine(RuleBasedStateMachine):
         check("ACC-1", set(got) == expected, f"{actor} listed {sorted(got)}, model {expected}")
         ranks = [c["marking_rank"] for c in response.json()]
         check("ACC-3", ranks == sorted(ranks, reverse=True), f"not ordered by rank: {ranks}")
+        uploadable = {c["id"] for c in response.json() if c["can_upload"]}
+        writable = self.world.writable(actor)
+        check("ACC-7", uploadable == writable, f"{actor} can upload {uploadable}, model {writable}")
         self._expect_audit(AuditAction.COLLECTION_LIST, "allowed", self._highest(got))
 
     @rule(actor=actors, data=st.data())

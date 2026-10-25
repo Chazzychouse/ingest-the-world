@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     blob_account_key: SecretStr | None = None
     # Where browsers reach Blob Storage, when that differs from `blob_account_url` (Compose).
     blob_public_url: str | None = None
+    # Origins that may send blocks straight to Blob Storage, applied to the account at startup.
+    # Only for emulators, which start with no CORS rules; in the cloud Terraform owns the rule
+    # (`infra/terraform/storage.tf`), so this stays empty there.
+    blob_cors_origins: list[str] = Field(default_factory=list, max_length=16)
     upload_url_minutes: int = Field(default=MAX_SIGNED_URL_MINUTES, gt=0, le=MAX_SIGNED_URL_MINUTES)
 
     # Service Bus. Locally a connection string for the emulator; in the cloud the namespace's

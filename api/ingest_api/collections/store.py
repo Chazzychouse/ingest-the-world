@@ -40,6 +40,7 @@ class CollectionRow:
     retention: dict[str, Any]  # jsonb, validated as `Retention` on the way in and out
     created_by: str
     created_at: datetime
+    can_upload: bool  # whether the principal who read it may upload into it (ACC-7)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,10 +59,16 @@ class GrantRow:
 _SELECT_READABLE = f"""
     SELECT c.id, c.title, c.description, c.marking, m.label AS marking_label,
            m.banner_color AS marking_color, m.rank AS marking_rank, c.cui_categories,
-           c.dissemination, c.retention, c.created_by, c.created_at
+           c.dissemination, c.retention, c.created_by, c.created_at,
+           c.id IN ({authz.WRITABLE_IDS}) AS can_upload
     FROM catalog.collections c JOIN authz.markings m ON m.code = c.marking
     WHERE c.id IN ({authz.READABLE_IDS})
 """  # noqa: S608 - composed from constants only
+
+
+def _twice(principal: Principal) -> tuple[object, ...]:
+    """`_SELECT_READABLE`'s parameters: the principal for `WRITABLE_IDS`, then `READABLE_IDS`."""
+    return authz.principal_args(principal) * 2
 
 
 def list_readable(conn: Connection[TupleRow], principal: Principal) -> list[CollectionRow]:
@@ -69,7 +76,7 @@ def list_readable(conn: Connection[TupleRow], principal: Principal) -> list[Coll
     with conn.cursor(row_factory=class_row(CollectionRow)) as cur:
         return cur.execute(
             _SELECT_READABLE + " ORDER BY m.rank DESC, c.title LIMIT %s",
-            (*authz.principal_args(principal), MAX_COLLECTIONS),
+            (*_twice(principal), MAX_COLLECTIONS),
         ).fetchall()
 
 
@@ -78,7 +85,7 @@ def get_readable(
 ) -> CollectionRow | None:
     with conn.cursor(row_factory=class_row(CollectionRow)) as cur:
         return cur.execute(
-            _SELECT_READABLE + " AND c.id = %s", (*authz.principal_args(principal), collection_id)
+            _SELECT_READABLE + " AND c.id = %s", (*_twice(principal), collection_id)
         ).fetchone()
 
 

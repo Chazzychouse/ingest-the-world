@@ -9,6 +9,7 @@ from azure.storage.blob import BlobServiceClient
 from ingest_api.adapters.azure_blob import (
     AzureBlobSigner,
     AzureBlobStore,
+    allow_browser_uploads,
     ensure_containers,
     service_client,
 )
@@ -27,9 +28,12 @@ def blob_service(settings: Settings) -> BlobServiceClient:
 
 
 def blob_store(settings: Settings) -> AzureBlobStore:
-    """The store, with the platform's containers created if the account is an empty emulator."""
+    """The store, with the platform's containers (and, if configured, CORS rule) created if the
+    account is an empty emulator."""
     service = blob_service(settings)
     ensure_containers(service, Container)
+    if settings.blob_cors_origins:
+        allow_browser_uploads(service, settings.blob_cors_origins)
     return AzureBlobStore(service)
 
 

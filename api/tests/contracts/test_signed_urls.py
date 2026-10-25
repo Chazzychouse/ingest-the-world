@@ -8,11 +8,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit, urlunsplit
 
+import httpx
 import pytest
 from azure.core.exceptions import HttpResponseError
 from azure.storage.blob import BlobBlock, BlobClient, BlobServiceClient, ContainerClient
 
-from ingest_api.adapters.azure_blob import AzureBlobSigner, service_client
+from ingest_api.adapters.azure_blob import AzureBlobSigner, allow_browser_uploads, service_client
 from ingest_api.ports import Container, SystemClock
 from tests.conftest import TEST_ACCOUNT, TEST_ACCOUNT_KEY
 from tests.contracts.azurite import azurite
@@ -98,3 +99,35 @@ def test_expired_url_is_refused(signer):
     url = _sign(signer, f"c/{uuid.uuid4().hex}/late.bin", minutes=-1)
 
     assert _refused(lambda: BlobClient.from_blob_url(url).upload_blob(b"x")) == 403
+
+
+WEB_ORIGIN = "http://web.example"
+
+
+@pytest.fixture
+def browser_uploads(service: BlobServiceClient):
+    """Azurite allowing uploads from `WEB_ORIGIN`; the account's rule is put back afterwards,
+    since a running stack shares it."""
+    before = service.get_service_properties()["cors"]
+    allow_browser_uploads(service, [WEB_ORIGIN])
+    yield
+    service.set_service_properties(cors=before)
+
+
+def _preflight(url: str, origin: str) -> httpx.Response:
+    return httpx.options(
+        f"{url}&comp=block&blockid=YmxvY2stMQ%3D%3D",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "PUT",
+            "Access-Control-Request-Headers": "x-ms-version",
+        },
+    )
+
+
+def test_browsers_upload_only_from_allowed_origins(browser_uploads, signer):
+    url = _sign(signer, f"c/{uuid.uuid4().hex}/f.bin")
+    allowed = _preflight(url, WEB_ORIGIN)
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == WEB_ORIGIN
+    assert "access-control-allow-origin" not in _preflight(url, "http://elsewhere.example").headers
