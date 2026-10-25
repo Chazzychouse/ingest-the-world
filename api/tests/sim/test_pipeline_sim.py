@@ -167,9 +167,13 @@ class PipelineMachine(RuleBasedStateMachine):
         """Someone uploads a file: starts the session and commits its bytes."""
         return self._start_upload(collection, data, size_off_by, sha)
 
-    @rule(upload=uploads, data=payloads)
-    def commit_again(self, upload, data):
-        """The same session's URL is used again, committing a second version over the first."""
+    @rule(upload=uploads, data=payloads, fit=st.booleans())
+    def commit_again(self, upload, data, fit):
+        """The same session's URL is used again, committing a second version over the first.
+        With `fit`, the bytes are cut or padded to the declared size, so the newer version gets
+        past the size check and its checksum and scan decide it."""
+        if fit:
+            data = data[: upload.declared_size].ljust(upload.declared_size, b"\x00")
         self._commit(upload, data)
 
     @rule(data=st.data())

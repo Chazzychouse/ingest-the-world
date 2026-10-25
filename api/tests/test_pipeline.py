@@ -190,7 +190,7 @@ def test_bytes_of_the_wrong_size_reject_the_upload(store, start, database_url, d
     assert store.head(LANDING, landed.name) is None
 
 
-@pytest.mark.invariant("ING-5")
+@pytest.mark.invariant("ING-2", "ING-5")
 def test_a_wrong_checksum_rejects_and_leaves_no_raw_copy(store, start, database_url, db, work):
     landed = start(len(TIFF), sha256="0" * 64)
     props = store.put(LANDING, landed.name, TIFF)

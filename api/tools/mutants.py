@@ -4,8 +4,14 @@ A green suite only means something if it goes red when the code is wrong. Each m
 is a realistic mistake; the run fails if any mutant survives, or is caught for the wrong
 reason. Add a mutant whenever you add an invariant or fix a bug that tests missed.
 
-    uv run python tools/mutants.py            # all mutants
+    uv run python tools/mutants.py            # all mutants, each against its invariants' tests
     uv run python tools/mutants.py admin      # mutants whose name contains "admin"
+    uv run python tools/mutants.py --full     # each against the whole suite (nightly)
+
+By default a mutant runs only the tests that declare one of its `caught_by` invariants
+(`--invariant`), since those are the tests that must catch it; that is minutes, not most of
+an hour. `--full` runs everything per mutant, which also shows a catch moving to some other
+test, and is what the nightly build runs.
 """
 
 from __future__ import annotations
@@ -311,8 +317,9 @@ SKIP = shutil.ignore_patterns(
 )
 
 
-def run(mutant: Mutant, snapshot: Path) -> tuple[bool, str]:
-    """Applies `mutant` to a throwaway copy of `snapshot` and runs the suite there."""
+def run(mutant: Mutant, snapshot: Path, *, full: bool) -> tuple[bool, str]:
+    """Applies `mutant` to a throwaway copy of `snapshot` and runs the suite there: the tests
+    declaring its invariants, or with `full` all of them."""
     with tempfile.TemporaryDirectory() as tmp:
         sandbox = Path(tmp) / "repo"
         shutil.copytree(snapshot, sandbox)
@@ -332,6 +339,7 @@ def run(mutant: Mutant, snapshot: Path) -> tuple[bool, str]:
                 "-p",
                 "no:cacheprovider",
                 f"--invariants-report={report}",
+                *([] if full else [f"--invariant={i}" for i in mutant.caught_by]),
             ],
             cwd=sandbox / "api",
             capture_output=True,
@@ -352,7 +360,9 @@ def run(mutant: Mutant, snapshot: Path) -> tuple[bool, str]:
 
 
 def main(argv: list[str]) -> int:
-    selected = [m for m in MUTANTS if not argv or any(a in m.name for a in argv)]
+    full = "--full" in argv
+    names = [a for a in argv if a != "--full"]
+    selected = [m for m in MUTANTS if not names or any(a in m.name for a in names)]
     survived = 0
     # Every mutant runs against the tree as it was at the start, so editing code while
     # mutants run neither breaks the run nor leaks half-made changes into it.
@@ -360,7 +370,7 @@ def main(argv: list[str]) -> int:
         snapshot = Path(tmp) / "repo"
         shutil.copytree(REPO, snapshot, ignore=SKIP)
         for mutant in selected:
-            ok, message = run(mutant, snapshot)
+            ok, message = run(mutant, snapshot, full=full)
             survived += not ok
             print(f"{'ok  ' if ok else 'FAIL'} {mutant.name:<30} {message}", flush=True)
     print(f"\n{len(selected) - survived}/{len(selected)} mutants caught")

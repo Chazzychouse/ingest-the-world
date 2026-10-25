@@ -39,7 +39,7 @@ jobs:
           INGEST_HYPOTHESIS_PROFILE: soak
       - name: Planted bugs
         if: always()
-        run: uv run python tools/mutants.py
+        run: uv run python tools/mutants.py --full
         env:
           INGEST_REQUIRE_DB: "1"
           INGEST_REQUIRE_AZURITE: "1"
