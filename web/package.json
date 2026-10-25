@@ -13,12 +13,14 @@
     "gen:api": "openapi-typescript src/generated/openapi.json -o src/generated/api.ts"
   },
   "dependencies": {
+    "maplibre-gl": "5.20.1",
     "oidc-client-ts": "3.5.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-oidc-context": "3.3.1"
   },
   "devDependencies": {
+    "@types/geojson": "7946.0.16",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",

@@ -8,8 +8,25 @@ export type Collection = Schemas['Collection']
 export type Marking = Schemas['Marking']
 export type Me = Schemas['Me']
 export type WebConfig = Schemas['WebConfig']
+export type Kind = Schemas['Kind']
+export type SearchIn = Schemas['SearchIn']
+export type StacItem = Schemas['StacItem']
+export type ItemCollection = Schemas['ItemCollection']
+export type NextLink = Schemas['NextLink']
 
 type State<T> = { data?: T; error?: string; loading: boolean }
+
+/** Sends `body` as JSON to `/api{path}` with `token`; the parsed response, or an Error. */
+export async function postApi<T>(path: string, body: unknown, token: string, signal?: AbortSignal) {
+  const response = await fetch(`/api${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    ...(signal && { signal }),
+  })
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+  return (await response.json()) as T
+}
 
 /** GETs `/api{path}` with the signed-in user's access token. */
 export function useApi<T>(path: string): State<T> {

@@ -1,7 +1,7 @@
 // ACC-3: the banner shows the highest marking on screen, whatever order the data arrives in.
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import type { Collection } from './api'
+import type { Collection, StacItem } from './api'
 import { bannerFor, UNCLASSIFIED } from './markings'
 
 const MARKINGS = [
@@ -37,6 +37,25 @@ describe('bannerFor [ACC-3]', () => {
         const banner = bannerFor(collections)
         expect(MARKINGS.find((m) => m.marking === banner.code)?.marking_rank).toBe(top)
         expect(bannerFor(collections.toReversed())).toEqual(banner)
+      }),
+    )
+  })
+})
+
+// Only the fields the banner reads; the rest of a STAC item doesn't bear on it.
+const item = fc.constantFrom(...MARKINGS).map(
+  (level) =>
+    ({ properties: { 'ingest:marking': level.marking, 'ingest:marking_rank': level.marking_rank } }) as StacItem,
+)
+
+describe('bannerFor with items [ACC-3]', () => {
+  it('counts an item marked above every collection on screen', () => {
+    fc.assert(
+      fc.property(fc.array(collection), fc.array(item, { minLength: 1 }), (collections, items) => {
+        const ranks = [...collections.map((c) => c.marking_rank), ...items.map((i) => i.properties['ingest:marking_rank'])]
+        const banner = bannerFor(collections, items)
+        expect(banner.rank).toBe(Math.max(...ranks))
+        expect(bannerFor(collections.toReversed(), items.toReversed()).rank).toBe(banner.rank)
       }),
     )
   })

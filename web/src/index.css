@@ -132,3 +132,62 @@ button.link { background: none; color: var(--accent); padding: 0.25rem; }
 }
 .signin h1, .fatal h1 { margin: 0 0 0.5rem; letter-spacing: -0.02em; }
 .signin p { color: var(--muted); }
+
+.tabs { display: flex; gap: 0.5rem; margin-right: auto; margin-left: 2rem; }
+.tabs .active { font-weight: 650; text-decoration: underline; text-underline-offset: 0.3em; }
+
+/* Search: filters and results beside a map that fills the rest of the screen. */
+.search {
+  display: grid;
+  grid-template-columns: minmax(0, 24rem) minmax(0, 1fr);
+  height: calc(100vh - 7.5rem);
+}
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+}
+.map { width: 100%; height: 100%; min-height: 20rem; }
+@media (max-width: 760px) {
+  .search { grid-template-columns: minmax(0, 1fr); grid-template-rows: 50vh auto; height: auto; }
+  .search .map { order: -1; }
+}
+
+.query { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+.query input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+fieldset { border: 0; padding: 0; margin: 0.5rem 0 0; display: flex; flex-wrap: wrap; gap: 0.15rem 0.9rem; }
+legend { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.2rem; }
+.check { display: inline-flex; gap: 0.35rem; align-items: center; font-size: 0.9rem; }
+
+.results { list-style: none; margin: 0 0 0.75rem; padding: 0; }
+.result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  color: var(--text);
+  border-radius: 4px;
+  padding: 0.5rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+.result:hover { background: var(--bg); }
+.result.selected { outline: 2px solid #e0a100; }
+.result .title { display: block; overflow-wrap: anywhere; }
+.meta { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; color: var(--muted); font-size: 0.8rem; }
+.meta .chip { padding: 0.2rem 0.35rem; font-size: 0.6rem; }
+
+.details dl { display: block; margin-top: 0.6rem; }
+.details .row { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 0.5rem; font-size: 0.85rem; padding: 0.15rem 0; }
+.details dd { overflow-wrap: anywhere; font-family: var(--mono); font-size: 0.78rem; }
