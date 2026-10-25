@@ -160,7 +160,8 @@ Status: enforced
 Format readers parse untrusted bytes in native code, so each extraction runs in a child process
 with a deadline and a memory limit. A reader that crashes, hangs, runs out of memory or raises
 unexpectedly leaves its item cataloged with extraction `failed` and no metadata, and the
-worker goes on to the next message. The budget (ING-6) is enforced outside the child.
+worker goes on to the next message. The budget (ING-6) is enforced outside the child. A
+crashing child writes no core dump: its memory holds the file's contents, which may be CUI.
 
 ### ING-9 One item per content per collection
 

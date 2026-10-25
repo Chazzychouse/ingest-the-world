@@ -8,6 +8,7 @@ function so the sandbox's child process can import it by name.
 
 import ctypes
 import os
+import resource
 import time
 from functools import partial
 
@@ -52,6 +53,11 @@ def hangs(_: BlobSource) -> Found:
 def hogs_memory(_: BlobSource) -> Found:
     hoard = [bytearray(64 * 1024 * 1024) for _ in range(1024)]  # 64 GiB, far past the limit
     return Found(properties={"blocks": len(hoard)})
+
+
+def reports_core_limit(_: BlobSource) -> Found:
+    soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+    return Found(properties={"core_soft": soft, "core_hard": hard})
 
 
 def raises_a_bug(_: BlobSource) -> Found:
@@ -128,3 +134,13 @@ def test_a_storage_failure_under_a_sandboxed_reader_is_retried(tmp_path, sandbox
 
     with pytest.raises(StorageError):
         extract(READERS[Media.TIFF], budget, sandbox)
+
+
+@pytest.mark.invariant("ING-8")
+def test_a_reader_runs_where_a_crash_can_write_no_core_dump(quick):
+    """A core file would hold the child's memory, and so the file's contents, on disk."""
+    store = MemoryBlobStore()
+    found = quick.run(reports_core_limit, _budget(store, b"x" * 16))
+
+    assert isinstance(found, Found), found
+    check("ING-8", found.properties == {"core_soft": 0, "core_hard": 0}, f"core limit {found}")
