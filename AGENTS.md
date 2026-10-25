@@ -28,7 +28,8 @@ All from the repo root. Postgres, Azurite and (once its licence is accepted in `
 | `make explore` | After touching authorization, audit or the pipeline: property tests and the simulator with fresh random inputs. |
 | `make sim SEED=n` | Replaying a simulator failure from its seed. |
 | `make soak` | Long simulator run before a milestone. |
-| `make mutants` | After changing tests or checks: plants known bugs and verifies each is caught by the right invariant. |
+| `make mutants` | After changing tests or checks: plants known bugs and verifies each is caught by the right invariant (runs only the tests declaring each mutant's invariants; ~5 min). |
+| `make mutants-full` | The same against the whole suite per mutant (~40 min); nightly CI runs it. |
 | `make up` | Running the full local stack (http://localhost:8081). |
 
 ## Application structure

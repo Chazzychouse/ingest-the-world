@@ -61,8 +61,11 @@ soak:  ## Long simulation run (minutes)
 	docker compose up -d --wait db
 	$(PYTEST) tests/sim tests/test_access_model.py
 
-mutants: services  ## Plant known bugs and check each is caught by the right invariant
+mutants: services  ## Plant known bugs and check each is caught by its invariants' tests
 	cd api && INGEST_REQUIRE_DB=1 uv run python tools/mutants.py
+
+mutants-full: services  ## Same, running the whole suite per mutant (what nightly runs)
+	cd api && INGEST_REQUIRE_DB=1 uv run python tools/mutants.py --full
 
 lint:
 	cd api && uv run ruff check . && uv run ruff format --check .

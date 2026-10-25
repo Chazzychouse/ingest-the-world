@@ -6,6 +6,8 @@
   so a failure names the property it broke, not just the line.
 - `--check-invariants` (used by `make check` and CI) also fails the run when an `enforced`
   invariant has no test, so the doc can't claim more than the suite checks.
+- `--invariant ID` (repeatable) runs only the tests that declare one of those invariants;
+  `tools/mutants.py` uses it to run just the tests a mutant must trip.
 - `--invariants-report PATH` writes a JSON summary meant for agents and dashboards: each
   invariant's tests and outcome, and for each failure the IDs broken, the error, and the
   command that reproduces it.
@@ -82,6 +84,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         help="fail if an enforced invariant has no test",
     )
+    group.addoption(
+        "--invariant",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="run only tests that declare this invariant (repeatable)",
+    )
     group.addoption("--invariants-report", metavar="PATH", help="write a JSON report")
 
 
@@ -145,6 +154,22 @@ class InvariantPlugin:
             ]
             if untested:
                 raise pytest.UsageError(f"enforced invariants with no test: {', '.join(untested)}")
+        self._select(items)
+
+    def _select(self, items: list[pytest.Item]) -> None:
+        """Keeps only tests declaring one of `--invariant`'s IDs, if any were given."""
+        wanted: set[str] = set(self.config.getoption("invariant") or [])
+        if not wanted:
+            return
+        unknown = sorted(wanted - self.registry.keys())
+        if unknown:
+            raise pytest.UsageError(f"--invariant names undefined invariants: {unknown}")
+        declares = {i: {a for m in i.iter_markers("invariant") for a in m.args} for i in items}
+        kept = [i for i in items if declares[i] & wanted]
+        dropped = [i for i in items if not declares[i] & wanted]
+        if dropped:
+            self.config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.when == "call" and report.passed:
