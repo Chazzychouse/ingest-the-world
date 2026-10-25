@@ -8,6 +8,14 @@ def as_object(value: object) -> dict[str, object] | None:
     return cast(dict[str, object], value) if isinstance(value, dict) else None
 
 
+def as_list(value: object) -> list[object] | None:
+    return cast(list[object], value) if isinstance(value, list) else None
+
+
+def as_number(value: object) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
 def objects(parent: dict[str, object], key: str) -> list[dict[str, object]]:
     """The JSON objects in `parent[key]`, if it's a list; other entries are skipped."""
     value = parent.get(key)
