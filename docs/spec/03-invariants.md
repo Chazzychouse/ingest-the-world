@@ -219,7 +219,8 @@ Status: enforced
 
 Paging through a search with its `next` tokens returns every item that matched when paging
 began exactly once, in a fixed order, however many items are cataloged between pages (those
-appear at most once), and the last page says there is no next. Checked with items that share a
+appear at most once), and once they stop arriving the walk ends: the last page says there is
+no next. Checked with items that share a
 timestamp and items cataloged mid-search.
 
 ### RDG-1 Compaction conserves readings

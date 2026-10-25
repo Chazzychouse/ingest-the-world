@@ -51,7 +51,9 @@ TIMES = [EPOCH + timedelta(hours=h) for h in range(4)]
 FILENAMES = ["ortho_2024.tif", "Site-Alpha scan.laz", "100% model.glb", "a_b.csv", "ALPHA.tif"]
 TAGS = ["Survey", "lidar", "50%", "x_y"]
 TERMS = ["alpha", "ORTHO", "2024", "%", "_", "a_b", "x_y", "scan", "lid", "zzz"]
-MAX_PAGES = 200  # far above any search here; a runaway cursor fails rather than loops
+# Items one search may catalog between its pages. Unbounded, they could outpace a limit of 1
+# forever, as with any keyset paging; the walk is only owed an end once they stop.
+MAX_MID_SEARCH = 8
 
 
 @dataclass(frozen=True)
@@ -296,7 +298,10 @@ class SearchMachine(RuleBasedStateMachine):
         body = {**query.body(), "limit": limit}
         seen: list[str] = []
         positions: list[tuple[datetime, uuid.UUID]] = []
-        for _ in range(MAX_PAGES):
+        added = 0
+        # Every page but the last holds at least one item, and at most this many can match.
+        pages = len(self.items) + MAX_MID_SEARCH + 1
+        for _ in range(pages):
             response = self._call(actor, "POST", "/search", json=body)
             check("SRCH-1", response.status_code == 200, f"{body}: {response.text}")
             page = response.json()
@@ -310,10 +315,11 @@ class SearchMachine(RuleBasedStateMachine):
                 break
             check("SRCH-2", len(page["features"]) == limit, "a short page that isn't the last")
             body = {**body, **page["links"][0]["body"]}
-            if data.draw(st.booleans()):
+            if added < MAX_MID_SEARCH and data.draw(st.booleans()):
                 self._catalog(data)
+                added += 1
         else:
-            raise InvariantViolation("SRCH-2", f"no last page after {MAX_PAGES} pages")
+            raise InvariantViolation("SRCH-2", f"no last page after {pages} pages")
         at_end = self._expected(actor, query)
         check("SRCH-2", len(seen) == len(set(seen)), f"returned twice: {seen}")
         check("SRCH-2", at_start <= set(seen), f"never returned: {at_start - set(seen)}")
