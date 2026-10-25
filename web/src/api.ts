@@ -13,6 +13,9 @@ export type SearchIn = Schemas['SearchIn']
 export type StacItem = Schemas['StacItem']
 export type ItemCollection = Schemas['ItemCollection']
 export type NextLink = Schemas['NextLink']
+export type UploadIn = Schemas['UploadIn']
+export type Upload = Schemas['Upload']
+export type UploadSession = Schemas['UploadSession']
 
 type State<T> = { data?: T; error?: ApiError; loading: boolean }
 
@@ -41,6 +44,11 @@ export function postApi<T>(path: string, body: unknown, token: string, signal?: 
   })
 }
 
+/** GETs `/api{path}` with `token`; the parsed response, or an Error. */
+export function getApi<T>(path: string, token: string, signal?: AbortSignal) {
+  return send<T>(path, { headers: { Authorization: `Bearer ${token}` }, ...(signal && { signal }) })
+}
+
 /** GETs `/api{path}` with the signed-in user's access token; nothing while `path` is undefined. */
 export function useApi<T>(path: string | undefined): State<T> {
   const auth = useAuth()
@@ -51,7 +59,7 @@ export function useApi<T>(path: string | undefined): State<T> {
   useEffect(() => {
     if (!token || path === undefined) return
     const controller = new AbortController()
-    send<T>(path, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
+    getApi<T>(path, token, controller.signal)
       .then((data) => setState({ path, data, loading: false }))
       .catch((error: Error) => {
         if (error.name === 'AbortError') return
