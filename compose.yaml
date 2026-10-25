@@ -55,7 +55,7 @@ services:
   migrate:
     build: api
     image: ingest-api:dev
-    command: ["python", "-m", "ingest_api.migrate", "--seed"]
+    command: ["python", "-m", "ingest_api.migrate", "--demo"]
     environment: &api-env
       INGEST_DATABASE_URL: postgresql://ingest:ingest@db:5432/ingest
       INGEST_OIDC_ISSUER: http://localhost:8080/realms/ingest
