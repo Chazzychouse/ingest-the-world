@@ -18,10 +18,12 @@ from ingest_api.adapters.eicar_scanner import EICAR, EicarScanner
 from ingest_api.events import parse_blob_created
 from ingest_api.ports import BlobProps, BlobStore, Container, TransientStorageError
 from ingest_api.uploads.models import Outcome
+from ingest_api.worker.extract import MAX_EXTRACT_BYTES
 from ingest_api.worker.jobs import Reason
 from ingest_api.worker.pipeline import SOURCE_ETAG, Pipeline, process
 from tests.contracts.azurite import azurite
 from tests.fakes import CrashAfter, MemoryBlobStore, SimClock, event_for
+from tests.test_extract import DENVER, UTM_13N, geotiff
 
 LANDING, RAW, QUARANTINE = Container.LANDING, Container.RAW, Container.QUARANTINE
 TIFF = b"II*\x00" + bytes(range(256)) * 4
@@ -99,6 +101,40 @@ def test_a_clean_upload_is_cataloged_from_its_raw_copy(store, start, database_ur
     assert _item(db, landed.upload_id) == ("raster", sha, len(TIFF), landed.name)
     assert _raw(store, landed.name) == TIFF
     assert store.head(LANDING, landed.name) is None
+
+
+@pytest.mark.invariant("ING-6")
+def test_a_geotiff_is_cataloged_with_its_footprint(store, start, database_url, db, tmp_path):
+    data = geotiff(tmp_path)
+    landed = start(len(data))
+    props = store.put(LANDING, landed.name, data)
+
+    assert _work(database_url, store, props) == "cataloged"
+    row = db.execute(
+        """
+        SELECT extraction, crs, ST_XMin(footprint), ST_YMax(footprint), extracted_bytes,
+               properties ->> 'raster:band_count'
+        FROM catalog.items WHERE id = %s
+        """,
+        (landed.upload_id,),
+    ).fetchone()
+    assert row is not None
+    extraction, crs, west, north, extracted, bands = row
+    assert (extraction, crs, bands) == ("extracted", UTM_13N, "1")
+    assert (round(west, 3), round(north, 3)) == (DENVER[0], round(DENVER[3], 3))
+    assert extracted <= MAX_EXTRACT_BYTES < len(data)
+
+
+def test_bytes_that_dont_parse_are_cataloged_without_metadata(store, start, database_url, db):
+    landed = start(len(TIFF))  # a TIFF signature over noise
+    props = store.put(LANDING, landed.name, TIFF)
+
+    assert _work(database_url, store, props) == "cataloged"
+    row = db.execute(
+        "SELECT extraction, footprint, properties FROM catalog.items WHERE id = %s",
+        (landed.upload_id,),
+    ).fetchone()
+    assert row == ("unreadable", None, {})
 
 
 @pytest.mark.invariant("ING-1")

@@ -8,6 +8,7 @@ from typing import get_args
 import psycopg
 import pytest
 
+from ingest_api.items import metadata
 from ingest_api.items.kinds import Kind
 from ingest_api.uploads.models import UploadStatus
 from ingest_api.worker.jobs import Stage
@@ -29,7 +30,11 @@ def _allowed(db, constraint: str) -> set[str]:
 
 @pytest.mark.parametrize(
     ("constraint", "values"),
-    [("uploads_status_check", UploadStatus), ("jobs_stage_check", Stage)],
+    [
+        ("uploads_status_check", UploadStatus),
+        ("jobs_stage_check", Stage),
+        ("items_extraction_check", metadata.Status),
+    ],
 )
 def test_the_database_admits_exactly_the_states_the_code_has(db, constraint, values):
     assert _allowed(db, constraint) == set(get_args(values))

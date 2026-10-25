@@ -225,6 +225,13 @@ MUTANTS = [
         "    IF false AND (SELECT rank FROM authz.markings WHERE code = NEW.marking) < (",
         ("ACC-3",),
     ),
+    Mutant(
+        "extraction-ignores-budget",
+        "ingest_api/worker/extract.py",
+        "        if self.fetched + length > MAX_EXTRACT_BYTES:",
+        "        if False and self.fetched + length > MAX_EXTRACT_BYTES:",
+        ("ING-6",),
+    ),
 ]
 
 

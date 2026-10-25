@@ -2,7 +2,7 @@
 
     landing ──scan──► infected ──copy──► quarantine/                     quarantined
        │
-       └──copy──► raw/ ──hash, classify──► catalog.items                 cataloged
+       └──copy──► raw/ ──hash, classify, extract──► catalog.items        cataloged
        (wrong size, wrong checksum, superseded, no or closed upload)     rejected
 
 Every step can fail midway and be retried from the top on redelivery, so each is idempotent:
@@ -34,6 +34,8 @@ from ingest_api.ports import (
 from ingest_api.uploads import store as uploads
 from ingest_api.worker import jobs
 from ingest_api.worker.classify import HEAD_BYTES, classify
+from ingest_api.worker.extract import BlobSource, extract
+from ingest_api.worker.formats import READERS
 
 # Blob metadata naming the landing version a copy was made from.
 SOURCE_ETAG = "source_etag"
@@ -170,10 +172,14 @@ def _catalog(
     sha256 = sha256_of(p.store, RAW, event.name, raw.size)
     if upload.sha256 is not None and sha256 != upload.sha256:
         return _reject(conn, p, event, jobs.Reason.CHECKSUM_MISMATCH, closes=upload)
-    # Classified from the raw copy, which is exactly this version; landing may have moved on.
+    # Classified and read from the raw copy, which is exactly this version; landing may have
+    # moved on.
     head = p.store.read_range(RAW, event.name, 0, HEAD_BYTES)
     found = classify(head, upload.filename, upload.content_type)
-    contents = items.Contents(found.kind, found.media_type, sha256, raw.size)
+    source = BlobSource(p.store, RAW, event.name, raw.size)
+    extraction = extract(READERS.get(found.media_type), source)
+    kind = extraction.kind or found.kind
+    contents = items.Contents(kind, found.media_type, sha256, raw.size, extraction.metadata)
     items.insert_from_upload(conn, upload.id, contents, created_at=p.clock.now())
     return _finish(conn, p, event, "cataloged", closes=upload)
 

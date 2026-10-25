@@ -133,10 +133,13 @@ simulation, including those that fail midway.
 
 ### ING-6 Header-only extraction
 
-Status: planned (M1)
+Status: enforced
 
-Metadata extraction for size classes M and L reads at most a bounded number of bytes
-(range reads), never the whole object. Checked with a byte-counting blob store.
+Metadata extraction fetches at most `MAX_EXTRACT_BYTES` (4 MiB) of a file, by range, whatever
+the file's size or contents; a header that needs more is recorded as `over-budget`, not read.
+Every format reader goes through the blob store port, so GDAL and Arrow are bound by the same
+budget. Checked against a byte-counting blob store with files several times the budget, by
+fuzzing every reader, and in the pipeline simulation on every cataloged item.
 
 ### ING-7 Derivatives are rebuildable
 

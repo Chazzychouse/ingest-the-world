@@ -55,9 +55,12 @@ api/ingest_api/
   identity.py    /me
   collections/   collections and their grants: models.py, store.py, routes.py
   uploads/       upload sessions and their signed URLs: models.py, store.py, routes.py
-  items/         cataloged files: kinds.py (what a file is), store.py (only the pipeline writes)
+  items/         cataloged files: kinds.py (what a file is), metadata.py (what its header
+                 says), store.py (only the pipeline writes)
   worker/        the pipeline: pipeline.py (one blob version's step machine), classify.py,
+                 extract.py (budgeted header reads), formats/ (one reader per format family),
                  jobs.py (its store), runner.py (queue -> settle), __main__.py (composition)
+api/typings/     local type stubs for the parts of untyped libraries we use (rasterio, pyarrow)
 api/migrations/  numbered SQL, never edited once merged; add a new file instead
 ```
 
@@ -136,6 +139,8 @@ touches markings) and the default everywhere else.
   fixture-inference rules relaxed (see `pyproject.toml`).
 - **Annotate every function signature,** including return types. `Any` appears only where
   untyped data enters (JWT claims, JSON from outside) and is narrowed immediately.
+- **Untyped libraries get stubs, not ignores.** Declare what production code uses in
+  `api/typings/`; a stub's module-level `__getattr__` leaves the rest as `Any` for tests.
 - **Model the domain in types, not strings.** `StrEnum` for closed sets the code branches on
   (`Role`, `AuditAction`), `Literal` for small fixed sets in API shapes, frozen
   `@dataclass(slots=True)` for internal values, Pydantic models only at the HTTP edge.
