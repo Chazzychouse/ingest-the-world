@@ -281,9 +281,10 @@ button.link:hover { text-decoration: underline; text-underline-offset: 0.2em; }
 .details dd { overflow-wrap: anywhere; font-family: var(--mono); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 760px) {
-  .topbar { gap: 0.75rem; padding: 0.6rem 1rem; font-size: 0.95rem; }
-  .brand { white-space: nowrap; }
-  .tabs { margin-left: 0; gap: 0.25rem; }
+  .topbar { flex-wrap: wrap; justify-content: space-between; gap: 0.25rem 0.75rem; padding: 0.6rem 1rem; font-size: 0.95rem; }
+  .topbar > * { white-space: nowrap; }
+  /* Tabs take a row of their own under the brand and Sign out. */
+  .tabs { order: 1; width: 100%; margin: 0; gap: 1rem; }
   .search { grid-template-columns: minmax(0, 1fr); grid-template-rows: 45vh auto; height: auto; }
   .search .map { order: -1; }
   .sidebar { overflow: visible; border-right: 0; }
@@ -292,7 +293,6 @@ button.link:hover { text-decoration: underline; text-underline-offset: 0.2em; }
 
 /* Upload: the form beside the uploads it started. */
 .uploads { grid-template-columns: minmax(0, 22rem) minmax(0, 1fr); }
-.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
 .upload-form { display: grid; gap: 0.9rem; }
 .field { display: grid; gap: 0.3rem; font-size: 0.85rem; font-weight: 600; }
 .field .muted { font-weight: 400; margin: 0; }

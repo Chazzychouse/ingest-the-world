@@ -21,6 +21,7 @@ from ingest_api import authz
 from ingest_api.auth import Principal
 from ingest_api.items.kinds import Kind
 from ingest_api.items.metadata import Metadata, Status
+from ingest_api.paging import Position
 
 # The index that keeps one item per content per collection (migration 0007, ING-9).
 ONE_PER_CONTENT = "items_one_per_content"
@@ -133,14 +134,6 @@ def marking_of(conn: Connection[TupleRow], item_id: UUID) -> str | None:
     """The marking of an item regardless of access. For audit records only."""
     row = conn.execute("SELECT marking FROM catalog.items WHERE id = %s", (item_id,)).fetchone()
     return None if row is None else row[0]
-
-
-@dataclass(frozen=True, slots=True)
-class Position:
-    """Where a page ended in the search order: newest first, ties broken by id."""
-
-    created_at: datetime
-    id: UUID
 
 
 @dataclass(frozen=True, slots=True)

@@ -22,6 +22,7 @@ from psycopg.rows import TupleRow
 
 from ingest_api.events import BlobCreated, InvalidEvent, parse_blob_created
 from ingest_api.ports import Container, LockLost, Message, Queue, StorageError
+from ingest_api.uploads.models import Reason
 from ingest_api.worker import jobs
 from ingest_api.worker.pipeline import Busy, Pipeline, give_up, process
 
@@ -77,7 +78,7 @@ def handle(message: Message, connect: Connect, pipeline: Pipeline, retry: Retry)
         _record_error(connect, pipeline, event, exc)
         if message.delivery_count >= retry.max_deliveries:
             log.warning("giving up %s@%s: %s", event.name, event.etag, exc)
-            return _give_up(connect, pipeline, event, jobs.Reason.RETRIES_EXHAUSTED)
+            return _give_up(connect, pipeline, event, Reason.RETRIES_EXHAUSTED)
         log.info("retrying %s@%s: %s", event.name, event.etag, exc)
         pipeline.clock.sleep(retry.backoff(message.delivery_count))
         return Settlement.ABANDON
@@ -86,7 +87,7 @@ def handle(message: Message, connect: Connect, pipeline: Pipeline, retry: Retry)
 
 
 def _give_up(
-    connect: Connect, pipeline: Pipeline, event: BlobCreated, reason: jobs.Reason
+    connect: Connect, pipeline: Pipeline, event: BlobCreated, reason: Reason
 ) -> Settlement:
     try:
         with connect() as conn:
@@ -105,7 +106,7 @@ def sweep(message: Message, connect: Connect, pipeline: Pipeline) -> Settlement:
     event = _landing_event(message)
     if event is None:
         return Settlement.COMPLETE  # no version to end: an invalid event or unreadable body
-    return _give_up(connect, pipeline, event, jobs.Reason.DEAD_LETTERED)
+    return _give_up(connect, pipeline, event, Reason.DEAD_LETTERED)
 
 
 def _record_error(connect: Connect, pipeline: Pipeline, event: BlobCreated, exc: Exception) -> None:

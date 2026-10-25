@@ -43,6 +43,7 @@ PUT_GRANT_CHECK = (
 )
 ROUTES = "ingest_api/collections/routes.py"
 UPLOAD_ROUTES = "ingest_api/uploads/routes.py"
+UPLOAD_STORE = "ingest_api/uploads/store.py"
 # The latest definition of the access functions; earlier migrations' versions are replaced.
 UPLOADS_SQL = "migrations/0003_uploads.sql"
 ITEMS_SQL = "migrations/0004_items_and_jobs.sql"
@@ -260,7 +261,7 @@ MUTANTS = [
     Mutant(
         "dead-letters-dropped-by-sweep",
         "ingest_api/worker/runner.py",
-        "    return _give_up(connect, pipeline, event, jobs.Reason.DEAD_LETTERED)\n",
+        "    return _give_up(connect, pipeline, event, Reason.DEAD_LETTERED)\n",
         "    return Settlement.COMPLETE\n",
         ("ING-2",),
     ),
@@ -361,6 +362,20 @@ MUTANTS = [
         '    return f"%{escaped}%"',
         '    return f"%{term}%"',
         ("SRCH-1",),
+    ),
+    Mutant(
+        "upload-list-shows-everyones",
+        UPLOAD_STORE,
+        'query = _SELECT_READABLE + " AND u.created_by = %s"',
+        'query = _SELECT_READABLE + " AND %s IS NOT NULL"',
+        ("ACC-1",),
+    ),
+    Mutant(
+        "upload-list-repeats-page-edge",
+        UPLOAD_STORE,
+        'query += " AND (u.created_at, u.id) < (%s, %s)"',
+        'query += " AND (u.created_at, u.id) <= (%s, %s)"',
+        ("ACC-1",),
     ),
 ]
 

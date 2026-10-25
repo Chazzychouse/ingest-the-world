@@ -8,6 +8,7 @@ import pytest
 
 from ingest_api.adapters.eicar_scanner import EicarScanner
 from ingest_api.ports import BlobProps, Container, TransientStorageError
+from ingest_api.uploads.models import Reason
 from ingest_api.worker import jobs
 from ingest_api.worker.pipeline import Pipeline
 from ingest_api.worker.runner import INVALID_EVENT, Retry, run_once, sweep_once
@@ -134,7 +135,7 @@ def test_a_version_still_failing_on_its_last_delivery_is_rejected(
     for _ in range(RETRY.max_deliveries):
         run_once(queue, connect, pipeline, retry=RETRY, batch=1)
 
-    assert _job(db, landed.name) == ("rejected", jobs.Reason.RETRIES_EXHAUSTED)
+    assert _job(db, landed.name) == ("rejected", Reason.RETRIES_EXHAUSTED)
     status = db.execute("SELECT status FROM ingest.uploads WHERE id = %s", (landed.upload_id,))
     assert status.fetchone() == ("rejected",)
     assert store.head(Container.LANDING, landed.name) is None
@@ -154,7 +155,7 @@ def test_a_version_whose_message_dead_letters_is_rejected_by_the_sweep(
     assert queue.receive() == [] and len(queue.dead_letters) == 1
 
     assert sweep_once(queue, connect, pipeline, batch=10) == 1
-    assert _job(db, props.name) == ("rejected", jobs.Reason.DEAD_LETTERED)
+    assert _job(db, props.name) == ("rejected", Reason.DEAD_LETTERED)
     assert queue.dead_letters == []
     assert memory.head(Container.LANDING, props.name) is None
 
@@ -180,7 +181,7 @@ def test_sweeping_a_version_that_already_has_an_outcome_changes_nothing(
     queue.dead_letter(message, reason="Whatever")
 
     sweep_once(queue, connect, pipeline, batch=10)
-    assert _job(db, props.name) == ("rejected", jobs.Reason.NO_UPLOAD)
+    assert _job(db, props.name) == ("rejected", Reason.NO_UPLOAD)
     assert queue.dead_letters == []
 
 

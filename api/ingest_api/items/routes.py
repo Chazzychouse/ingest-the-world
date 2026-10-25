@@ -10,13 +10,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, status
 
+from ingest_api import paging
 from ingest_api.audit import AuditAction, Target
 from ingest_api.deps import Audit, Conn, CurrentPrincipal
 from ingest_api.items import store
 from ingest_api.items.models import (
     FILE_EXTENSION,
     PROJECTION_EXTENSION,
-    Cursor,
     ItemCollection,
     ItemProperties,
     Link,
@@ -101,7 +101,6 @@ def get_item(item_id: UUID, principal: CurrentPrincipal, conn: Conn, auditor: Au
 
 def _query(body: SearchIn) -> store.Query:
     start, end = parse_interval(body.datetime) if body.datetime else (None, None)
-    cursor = Cursor.from_token(body.token) if body.token else None
     return store.Query(
         limit=body.limit,
         bbox=body.bbox,
@@ -112,7 +111,7 @@ def _query(body: SearchIn) -> store.Query:
         collections=body.collections,
         kinds=body.kinds,
         ids=body.ids,
-        after=store.Position(cursor.created_at, cursor.id) if cursor else None,
+        after=paging.position(body.token) if body.token else None,
     )
 
 
@@ -127,7 +126,7 @@ def search(
     links: list[NextLink] = []
     if len(rows) > body.limit:
         last = page[-1]
-        token = Cursor(created_at=last.created_at, id=last.id).token()
+        token = paging.token(paging.Position(last.created_at, last.id))
         links.append(NextLink(href=SEARCH_PATH, body=NextBody(token=token)))
     highest = max(page, key=lambda row: row.marking_rank, default=None)
     auditor.allowed(

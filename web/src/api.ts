@@ -15,6 +15,8 @@ export type ItemCollection = Schemas['ItemCollection']
 export type NextLink = Schemas['NextLink']
 export type UploadIn = Schemas['UploadIn']
 export type Upload = Schemas['Upload']
+export type UploadPage = Schemas['UploadPage']
+export type Reason = Schemas['Reason']
 export type UploadSession = Schemas['UploadSession']
 
 type State<T> = { data?: T; error?: ApiError; loading: boolean }

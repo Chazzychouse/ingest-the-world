@@ -141,7 +141,8 @@ def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collectio
             upload_blocks(storage, session["upload_url"], sample.path)
 
         outcome = _await_outcome(api, upload_id, sample.size)
-        status, reason, expect = outcome["status"], outcome["reason"], upload.expect
+        status, expect = outcome["status"], upload.expect
+        reason = outcome["signature"] if status == "quarantined" else outcome["reason"]
         check("ING-2", status == expect.outcome, f"{label}: {status}, wanted {expect.outcome}")
         if expect.reason is not None:
             assert reason == expect.reason, f"{label}: reason {reason!r}, wanted {expect.reason!r}"

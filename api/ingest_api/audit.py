@@ -26,6 +26,7 @@ class AuditAction(StrEnum):
     GRANT_PUT = "grant.put"
     GRANT_DELETE = "grant.delete"
     UPLOAD_CREATE = "upload.create"
+    UPLOAD_LIST = "upload.list"
     UPLOAD_READ = "upload.read"
     UPLOAD_RENEW = "upload.renew"
     ITEM_READ = "item.read"

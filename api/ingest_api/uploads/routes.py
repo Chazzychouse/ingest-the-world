@@ -7,18 +7,19 @@ one they can read but not write answers 403 (ACC-7).
 
 from dataclasses import replace
 from datetime import timedelta
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
-from ingest_api import authz
+from ingest_api import authz, paging
 from ingest_api.audit import AuditAction, Auditor, Target
 from ingest_api.auth import Principal
 from ingest_api.collections.routes import collection_target, readable_or_404
 from ingest_api.deps import Audit, Conn, CurrentPrincipal, Rt, Runtime
 from ingest_api.ports import Container
 from ingest_api.uploads import store
-from ingest_api.uploads.models import Upload, UploadIn, UploadSession
+from ingest_api.uploads.models import Upload, UploadIn, UploadListIn, UploadPage, UploadSession
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -105,6 +106,31 @@ def create_upload(
         },
     )
     return session
+
+
+@router.get("")
+def list_uploads(
+    params: Annotated[UploadListIn, Query()],
+    principal: CurrentPrincipal,
+    conn: Conn,
+    auditor: Audit,
+) -> UploadPage:
+    """One page of the caller's own uploads in collections they can still read, newest first.
+    Pass `next` back as `token` for the following page."""
+    after = paging.position(params.token) if params.token else None
+    rows = store.list_mine(conn, principal, limit=params.limit, after=after)
+    page = rows[: params.limit]
+    last = page[-1] if len(rows) > params.limit else None
+    highest = max(page, key=lambda row: row.marking_rank, default=None)
+    auditor.allowed(
+        AuditAction.UPLOAD_LIST,
+        marking=highest.marking if highest else None,
+        detail={"ids": [str(row.id) for row in page]},
+    )
+    return UploadPage(
+        uploads=[Upload.model_validate(row) for row in page],
+        next=paging.token(paging.Position(last.created_at, last.id)) if last else None,
+    )
 
 
 @router.get("/{upload_id}")

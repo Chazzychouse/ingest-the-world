@@ -35,6 +35,7 @@ from ingest_api.ports import (
     TransientStorageError,
 )
 from ingest_api.uploads import store as uploads
+from ingest_api.uploads.models import Reason
 from ingest_api.worker import jobs
 from ingest_api.worker.classify import HEAD_BYTES, classify
 from ingest_api.worker.extract import Budget, Reader, Sandbox, extract
@@ -79,7 +80,7 @@ def process(conn: Connection[TupleRow], pipeline: Pipeline, event: BlobCreated) 
 
 
 def give_up(
-    conn: Connection[TupleRow], pipeline: Pipeline, event: BlobCreated, reason: jobs.Reason
+    conn: Connection[TupleRow], pipeline: Pipeline, event: BlobCreated, reason: Reason
 ) -> jobs.Outcome:
     """Ends a version that can't be processed, so nothing is retried forever (ING-2): it is
     rejected with `reason`, or as superseded if a newer version has replaced it, unless it
@@ -116,11 +117,11 @@ def _abandon(
     event: BlobCreated,
     upload: uploads.LandedUpload | None,
     *,
-    reason: jobs.Reason,
+    reason: Reason,
 ) -> jobs.Outcome:
     landing = p.store.head(LANDING, event.name)
     if landing is not None and landing.etag != event.etag:
-        return _reject(conn, p, event, jobs.Reason.SUPERSEDED)
+        return _reject(conn, p, event, Reason.SUPERSEDED)
     open_upload = upload if upload is not None and upload.status == "pending" else None
     return _reject(conn, p, event, reason, closes=open_upload)
 
@@ -132,9 +133,9 @@ def _decide_first(
     upload: uploads.LandedUpload | None,
 ) -> jobs.Outcome:
     if upload is None:
-        return _reject(conn, p, event, jobs.Reason.NO_UPLOAD)
+        return _reject(conn, p, event, Reason.NO_UPLOAD)
     if upload.status != "pending":
-        return _reject(conn, p, event, jobs.Reason.UPLOAD_CLOSED)
+        return _reject(conn, p, event, Reason.UPLOAD_CLOSED)
     return _decide(conn, p, event, upload)
 
 
@@ -143,9 +144,9 @@ def _decide(
 ) -> jobs.Outcome:
     landing = p.store.head(LANDING, event.name)
     if landing is None or landing.etag != event.etag:
-        return _reject(conn, p, event, jobs.Reason.SUPERSEDED)
+        return _reject(conn, p, event, Reason.SUPERSEDED)
     if landing.size != upload.size_bytes:
-        return _reject(conn, p, event, jobs.Reason.SIZE_MISMATCH, closes=upload)
+        return _reject(conn, p, event, Reason.SIZE_MISMATCH, closes=upload)
     verdict = p.scanner.scan(LANDING, event.name)
     if not verdict.clean:
         return _quarantine(conn, p, event, upload, verdict.signature or "unnamed")
@@ -208,7 +209,7 @@ def _reject(
     conn: Connection[TupleRow],
     p: Pipeline,
     event: BlobCreated,
-    reason: jobs.Reason,
+    reason: Reason,
     *,
     closes: uploads.LandedUpload | None = None,
 ) -> jobs.Outcome:
@@ -239,7 +240,7 @@ def _quarantine(
             metadata={SOURCE_ETAG: event.etag, "signature": signature},
         )
     except BlobChanged:
-        return _reject(conn, p, event, jobs.Reason.SUPERSEDED)
+        return _reject(conn, p, event, Reason.SUPERSEDED)
     except BlobExists:
         pass  # an earlier attempt quarantined this version already
     return _finish(conn, p, event, "quarantined", reason=signature, closes=upload)
@@ -250,10 +251,10 @@ def _catalog(
 ) -> jobs.Outcome:
     raw = _promote(conn, p, event)
     if raw is None:
-        return _reject(conn, p, event, jobs.Reason.SUPERSEDED)
+        return _reject(conn, p, event, Reason.SUPERSEDED)
     sha256 = sha256_of(p.store, RAW, event.name, raw.size)
     if upload.sha256 is not None and sha256 != upload.sha256:
-        return _reject(conn, p, event, jobs.Reason.CHECKSUM_MISMATCH, closes=upload)
+        return _reject(conn, p, event, Reason.CHECKSUM_MISMATCH, closes=upload)
     # Classified and read from the raw copy, which is exactly this version; landing may have
     # moved on.
     head = p.store.read_range(RAW, event.name, 0, HEAD_BYTES)
@@ -265,7 +266,7 @@ def _catalog(
     try:
         items.insert_from_upload(conn, upload.id, contents, created_at=p.clock.now())
     except items.Duplicate:
-        return _reject(conn, p, event, jobs.Reason.DUPLICATE, closes=upload)
+        return _reject(conn, p, event, Reason.DUPLICATE, closes=upload)
     return _finish(conn, p, event, "cataloged", closes=upload)
 
 
@@ -307,7 +308,7 @@ def _supersede(conn: Connection[TupleRow], p: Pipeline, name: str, raw: BlobProp
     if older is None:
         raise StorageError(f"raw/{name} has no {SOURCE_ETAG}; it was not made by the pipeline")
     p.store.delete(RAW, name, if_match=raw.etag)
-    reason = jobs.Reason.SUPERSEDED
+    reason = Reason.SUPERSEDED
     finished = jobs.finish(conn, name, older, "rejected", reason=reason, now=p.clock.now())
     _commit_outcome(conn, name, older, "rejected", reason=reason, audit=finished)
 

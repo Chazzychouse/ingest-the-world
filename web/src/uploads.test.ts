@@ -5,7 +5,7 @@ import type { Upload, UploadIn } from './api'
 import { BLOCK_BYTES, blockId } from './blocks'
 import type { Storage } from './transfer'
 import type { Log, Saved } from './uploadLog'
-import { problem, Uploads, type UploadApi } from './uploads'
+import { IDLE_LIST_MS, problem, Uploads, type UploadApi } from './uploads'
 
 const ID = '6f1c1f0e-2a4b-4c3d-8e9f-0a1b2c3d4e5f'
 
@@ -19,31 +19,57 @@ function memoryLog(initial: Saved[] = []): Log & { rows: Map<string, Saved> } {
   }
 }
 
-function fakeApi(status: () => Upload['status']) {
-  const created: UploadIn[] = []
-  const upload = (body: UploadIn): Upload => ({
-    ...body,
-    content_type: body.content_type ?? null,
+const PAGE = 2 // the fake API's page size, small enough to page
+
+/** An upload as the API returns it, pending until changed. */
+function record(over: Partial<Upload> & { id: string }): Upload {
+  return {
+    collection_id: 'c',
+    filename: 'site.laz',
+    size_bytes: 1,
+    content_type: null,
     sha256: null,
-    tags: body.tags ?? [],
-    id: ID,
-    status: status(),
+    tags: [],
+    status: 'pending',
+    stage: 'awaiting-bytes',
+    attempts: 0,
     reason: null,
+    signature: null,
     marking: 'UNCLASSIFIED',
     marking_rank: 0,
     created_by: 'alice',
     created_at: '2026-10-25T00:00:00Z',
-  })
-  const session = (body: UploadIn) => ({ upload: upload(body), upload_url: 'https://blob/x?sig', expires_at: '' })
+    ...over,
+  }
+}
+
+const session = (upload: Upload) => Promise.resolve({ upload, upload_url: 'https://blob/x?sig', expires_at: '' })
+
+/** The upload API over a map of uploads, newest first in pages of `PAGE`. */
+function fakeApi(listed: Upload[] = []) {
+  const created: UploadIn[] = []
+  const server = new Map(listed.map((u) => [u.id, u]))
+  let lists = 0
+  const known = (id: string) => server.get(id) ?? record({ id })
   const api: UploadApi = {
     create: (body) => {
       created.push(body)
-      return Promise.resolve(session(body))
+      const upload = record({ ...body, id: ID, tags: body.tags ?? [], content_type: body.content_type ?? null, sha256: null })
+      server.set(ID, upload)
+      return session(upload)
     },
-    renew: () => Promise.resolve(session({ collection_id: 'c', filename: 'f', size_bytes: 1 })),
-    get: () => Promise.resolve(upload({ collection_id: 'c', filename: 'f', size_bytes: 1 })),
+    renew: (id) => session(known(id)),
+    get: (id) => Promise.resolve(known(id)),
+    list: (token) => {
+      lists += 1
+      const all = [...server.values()].toSorted((a, b) => b.created_at.localeCompare(a.created_at))
+      const from = token ? Number(token) : 0
+      const next = from + PAGE < all.length ? String(from + PAGE) : null
+      return Promise.resolve({ uploads: all.slice(from, from + PAGE), next })
+    },
   }
-  return { api, created }
+  const set = (id: string, change: Partial<Upload>) => server.set(id, { ...known(id), ...change })
+  return { api, created, set, lists: () => lists }
 }
 
 function recording(): Storage & { ids: string[]; commits: number } {
@@ -56,8 +82,8 @@ function recording(): Storage & { ids: string[]; commits: number } {
   return storage
 }
 
-function uploads(api: UploadApi, storage: Storage, log: Log) {
-  return new Uploads({ api, storage, log, sleep: () => Promise.resolve(), now: () => 0, concurrency: 2 })
+function uploads(api: UploadApi, storage: Storage, log: Log, now = () => 0) {
+  return new Uploads({ api, storage, log, sleep: () => Promise.resolve(), now, concurrency: 2 })
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -68,8 +94,7 @@ function file(bytes: number, name = 'site.laz', lastModified = 1): File {
 
 describe('Uploads', () => {
   it('uploads a file and reports the outcome the pipeline decides', async () => {
-    let status: Upload['status'] = 'pending'
-    const { api, created } = fakeApi(() => status)
+    const { api, created, set } = fakeApi()
     const storage = recording()
     const log = memoryLog()
     const u = uploads(api, storage, log)
@@ -82,15 +107,18 @@ describe('Uploads', () => {
     expect(log.rows.get(ID)?.stage).toBe('processing')
 
     await u.poll()
-    expect(u.entries[0]?.phase).toBe('processing')
-    status = 'cataloged'
+    expect(u.entries[0]).toMatchObject({ phase: 'processing', stage: 'awaiting-bytes' })
+    set(ID, { stage: 'processing', attempts: 2 })
     await u.poll()
-    expect(u.entries[0]).toMatchObject({ phase: 'finished', outcome: 'cataloged' })
-    expect(log.rows.get(ID)?.stage).toBe('finished')
+    expect(u.entries[0]).toMatchObject({ phase: 'processing', stage: 'processing', attempts: 2 })
+    set(ID, { status: 'rejected', stage: null, attempts: 0, reason: 'duplicate' })
+    await u.poll()
+    expect(u.entries[0]).toMatchObject({ phase: 'finished', outcome: 'rejected', reason: 'duplicate' })
+    expect(log.rows.has(ID)).toBe(false) // the API remembers it from here
   })
 
   it('resumes after a reload once the same file is picked again, staging only what was missing', async () => {
-    const { api } = fakeApi(() => 'pending')
+    const { api } = fakeApi([record({ id: ID, size_bytes: 3 * BLOCK_BYTES })])
     const storage = recording()
     const saved: Saved = {
       id: ID,
@@ -104,6 +132,7 @@ describe('Uploads', () => {
     }
     const u = uploads(api, storage, memoryLog([saved]))
     await u.restore()
+    expect(u.entries).toHaveLength(1)
     expect(u.entries[0]).toMatchObject({ phase: 'needs-file', stagedBlocks: 2, blocks: 3 })
 
     u.provideFile(ID, file(3 * BLOCK_BYTES, 'site.laz', 8))
@@ -115,8 +144,58 @@ describe('Uploads', () => {
     expect(u.entries[0]?.phase).toBe('processing')
   })
 
+  it('lists uploads from elsewhere, newest first, and finishes one with its file', async () => {
+    const elsewhere = '0b7e2d1c-0000-4000-8000-000000000001'
+    const { api } = fakeApi([
+      record({ id: elsewhere, filename: 'old.tif', status: 'quarantined', stage: null, signature: 'EICAR-Test-File' }),
+      record({ id: ID, size_bytes: BLOCK_BYTES, created_at: '2026-10-25T01:00:00Z' }),
+    ])
+    const storage = recording()
+    const u = uploads(api, storage, memoryLog())
+    await u.restore()
+    expect(u.entries.map((e) => [e.key, e.phase])).toEqual([
+      [ID, 'needs-file'],
+      [elsewhere, 'finished'],
+    ])
+    expect(u.entries[1]).toMatchObject({ outcome: 'quarantined', signature: 'EICAR-Test-File' })
+    expect(u.entries[0]).toMatchObject({ elsewhere: true, stagedBlocks: 0 }) // its progress is unknown here
+
+    u.provideFile(ID, file(BLOCK_BYTES + 1))
+    expect(u.entries[0]?.problem).toContain('isn’t the file')
+    u.provideFile(ID, file(BLOCK_BYTES, 'site.laz', 99)) // its date was never known here
+    await settle()
+    expect(storage.ids).toEqual([blockId(0)])
+    expect(u.entries[0]).toMatchObject({ phase: 'processing', elsewhere: false })
+  })
+
+  it('pages back through older uploads', async () => {
+    const ids = ['a', 'b', 'c'].map((n) => `0b7e2d1c-0000-4000-8000-00000000000${n}`)
+    const done = { status: 'cataloged', stage: null } as const
+    const { api } = fakeApi(ids.map((id, i) => record({ id, created_at: `2026-10-25T0${i}:00:00Z`, ...done })))
+    const u = uploads(api, recording(), memoryLog())
+    await u.restore()
+    expect(u.entries.map((e) => e.key)).toEqual([ids[2], ids[1]])
+    expect(u.hasOlder).toBe(true)
+
+    await u.loadOlder()
+    expect(u.entries.map((e) => e.key)).toEqual(ids.toReversed())
+    expect(u.hasOlder).toBe(false)
+  })
+
+  it('asks for the list only now and then while nothing is processing', async () => {
+    const { api, lists } = fakeApi()
+    let now = 0
+    const u = uploads(api, recording(), memoryLog(), () => now)
+    await u.restore()
+    await u.poll()
+    expect(lists()).toBe(1)
+    now = IDLE_LIST_MS
+    await u.poll()
+    expect(lists()).toBe(2)
+  })
+
   it('never sends the API a file it would refuse', async () => {
-    const { api, created } = fakeApi(() => 'pending')
+    const { api, created } = fakeApi()
     const u = uploads(api, recording(), memoryLog())
     await u.add([file(0, 'empty.bin'), file(10, 'trailing.')], 'c', [])
     expect(created).toEqual([])
@@ -124,7 +203,7 @@ describe('Uploads', () => {
   })
 
   it('pauses and resumes a transfer', async () => {
-    const { api } = fakeApi(() => 'pending')
+    const { api } = fakeApi()
     const storage = recording()
     const u = uploads(api, storage, memoryLog())
     await u.add([file(BLOCK_BYTES)], 'c', [])

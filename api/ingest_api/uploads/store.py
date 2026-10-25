@@ -13,7 +13,8 @@ from psycopg.rows import TupleRow, class_row
 
 from ingest_api import authz
 from ingest_api.auth import Principal
-from ingest_api.uploads.models import Outcome, UploadIn, UploadStatus
+from ingest_api.paging import Position
+from ingest_api.uploads.models import Outcome, PendingStage, UploadIn, UploadStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +28,10 @@ class UploadRow:
     tags: list[str]
     blob_name: str
     status: UploadStatus
+    stage: PendingStage | None
+    attempts: int
     reason: str | None
+    signature: str | None
     marking: str
     marking_rank: int
     created_by: str
@@ -43,15 +47,27 @@ def blob_name(collection_id: str, upload_id: UUID, filename: str) -> str:
 
 _SELECT_READABLE = f"""
     SELECT u.id, u.collection_id, u.filename, u.size_bytes, u.content_type, u.sha256, u.tags,
-           u.blob_name, u.status, j.reason, c.marking, m.rank AS marking_rank, u.created_by,
-           u.created_at, u.url_expires_at
+           u.blob_name, u.status,
+           CASE WHEN u.status <> 'pending' THEN NULL
+                WHEN running.attempts IS NULL THEN 'awaiting-bytes'
+                ELSE 'processing' END AS stage,
+           coalesce(running.attempts, 0) AS attempts,
+           CASE WHEN u.status = 'rejected' THEN decided.reason END AS reason,
+           CASE WHEN u.status = 'quarantined' THEN decided.reason END AS signature,
+           c.marking, m.rank AS marking_rank, u.created_by, u.created_at, u.url_expires_at
     FROM ingest.uploads u
+    -- The version the pipeline is working on, while the upload waits for an outcome.
+    LEFT JOIN LATERAL (
+        SELECT attempts FROM ingest.jobs
+        WHERE upload_id = u.id AND stage = 'received'
+        ORDER BY created_at DESC LIMIT 1
+    ) running ON u.status = 'pending'
     -- Why the pipeline decided as it did: the reason of the job whose outcome the upload took.
     LEFT JOIN LATERAL (
         SELECT reason FROM ingest.jobs
         WHERE upload_id = u.id AND stage = u.status
         ORDER BY updated_at DESC LIMIT 1
-    ) j ON true
+    ) decided ON true
     JOIN catalog.collections c ON c.id = u.collection_id
     JOIN authz.markings m ON m.code = c.marking
     WHERE u.collection_id IN ({authz.READABLE_IDS})
@@ -97,6 +113,22 @@ def get_readable(
         return cur.execute(
             _SELECT_READABLE + " AND u.id = %s", (*authz.principal_args(principal), upload_id)
         ).fetchone()
+
+
+def list_mine(
+    conn: Connection[TupleRow], principal: Principal, *, limit: int, after: Position | None
+) -> list[UploadRow]:
+    """Up to `limit + 1` of the principal's own readable uploads after `after`, newest first;
+    one more than asked for means there is a next page."""
+    query = _SELECT_READABLE + " AND u.created_by = %s"
+    params: list[object] = [*authz.principal_args(principal), principal.subject]
+    if after is not None:
+        query += " AND (u.created_at, u.id) < (%s, %s)"
+        params += [after.created_at, after.id]
+    with conn.cursor(row_factory=class_row(UploadRow)) as cur:
+        return cur.execute(
+            query + " ORDER BY u.created_at DESC, u.id DESC LIMIT %s", (*params, limit + 1)
+        ).fetchall()
 
 
 def marking_of(conn: Connection[TupleRow], upload_id: UUID) -> str | None:

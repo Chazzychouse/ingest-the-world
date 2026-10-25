@@ -5,8 +5,6 @@ pipeline extracted, plus core fields that always win over anything a header said
 an ItemCollection whose `next` link carries the cursor for the following page.
 """
 
-import base64
-import binascii
 import datetime as dt
 from typing import Annotated, Literal, Self
 from uuid import UUID
@@ -16,6 +14,7 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from ingest_api.collections.models import NO_NUL_PATTERN, CollectionId
 from ingest_api.items.kinds import Kind
 from ingest_api.items.metadata import Status
+from ingest_api.paging import MAX_TOKEN_LENGTH, position
 from ingest_api.schema import ApiModel
 
 STAC_VERSION = "1.1.0"
@@ -32,7 +31,6 @@ MAX_QUERY_LENGTH = 256
 # A query geometry is a filter, not a dataset: big enough for any drawn area of interest.
 MAX_POSITIONS = 10_000
 MAX_RINGS = 64
-MAX_TOKEN_LENGTH = 128
 OPEN = ".."
 
 Longitude = Annotated[float, Field(ge=-180, le=180)]
@@ -115,24 +113,6 @@ def parse_interval(text: str) -> tuple[dt.datetime | None, dt.datetime | None]:
     return start, end
 
 
-class Cursor(ApiModel):
-    """A position in the search order: the last item of a page. Not a secret: it names an item
-    its holder has already seen, and every page is filtered afresh (ACC-1)."""
-
-    created_at: dt.datetime
-    id: UUID
-
-    def token(self) -> str:
-        return base64.urlsafe_b64encode(self.model_dump_json().encode()).decode()
-
-    @classmethod
-    def from_token(cls, token: str) -> Self:
-        try:
-            return cls.model_validate_json(base64.urlsafe_b64decode(token.encode()))
-        except (binascii.Error, ValueError):
-            raise ValueError("not a search token") from None
-
-
 class SearchIn(ApiModel):
     """Every filter given must hold for every result (SRCH-1); a list filter that is empty
     matches nothing."""
@@ -172,7 +152,7 @@ class SearchIn(ApiModel):
     @classmethod
     def _token(cls, token: str | None) -> str | None:
         if token is not None:
-            Cursor.from_token(token)
+            position(token)
         return token
 
     @model_validator(mode="after")
