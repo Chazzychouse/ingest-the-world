@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { getApi, postApi, type Upload, type UploadSession } from './api'
+import { getApi, postApi, type Upload, type UploadPage, type UploadSession } from './api'
 import { blobStorage } from './blobStorage'
 import { browserLog } from './uploadLog'
 import { Uploads, type Entry } from './uploads'
 
-const POLL_MS = 3000 // how often uploads in the pipeline are asked about
+const POLL_MS = 3000 // how often uploads in the pipeline are asked about; see `Uploads.poll`
 const CONCURRENCY = 4 // blocks in flight per transfer
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -30,6 +30,7 @@ export function useUploads(): { uploads: Uploads; entries: Entry[] } {
         create: (body) => postApi<UploadSession>('/uploads', body, bearer()),
         renew: (id) => postApi<UploadSession>(`/uploads/${id}/url`, {}, bearer()),
         get: (id) => getApi<Upload>(`/uploads/${id}`, bearer()),
+        list: (after) => getApi<UploadPage>(`/uploads${after ? `?token=${encodeURIComponent(after)}` : ''}`, bearer()),
       },
       storage: blobStorage,
       log: browserLog,

@@ -1,20 +1,41 @@
 import { useState, type ChangeEvent, type DragEvent } from 'react'
-import type { Collection } from './api'
+import type { Collection, Reason } from './api'
 import { plan } from './blocks'
 import { bytes } from './format'
 import { markingText } from './markings'
 import { MAX_TAG_LENGTH, MAX_TAGS } from './schema'
-import { parseTags, type Entry, type Phase, type Uploads } from './uploads'
+import { isLocal, parseTags, type Entry, type Phase, type Uploads } from './uploads'
 
 const PHASES: Record<Phase, string> = {
   invalid: 'Not uploaded',
   queued: 'Waiting',
   uploading: 'Uploading',
   paused: 'Paused',
-  'needs-file': 'Choose the file again to carry on',
+  'needs-file': 'Not finished: choose the file again to carry on',
   processing: 'Processing',
   finished: 'Done',
   failed: 'Failed',
+}
+
+const ELSEWHERE = 'Not finished uploading: choose the file to carry on'
+
+// Why the pipeline turned a file away, in the uploader's terms.
+const REASONS: Record<Reason, string> = {
+  'no-upload': 'storage held no upload by this name',
+  'upload-closed': 'the upload had already finished',
+  superseded: 'newer bytes replaced these',
+  'size-mismatch': 'the bytes stored weren’t the size declared',
+  'checksum-mismatch': 'the bytes stored didn’t match the declared checksum',
+  duplicate: 'this collection already has a file with the same contents',
+  'retries-exhausted': 'processing kept failing; upload it again',
+  'dead-lettered': 'processing couldn’t finish; upload it again',
+}
+
+/** What a processing upload is waiting on. */
+function processing(entry: Entry): string {
+  if (entry.stage !== 'processing') return 'In storage, waiting for the pipeline'
+  const attempts = entry.attempts ?? 1
+  return attempts > 1 ? `Checking and cataloging (attempt ${attempts})` : 'Checking and cataloging'
 }
 
 type FormProps = { collections: Collection[]; onFiles: (files: File[], collectionId: string, tags: string[]) => void }
@@ -104,9 +125,13 @@ function Outcome({ entry, onOpen }: { entry: Entry; onOpen: (id: string) => void
       </span>
     )
   }
-  const reason = entry.reason ? `: ${entry.reason}` : ''
-  if (entry.outcome === 'quarantined') return <span className="outcome bad">Quarantined{reason}</span>
-  if (entry.outcome === 'rejected') return <span className="outcome bad">Rejected{reason}</span>
+  if (entry.outcome === 'quarantined') {
+    const found = entry.signature ? ` (${entry.signature})` : ''
+    return <span className="outcome bad">Quarantined: the scanner found malware{found}</span>
+  }
+  if (entry.outcome === 'rejected') {
+    return <span className="outcome bad">Rejected{entry.reason ? `: ${REASONS[entry.reason]}` : ''}</span>
+  }
   return <span className="outcome">Abandoned</span>
 }
 
@@ -115,7 +140,7 @@ type RowProps = { entry: Entry; collection: string; uploads: Uploads; onOpen: (i
 function Row({ entry, collection, uploads, onOpen }: RowProps) {
   const { key, phase } = entry
   const sent = Math.min(entry.size, entry.stagedBlocks * plan(entry.size).size)
-  const moving = phase === 'uploading' || phase === 'queued' || phase === 'paused' || phase === 'needs-file'
+  const moving = phase === 'uploading' || phase === 'queued' || phase === 'paused' || (phase === 'needs-file' && !entry.elsewhere)
   return (
     <li className={`upload ${phase}`}>
       <div className="upload-head">
@@ -133,7 +158,7 @@ function Row({ entry, collection, uploads, onOpen }: RowProps) {
           <Outcome entry={entry} onOpen={onOpen} />
         ) : (
           <span>
-            {PHASES[phase]}
+            {phase === 'processing' ? processing(entry) : entry.elsewhere ? ELSEWHERE : PHASES[phase]}
             {moving && ` · ${bytes(sent)} of ${bytes(entry.size)}`}
             {phase === 'processing' && entry.stale && ' is taking a while'}
           </span>
@@ -145,7 +170,7 @@ function Row({ entry, collection, uploads, onOpen }: RowProps) {
               Pause
             </button>
           )}
-          {(phase === 'paused' || (phase === 'failed' && !key.startsWith('local-'))) && (
+          {(phase === 'paused' || (phase === 'failed' && !isLocal(key))) && (
             <button className="link" onClick={() => uploads.resume(key)}>
               {phase === 'paused' ? 'Resume' : 'Try again'}
             </button>
@@ -169,9 +194,9 @@ function Row({ entry, collection, uploads, onOpen }: RowProps) {
               Check again
             </button>
           )}
-          {phase !== 'processing' && (
+          {isLocal(key) && (
             <button className="link" onClick={() => uploads.remove(key)}>
-              {phase === 'finished' || phase === 'invalid' ? 'Dismiss' : 'Cancel'}
+              Dismiss
             </button>
           )}
         </span>
@@ -191,30 +216,26 @@ type Props = {
 export function Upload({ collections, uploads, entries, onOpenItem }: Props) {
   const writable = collections.filter((c) => c.can_upload)
   const titleOf = (id: string) => collections.find((c) => c.id === id)?.title ?? id
-  const finished = entries.filter((e) => e.phase === 'finished' || e.phase === 'invalid')
   return (
     <main className="workspace uploads">
       <UploadForm collections={writable} onFiles={(files, id, tags) => void uploads.add(files, id, tags)} />
       <section className="panel" aria-live="polite">
-        <div className="panel-head">
-          <h2>Your uploads</h2>
-          {finished.length > 0 && (
-            <button className="link" onClick={() => finished.forEach((e) => uploads.remove(e.key))}>
-              Clear finished
-            </button>
-          )}
-        </div>
+        <h2>Your uploads</h2>
         {entries.length === 0 ? (
           <p className="muted">
-            Nothing uploaded from this browser yet. Each file is checked, cataloged, and then searchable; you'll see
-            how that goes here.
+            Nothing uploaded yet. Each file is checked, cataloged, and then searchable; you'll see how that goes here.
           </p>
         ) : (
           <ol className="upload-list">
-            {entries.toReversed().map((e) => (
+            {entries.map((e) => (
               <Row key={e.key} entry={e} collection={titleOf(e.collectionId)} uploads={uploads} onOpen={onOpenItem} />
             ))}
           </ol>
+        )}
+        {uploads.hasOlder && (
+          <button className="link" onClick={() => void uploads.loadOlder()}>
+            Show older uploads
+          </button>
         )}
       </section>
     </main>

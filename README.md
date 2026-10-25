@@ -97,7 +97,11 @@ Compute (Container Apps jobs or AKS) arrives with the M1 workers. See the spec f
 fuzzing, ports with fault-injecting fakes and contract tests, planted-bug runner, and
 collection grant management (`/collections/{id}/grants`).
 
-**M1 — pipeline** (in progress): upload sessions (`POST /uploads`) that hand the browser a
-signed URL for exactly one landing blob, valid for at most an hour and renewable by the
-uploader. Bytes never pass through the API. Write access (ACC-7) and URL scoping (ACC-8) are
-enforced and simulated. Next: blob events, the worker step machine, extraction and search.
+**M1 — pipeline**: the browser uploads straight to Blob Storage in resumable blocks, through
+a signed URL for exactly one landing blob (ACC-8) that only someone with write access can get
+(ACC-7). A queue event starts the worker's step machine: scan, promote, hash and deduplicate,
+classify, and read header metadata in a sandbox under a budget (ING-1 to ING-6, ING-9,
+ING-10). Cataloged files are STAC Items, searchable by text, kind, collection, time and area
+with complete keyset paging (SRCH-1, SRCH-2), and shown on a map. The Upload tab lists your
+uploads from the API (`GET /uploads`), says where each is in the pipeline, explains every
+rejection, and resumes an unfinished one from any browser.

@@ -1,4 +1,4 @@
-import type { Upload, UploadIn, UploadSession } from './api'
+import type { Upload, UploadIn, UploadPage, UploadSession } from './api'
 import { plan } from './blocks'
 import { FILENAME, MAX_FILENAME_LENGTH, MAX_TAG_LENGTH, MAX_TAGS, MAX_UPLOAD_BYTES, MEDIA_TYPE } from './schema'
 import { StorageError, upload, type Storage } from './transfer'
@@ -10,8 +10,8 @@ export type Phase =
   | 'queued'
   | 'uploading'
   | 'paused'
-  | 'needs-file' // from an earlier page: pick the file again to carry on
-  | 'processing' // in storage; the pipeline hasn't decided yet
+  | 'needs-file' // from an earlier page or another browser: pick the file again to carry on
+  | 'processing' // in storage; the pipeline hasn't decided yet (see `stage`)
   | 'finished' // the pipeline decided: see `outcome`
   | 'failed'
 
@@ -20,13 +20,18 @@ export type Entry = {
   filename: string
   size: number
   collectionId: string
+  at: number // when it was started, in ms: the list is newest first
   phase: Phase
   stagedBlocks: number
   blocks: number
   problem?: string | undefined // why it's invalid or failed
+  stage?: Upload['stage'] // the API's word on a processing upload
+  attempts?: number
   outcome?: Upload['status']
-  reason?: string | null
+  reason?: Upload['reason']
+  signature?: string | null
   stale?: boolean // processing for longer than we keep asking
+  elsewhere?: boolean // listed by the API, never transferred here: how much is staged is unknown
 }
 
 /** The API calls an upload makes. */
@@ -34,6 +39,7 @@ export type UploadApi = {
   create: (body: UploadIn) => Promise<UploadSession>
   renew: (id: string) => Promise<UploadSession>
   get: (id: string) => Promise<Upload>
+  list: (token?: string) => Promise<UploadPage>
 }
 
 export type Deps = {
@@ -47,6 +53,15 @@ export type Deps = {
 
 // Polls of the pipeline, a few seconds apart, before an upload is left as "check back later".
 export const MAX_POLLS = 200
+// How often the list is asked for while nothing here is processing, to see uploads from elsewhere.
+export const IDLE_LIST_MS = 30_000
+
+const LOCAL = 'local-'
+
+/** Whether the API never saw this upload, so only this page knows of it. */
+export function isLocal(key: string): boolean {
+  return key.startsWith(LOCAL)
+}
 
 /** Comma-separated tags as the API takes them: trimmed, distinct, none empty. */
 export function parseTags(text: string): string[] {
@@ -64,9 +79,19 @@ export function problem(file: { name: string; size: number }, tags: string[]): s
   return undefined
 }
 
-/** Whether `file` is the one an upload was started from. */
-function sameFile(saved: Saved, file: File): boolean {
-  return file.name === saved.filename && file.size === saved.size && file.lastModified === saved.lastModified
+/** Whether `file` is the one an upload was started from, as far as we know it. */
+function sameFile(entry: Entry, saved: Saved | undefined, file: File): boolean {
+  const modified = saved?.lastModified
+  return file.name === entry.filename && file.size === entry.size && (modified === undefined || file.lastModified === modified)
+}
+
+/** What the API's word on an upload means here. */
+function fromApi(known: Upload): Pick<Entry, 'phase' | 'stage' | 'attempts' | 'outcome' | 'reason' | 'signature'> {
+  const { stage, attempts } = known
+  if (known.status !== 'pending') {
+    return { phase: 'finished', stage, attempts, outcome: known.status, reason: known.reason, signature: known.signature }
+  }
+  return { phase: stage === 'processing' ? 'processing' : 'needs-file', stage, attempts }
 }
 
 type Live = {
@@ -79,12 +104,16 @@ type Live = {
 }
 
 /**
- * This browser's uploads: one file transfers at a time (its blocks in parallel), each then
- * waits on the pipeline's outcome. Progress is logged so a reload can resume. Subscribe for
- * changes; `entries` is a new array after each one.
+ * The signed-in user's uploads: those this browser is moving, and those the API lists. One file
+ * transfers at a time (its blocks in parallel), each then waits on the pipeline's outcome.
+ * Progress is logged so a reload can resume. Subscribe for changes; `entries` is a new array
+ * after each one.
  */
 export class Uploads {
   entries: Entry[] = []
+  hasOlder = false // the API has older uploads than those listed: see `loadOlder`
+  private older: string | null | undefined // the token for them, once the list is first read
+  private listedAt = -Infinity
   private readonly live = new Map<string, Live>()
   private readonly listeners = new Set<() => void>()
   private readonly deps: Deps
@@ -99,26 +128,29 @@ export class Uploads {
     return () => this.listeners.delete(listener)
   }
 
-  /** Picks up what an earlier page left: transfers wait for their file, the rest for the pipeline. */
+  /** Picks up what an earlier page left (transfers wait for their file), then what the API lists. */
   async restore(): Promise<void> {
     const saved = await this.deps.log.load()
-    for (const s of saved.toSorted((a, b) => a.savedAt - b.savedAt)) {
-      if (this.live.has(s.id)) continue
+    for (const s of saved) {
+      // Finished ones are only in logs from earlier versions; the API lists them now.
+      if (s.stage === 'finished') void this.deps.log.remove(s.id)
+      if (s.stage === 'finished' || this.live.has(s.id)) continue
       const p = plan(s.size)
-      const phase: Phase = s.stage === 'transferring' ? 'needs-file' : s.stage === 'processing' ? 'processing' : 'finished'
+      const transferring = s.stage === 'transferring'
       const entry: Entry = {
         key: s.id,
         filename: s.filename,
         size: s.size,
         collectionId: s.collectionId,
-        phase,
-        stagedBlocks: s.stage === 'transferring' ? s.staged.length : p.count,
+        at: s.savedAt,
+        phase: transferring ? 'needs-file' : 'processing',
+        stagedBlocks: transferring ? s.staged.length : p.count,
         blocks: p.count,
-        ...(s.status && { outcome: s.status as Upload['status'], reason: s.reason ?? null }),
       }
       this.live.set(s.id, { entry, saved: s, polls: 0 })
     }
     this.changed()
+    await this.refresh()
   }
 
   /** Starts uploading `files` into `collectionId`, each tagged with `tags`. */
@@ -137,33 +169,30 @@ export class Uploads {
   resume(key: string): void {
     const live = this.live.get(key)
     if (live?.entry.phase !== 'paused' && live?.entry.phase !== 'failed') return
-    if (!live.saved) return // the API never created it: there's nothing to resume
+    if (isLocal(key)) return // the API never created it: there's nothing to resume
     if (!live.file) return this.update(live, { phase: 'needs-file' })
     this.update(live, { phase: 'queued', problem: undefined })
     this.pump()
   }
 
-  /** Carries on an upload from an earlier page with its file, picked again. */
+  /** Carries on an upload from an earlier page or another browser with its file, picked again. */
   provideFile(key: string, file: File): void {
     const live = this.live.get(key)
-    if (!live?.saved || live.entry.phase !== 'needs-file') return
-    if (!sameFile(live.saved, file)) {
+    if (live?.entry.phase !== 'needs-file') return
+    if (!sameFile(live.entry, live.saved, file)) {
       return this.update(live, { problem: `${file.name} isn’t the file this upload started from` })
     }
     live.file = file
-    this.update(live, { phase: 'queued', problem: undefined })
+    this.update(live, { phase: 'queued', problem: undefined, elsewhere: false })
     this.pump()
   }
 
-  /** Forgets an upload here. One already in storage carries on through the pipeline. */
+  /** Dismisses an upload the API never saw; the API keeps every other. */
   remove(key: string): void {
     const live = this.live.get(key)
-    if (!live) return
-    live.abort?.abort()
+    if (!live || !isLocal(key)) return
     this.live.delete(key)
-    void this.deps.log.remove(key)
     this.changed()
-    this.pump()
   }
 
   /** Asks again about an upload left processing for longer than we keep asking. */
@@ -174,24 +203,89 @@ export class Uploads {
     this.update(live, { stale: false })
   }
 
-  /** Asks the API about every upload the pipeline hasn't decided yet. Call every few seconds. */
+  /**
+   * Asks the API about uploads the pipeline hasn't decided yet, through the list and then one by
+   * one for any too old to be on its first page. Call every few seconds; while nothing is
+   * processing, it asks only every `IDLE_LIST_MS`.
+   */
   async poll(): Promise<void> {
     const waiting = [...this.live.values()].filter((l) => l.entry.phase === 'processing' && !l.entry.stale)
-    await Promise.all(waiting.map((live) => this.check(live)))
+    for (const live of waiting) {
+      live.polls += 1
+      if (live.polls > MAX_POLLS) this.update(live, { stale: true })
+    }
+    const asking = waiting.filter((l) => !l.entry.stale)
+    if (asking.length === 0 && this.deps.now() - this.listedAt < IDLE_LIST_MS) return
+    const listed = await this.refresh()
+    const missed = asking.filter((l) => !listed.has(l.entry.key) && l.entry.phase === 'processing')
+    await Promise.all(missed.map((live) => this.check(live)))
+  }
+
+  /** Lists the next page of older uploads. */
+  async loadOlder(): Promise<void> {
+    if (!this.older) return
+    const page = await this.deps.api.list(this.older).catch(() => undefined)
+    if (!page) return
+    for (const known of page.uploads) this.merge(known)
+    this.older = page.next
+    this.changed()
+  }
+
+  /** Merges the first page of the list; the ids it held, or none if the API couldn't be asked. */
+  private async refresh(): Promise<Set<string>> {
+    this.listedAt = this.deps.now()
+    const page = await this.deps.api.list().catch(() => undefined)
+    if (!page) return new Set()
+    for (const known of page.uploads) this.merge(known)
+    if (this.older === undefined) this.older = page.next
+    this.changed()
+    return new Set(page.uploads.map((u) => u.id))
   }
 
   private async check(live: Live): Promise<void> {
-    live.polls += 1
-    if (live.polls > MAX_POLLS) return this.update(live, { stale: true })
     const latest = await this.deps.api.get(live.entry.key).catch(() => undefined)
-    if (!latest || latest.status === 'pending') return
-    this.update(live, { phase: 'finished', outcome: latest.status, reason: latest.reason })
-    this.save(live, { stage: 'finished', staged: [], status: latest.status, reason: latest.reason })
+    if (latest) this.merge(latest)
+  }
+
+  /** Takes in the API's word on an upload. A transfer here knows its own progress better, until
+   * the pipeline decides. */
+  private merge(known: Upload): void {
+    const live = this.live.get(known.id)
+    if (!live) return this.track({ entry: this.listed(known), polls: 0 })
+    const { phase } = live.entry
+    const now = fromApi(known)
+    if (now.phase === 'finished') {
+      if (phase === 'finished') return
+      live.abort?.abort()
+      void this.deps.log.remove(known.id)
+      return this.update(live, { ...now, stagedBlocks: live.entry.blocks, problem: undefined, stale: false })
+    }
+    if (phase === 'processing' || (phase === 'needs-file' && now.phase === 'processing')) {
+      // Bytes this page committed may not be announced yet: they're processing all the same.
+      this.update(live, { ...now, phase: 'processing' })
+    }
+  }
+
+  /** An known only the API knew of. */
+  private listed(known: Upload): Entry {
+    const blocks = plan(known.size_bytes).count
+    const now = fromApi(known)
+    return {
+      key: known.id,
+      filename: known.filename,
+      size: known.size_bytes,
+      collectionId: known.collection_id,
+      at: Date.parse(known.created_at),
+      stagedBlocks: now.phase === 'needs-file' ? 0 : blocks,
+      elsewhere: now.phase === 'needs-file',
+      blocks,
+      ...now,
+    }
   }
 
   private async create(file: File, collectionId: string, tags: string[]): Promise<void> {
     const blocks = plan(Math.max(file.size, 1)).count
-    const base = { filename: file.name, size: file.size, collectionId, stagedBlocks: 0, blocks }
+    const base = { filename: file.name, size: file.size, collectionId, stagedBlocks: 0, blocks, at: this.deps.now() }
     const invalid = problem(file, tags)
     if (invalid) return this.track({ entry: { ...base, key: this.localKey(), phase: 'invalid', problem: invalid }, polls: 0 })
     const contentType = MEDIA_TYPE.test(file.type) ? file.type : undefined
@@ -199,7 +293,8 @@ export class Uploads {
     if (contentType) body.content_type = contentType
     try {
       const session = await this.deps.api.create(body)
-      const live: Live = { entry: { ...base, key: session.upload.id, phase: 'queued' }, file, url: session.upload_url, polls: 0 }
+      const at = Date.parse(session.upload.created_at)
+      const live: Live = { entry: { ...base, at, key: session.upload.id, phase: 'queued' }, file, url: session.upload_url, polls: 0 }
       this.track(live)
       this.save(live, { stage: 'transferring', staged: [] })
     } catch (error) {
@@ -207,11 +302,11 @@ export class Uploads {
     }
   }
 
-  /** Starts the next queued transfer, if none is running. */
+  /** Starts the next queued transfer, oldest first, if none is running. */
   private pump(): void {
     const all = [...this.live.values()]
     if (all.some((l) => l.entry.phase === 'uploading')) return
-    const next = all.find((l) => l.entry.phase === 'queued')
+    const next = all.filter((l) => l.entry.phase === 'queued').toSorted((a, b) => a.entry.at - b.entry.at)[0]
     if (next) void this.transfer(next)
   }
 
@@ -258,15 +353,16 @@ export class Uploads {
     this.save(live, { stage: 'transferring', staged: [...staged] })
   }
 
-  private save(live: Live, change: Pick<Saved, 'stage' | 'staged'> & Partial<Saved>): void {
+  private save(live: Live, change: Pick<Saved, 'stage' | 'staged'>): void {
     const { entry, file } = live
+    const lastModified = file?.lastModified ?? live.saved?.lastModified
     live.saved = {
       id: entry.key,
       collectionId: entry.collectionId,
       filename: entry.filename,
       size: entry.size,
-      lastModified: file?.lastModified ?? live.saved?.lastModified ?? 0,
-      savedAt: live.saved?.savedAt ?? this.deps.now(),
+      savedAt: live.saved?.savedAt ?? entry.at,
+      ...(lastModified !== undefined && { lastModified }),
       ...change,
     }
     void this.deps.log.put(live.saved)
@@ -274,7 +370,7 @@ export class Uploads {
 
   private localKey(): string {
     this.localIds += 1
-    return `local-${this.localIds}`
+    return `${LOCAL}${this.localIds}`
   }
 
   private track(live: Live): void {
@@ -288,7 +384,8 @@ export class Uploads {
   }
 
   private changed(): void {
-    this.entries = [...this.live.values()].map((l) => l.entry)
+    this.entries = [...this.live.values()].map((l) => l.entry).toSorted((a, b) => b.at - a.at)
+    this.hasOlder = Boolean(this.older)
     for (const listener of this.listeners) listener()
   }
 }

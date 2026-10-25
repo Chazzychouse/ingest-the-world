@@ -1,5 +1,6 @@
-// What this browser remembers about its uploads, so a reload can resume a transfer or keep
-// waiting for the pipeline. Signed URLs are never kept: a resumed upload asks for a fresh one.
+// What this browser remembers about its uploads in flight, so a reload can resume a transfer or
+// keep waiting for the pipeline; the API keeps the rest (`GET /uploads`). Signed URLs are never
+// kept: a resumed upload asks for a fresh one.
 
 /** One upload as this browser left it. */
 export type Saved = {
@@ -7,11 +8,9 @@ export type Saved = {
   collectionId: string
   filename: string
   size: number
-  lastModified: number // with name and size, tells the same file picked again
-  stage: 'transferring' | 'processing' | 'finished'
+  lastModified?: number // with name and size, tells the same file picked again
+  stage: 'transferring' | 'processing' | 'finished' // finished: only from earlier versions
   staged: number[] // blocks already staged, while transferring
-  status?: string // the pipeline's outcome, once finished
-  reason?: string | null
   savedAt: number
 }
 
