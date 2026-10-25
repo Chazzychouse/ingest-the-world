@@ -232,6 +232,13 @@ MUTANTS = [
         ("ACC-3",),
     ),
     Mutant(
+        "sandbox-writes-core-dumps",
+        "ingest_api/adapters/process_sandbox.py",
+        "    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))\n",
+        "",
+        ("ING-8",),
+    ),
+    Mutant(
         # Slice 3-4 review: a reader that crashed natively took the worker down on every
         # delivery, and its version never reached an outcome.
         "reader-crash-escapes-sandbox",
@@ -314,6 +321,7 @@ SKIP = shutil.ignore_patterns(
     ".pytest_cache",
     ".ruff_cache",
     ".terraform",
+    ".cache",  # samples/.cache: the downloaded corpus, gigabytes no test reads
 )
 
 

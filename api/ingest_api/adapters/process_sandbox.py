@@ -142,6 +142,8 @@ def _exit_reason(exitcode: int | None) -> str:
 def _child(conn: Connection, reader: Reader, name: str, size: int, memory_bytes: int) -> None:
     """Runs in the child: the reader, over blocks fetched from the worker."""
     resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+    # A crash must not write the child's memory, which holds file contents, to a core file.
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
     def fetch(offset: int, length: int) -> bytes:
         conn.send(("read", offset, length))
