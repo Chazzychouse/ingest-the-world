@@ -20,6 +20,7 @@ import rasterio
 from hypothesis import given
 from hypothesis import strategies as st
 from rasterio.crs import CRS
+from rasterio.errors import NotGeoreferencedWarning
 from rasterio.transform import from_origin
 
 from ingest_api.items.kinds import Kind
@@ -180,6 +181,38 @@ def test_a_las_header_yields_count_bounds_and_crs():
     assert metadata.properties["pc:count"] == 50_000_000
     assert metadata.properties["pc:encoding"] == "las"
     assert metadata.properties["las:version"] == "1.4"
+
+
+def test_a_plain_png_is_a_raster_without_a_footprint(tmp_path):
+    path = str(tmp_path / "plain.png")
+    with (
+        pytest.warns(NotGeoreferencedWarning),  # writing it warns; reading it must not
+        rasterio.open(path, "w", driver="PNG", width=4, height=4, count=3, dtype="uint8") as png,
+    ):
+        png.write(np.zeros((3, 4, 4), dtype="uint8"))
+    result = _extract(MemoryBlobStore(), Media.PNG, (tmp_path / "plain.png").read_bytes())
+
+    assert (result.metadata.status, result.metadata.bbox) == ("extracted", None)
+    assert result.metadata.properties["raster:band_count"] == 3
+
+
+@pytest.mark.invariant("ING-6")
+def test_a_compound_crs_is_named_by_its_parts_codes():
+    """3DEP tiles carry a horizontal and a vertical CRS; their WKT has no code of its own."""
+    compound = CRS.from_user_input("EPSG:26913+5703").to_wkt()
+    result = _extract(MemoryBlobStore(), Media.LAS, las_file(wkt=compound))
+
+    assert result.metadata.crs == "EPSG:26913+5703"
+    assert _near(result.metadata.bbox, DENVER)
+
+
+@pytest.mark.invariant("ING-6")
+def test_a_tiff_whose_tiles_lie_past_its_end_is_unreadable(tmp_path):
+    """A transfer cut short and committed anyway: the header is intact, the pixels aren't."""
+    data = geotiff(tmp_path)
+    result = _extract(MemoryBlobStore(), Media.TIFF, data[: len(data) // 2])
+
+    assert result.metadata.status == "unreadable"
 
 
 def test_a_las_file_without_a_crs_keeps_its_native_extent():

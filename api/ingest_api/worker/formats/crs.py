@@ -1,6 +1,8 @@
 """Coordinate reference systems: naming a file's CRS, and its footprint in WGS84 (via GDAL's
 PROJ, through rasterio)."""
 
+import re
+
 from rasterio.crs import CRS
 from rasterio.errors import CRSError, RasterioError
 from rasterio.warp import transform_bounds
@@ -12,15 +14,38 @@ WGS84 = "EPSG:4326"
 DENSIFY_POINTS = 21
 
 
+# The EPSG id that closes each component of a WKT2 COMPOUNDCRS: the id is followed by the end
+# of its component, then either the next component or the end of the compound.
+_COMPONENT_ID = re.compile(r'ID\["EPSG",(\d+)\]\](?=,[A-Z]+CRS\[|\]$)')
+
+
 def name(crs: CRS) -> str:
-    """`AUTHORITY:code` (EPSG:32613, OGC:CRS84) when the CRS has one; WKT2 otherwise."""
+    """`AUTHORITY:code` (EPSG:32613, OGC:CRS84) when the CRS has one, `EPSG:h+v` for a
+    compound of two coded parts (as lidar's horizontal plus vertical CRS usually is); WKT2
+    otherwise."""
     code = crs.to_epsg()
     if code is not None:
         return f"EPSG:{code}"
     authority = crs.to_authority()
     if authority is not None:
         return f"{authority[0]}:{authority[1]}"
-    return crs.to_wkt(version="WKT2_2019")
+    wkt = crs.to_wkt(version="WKT2_2019")
+    return _compound_code(crs, wkt) or wkt
+
+
+def _compound_code(crs: CRS, wkt: str) -> str | None:
+    """`EPSG:h+v` if that names exactly this compound CRS; PROJ reads the form back."""
+    if not wkt.startswith("COMPOUNDCRS["):
+        return None
+    parts = _COMPONENT_ID.findall(wkt)
+    if len(parts) != 2:
+        return None
+    candidate = f"EPSG:{parts[0]}+{parts[1]}"
+    try:
+        same = CRS.from_user_input(candidate) == crs
+    except CRSError:
+        return None
+    return candidate if same else None
 
 
 def from_wkt(wkt: str) -> str | None:

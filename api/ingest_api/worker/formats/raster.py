@@ -3,14 +3,17 @@ footprint, from the header alone.
 
 GDAL reads through rasterio's Python-filesystem plugin, so every byte it asks for comes through
 `BlobSource` and counts against the budget; it never gets a URL or a credential of its own.
-Opening a dataset reads its header and IFDs; no pixel data is touched.
+Opening a dataset reads its header and IFDs; no pixel data is touched. A TIFF whose blocks run
+past the end of the file is `unreadable`, however good its header looks.
 """
 
+import math
+import warnings
 from typing import override
 
 import rasterio
 from rasterio.abc import FileContainer
-from rasterio.errors import RasterioError
+from rasterio.errors import NotGeoreferencedWarning, RasterioError
 
 from ingest_api.items.metadata import Json
 from ingest_api.worker.extract import BlobSource, Found, SourceFile, Unreadable
@@ -63,10 +66,34 @@ class _OneBlob(FileContainer):
 
 def read(source: BlobSource) -> Found:
     try:
-        with rasterio.open(PATH, opener=_OneBlob(source)) as dataset:
+        with warnings.catch_warnings():
+            # An image without georeferencing is normal here (a PNG): it just has no footprint.
+            warnings.simplefilter("ignore", NotGeoreferencedWarning)
+            dataset = rasterio.open(PATH, opener=_OneBlob(source))
+        with dataset:
+            _check_complete(dataset, source.size)
             return _found(dataset)
     except RasterioError as exc:
         raise Unreadable(str(exc)) from exc
+
+
+def _check_complete(dataset: rasterio.DatasetReader, size: int) -> None:
+    """A TIFF's header lists where every block is, so a file cut short (a transfer committed
+    before its end) shows in the header alone: its last block lies past the end. The last block
+    of the last band is checked, which is the file's last in the usual layouts, COG's included."""
+    if dataset.driver != "GTiff":
+        return
+    rows, columns = dataset.block_shapes[-1]
+    last_row = math.ceil(dataset.height / rows) - 1
+    last_column = math.ceil(dataset.width / columns) - 1
+    tag = f"{last_column}_{last_row}"
+    offset = dataset.get_tag_item(f"BLOCK_OFFSET_{tag}", "TIFF", bidx=dataset.count)
+    length = dataset.get_tag_item(f"BLOCK_SIZE_{tag}", "TIFF", bidx=dataset.count)
+    if not (offset and length and offset.isdigit() and length.isdigit()):
+        return  # GDAL doesn't know (an unusual layout): nothing to judge by
+    end = int(offset) + int(length)
+    if end > size:
+        raise Unreadable(f"block {tag} ends at byte {end} of {size}")
 
 
 def _found(dataset: rasterio.DatasetReader) -> Found:

@@ -270,6 +270,23 @@ MUTANTS = [
         ("ING-9",),
     ),
     Mutant(
+        # Found by the sample corpus: a COG cut short kept its header, so it was cataloged as
+        # extracted, with metadata for pixels that aren't there.
+        "truncated-tiff-extracted",
+        "ingest_api/worker/formats/raster.py",
+        "            _check_complete(dataset, source.size)\n",
+        "",
+        ("ING-6",),
+    ),
+    Mutant(
+        # Found by the sample corpus: every 3DEP and COPC tile's CRS was stored as pages of WKT.
+        "compound-crs-as-wkt",
+        "ingest_api/worker/formats/crs.py",
+        "    return _compound_code(crs, wkt) or wkt\n",
+        "    return wkt\n",
+        ("ING-6",),
+    ),
+    Mutant(
         "extraction-ignores-budget",
         "ingest_api/worker/extract.py",
         "        if self.fetched + length > MAX_EXTRACT_BYTES:",
