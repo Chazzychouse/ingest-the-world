@@ -1,5 +1,6 @@
 """`BlobStore` and `BlobSigner` over Azure Blob Storage (and Azurite)."""
 
+import time
 from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta
 from typing import NoReturn
@@ -23,6 +24,8 @@ from azure.storage.blob import (
 )
 
 from ingest_api.ports import (
+    BlobChanged,
+    BlobExists,
     BlobNotFound,
     BlobProps,
     Clock,
@@ -33,6 +36,10 @@ from ingest_api.ports import (
 # Throttling and server-side failures; anything else is a caller or configuration error.
 TRANSIENT_STATUS = frozenset({408, 429, 500, 502, 503, 504})
 RANGE_NOT_SATISFIABLE = 416
+PRECONDITION_FAILED = 412
+# Copies within one account usually finish at once; a large one is polled this many times.
+MAX_COPY_POLLS = 60
+COPY_POLL_SECONDS = 1.0
 
 # Put Blob, Put Block and Put Block List need create and write; nothing else is granted (ACC-8).
 UPLOAD_PERMISSION = BlobSasPermissions(create=True, write=True)
@@ -92,7 +99,13 @@ def _props(container: str, blob: BlobProperties) -> BlobProps:
         etag=str(blob.etag).strip('"'),
         content_type=settings.content_type if settings else None,
         metadata=dict(blob.metadata or {}),
+        copy_pending=blob.copy.status == "pending",
     )
+
+
+def _quoted(etag: str) -> str:
+    """Etags travel quoted in conditional headers; the port passes them bare."""
+    return f'"{etag}"'
 
 
 def _raise_translated(exc: HttpResponseError | ServiceRequestError) -> NoReturn:
@@ -107,10 +120,6 @@ def _raise_translated(exc: HttpResponseError | ServiceRequestError) -> NoReturn:
 class AzureBlobStore:
     def __init__(self, service: BlobServiceClient):
         self._service = service
-
-    @classmethod
-    def from_connection_string(cls, connection_string: str) -> "AzureBlobStore":
-        return cls(BlobServiceClient.from_connection_string(connection_string))
 
     def put(
         self,
@@ -157,13 +166,61 @@ class AzureBlobStore:
         except ServiceRequestError as exc:
             _raise_translated(exc)
 
-    def delete(self, container: str, name: str) -> None:
+    def delete(self, container: str, name: str, *, if_match: str | None = None) -> None:
+        blob = self._service.get_blob_client(container, name)
         try:
-            self._service.get_blob_client(container, name).delete_blob()
+            blob.delete_blob(if_match=_quoted(if_match) if if_match else None)
         except ResourceNotFoundError:
             return
-        except (HttpResponseError, ServiceRequestError) as exc:
+        except HttpResponseError as exc:
+            if exc.status_code == PRECONDITION_FAILED:
+                raise BlobChanged(f"{container}/{name} is not {if_match}") from exc
             _raise_translated(exc)
+        except ServiceRequestError as exc:
+            _raise_translated(exc)
+
+    def copy(
+        self,
+        source: tuple[str, str],
+        destination: tuple[str, str],
+        *,
+        if_match: str,
+        metadata: dict[str, str] | None = None,
+    ) -> BlobProps:
+        src = self._service.get_blob_client(*source)
+        dst = self._service.get_blob_client(*destination)
+        try:
+            dst.start_copy_from_url(
+                src.url,
+                metadata=metadata,
+                source_if_match=_quoted(if_match),
+                if_none_match="*",  # never overwrite: raw originals are immutable (ING-3)
+            )
+        except ResourceExistsError as exc:
+            raise BlobExists(f"{destination}") from exc
+        except ResourceNotFoundError as exc:
+            raise BlobChanged(f"{source} is gone") from exc
+        except HttpResponseError as exc:
+            if exc.status_code == PRECONDITION_FAILED:
+                # Which condition failed isn't reported consistently (Azurite and Azure use
+                # different error codes), so look: a taken destination is the overwrite refusal.
+                if self.head(*destination) is not None:
+                    raise BlobExists(f"{destination}") from exc
+                raise BlobChanged(f"{source} is not {if_match}") from exc
+            _raise_translated(exc)
+        except ServiceRequestError as exc:
+            _raise_translated(exc)
+        return self._await_copy(destination)
+
+    def _await_copy(self, destination: tuple[str, str]) -> BlobProps:
+        for _ in range(MAX_COPY_POLLS):
+            props = self.head(*destination)
+            if props is None:
+                raise StorageError(f"copy to {destination} vanished")
+            if not props.copy_pending:
+                return props
+            time.sleep(COPY_POLL_SECONDS)
+        raise TransientStorageError(f"copy to {destination} still running")
 
     def list(self, container: str, prefix: str = "") -> Iterator[BlobProps]:
         client = self._service.get_container_client(container)

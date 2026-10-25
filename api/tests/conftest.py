@@ -46,11 +46,12 @@ ADMIN_URL = os.environ.get(
     "INGEST_TEST_DATABASE_URL", "postgresql://ingest:ingest@localhost:5432/ingest"
 )
 REALM = Path(__file__).resolve().parents[2] / "infra" / "keycloak" / "ingest-realm.json"
-# Azurite's published development account key, the same for every Azurite install:
-# https://learn.microsoft.com/azure/storage/common/storage-use-azurite#well-known-storage-account-and-key
-AZURITE_KEY = (
-    "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
-)
+# Tests use their own Azurite account, so the local stack's worker never touches their blobs
+# (and theirs never reach its queue). Compose registers it alongside the default account; the
+# key is a test-only value, checked against compose.yaml by tests/test_infra_parity.py.
+TEST_ACCOUNT = "ingesttest"
+TEST_ACCOUNT_KEY = "aW5nZXN0LXRoZS13b3JsZC10ZXN0LWFjY291bnQta2V5LTMyYg=="
+TEST_ACCOUNT_URL = f"http://127.0.0.1:10000/{TEST_ACCOUNT}"
 # The Service Bus emulator's fixed connection string, as seen from the host:
 # https://github.com/Azure/azure-service-bus-emulator-installer#choosing-the-right-connection-string
 EMULATOR_CONNECTION = (
@@ -121,9 +122,11 @@ def fresh_database() -> Iterator[Callable[[], str]]:
 
 
 def reset_catalog(conn: psycopg.Connection) -> None:
-    """Puts collections and grants back to the seed, with no uploads. Audit events stay: they're
-    append-only, and checks read them as a delta from a high-water mark."""
+    """Puts collections and grants back to the seed, with no uploads, jobs or items. Audit
+    events stay: they're append-only, and checks read them as a delta from a high-water mark."""
     with conn.transaction():
+        conn.execute("DELETE FROM ingest.jobs")
+        conn.execute("DELETE FROM catalog.items")
         conn.execute("DELETE FROM ingest.uploads")
         conn.execute("DELETE FROM authz.collection_grants")
         conn.execute("DELETE FROM catalog.collections")
@@ -142,14 +145,16 @@ def idp() -> TestIdp:
 
 
 def app_settings(database_url: str) -> Settings:
-    """Settings for an app under test: the test IdP, Azurite for signing upload URLs, and the
-    Service Bus emulator."""
+    """Settings for an app under test: the test IdP, the tests' Azurite account for signing
+    upload URLs, and the Service Bus emulator with short receive waits."""
     return Settings(
         database_url=database_url,
         oidc_issuer=ISSUER,
         oidc_audience=AUDIENCE,
-        blob_account_key=SecretStr(AZURITE_KEY),
+        blob_account_url=TEST_ACCOUNT_URL,
+        blob_account_key=SecretStr(TEST_ACCOUNT_KEY),
         queue_connection=SecretStr(EMULATOR_CONNECTION),
+        queue_max_wait_seconds=1.0,
     )
 
 

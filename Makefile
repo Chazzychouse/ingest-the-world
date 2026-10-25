@@ -27,7 +27,7 @@ reset:  ## Stop and delete local data volumes
 	docker compose down -v
 
 logs:
-	docker compose logs -f api $(if $(QUEUE),event-shim)
+	docker compose logs -f api $(if $(QUEUE),event-shim worker)
 
 services:  # the backing services the tests run against
 	docker compose up -d --wait db azurite $(QUEUE)

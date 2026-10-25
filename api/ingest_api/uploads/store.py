@@ -13,7 +13,7 @@ from psycopg.rows import TupleRow, class_row
 
 from ingest_api import authz
 from ingest_api.auth import Principal
-from ingest_api.uploads.models import UploadIn, UploadStatus
+from ingest_api.uploads.models import Outcome, UploadIn, UploadStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,4 +107,37 @@ def marking_of(conn: Connection[TupleRow], upload_id: UUID) -> str | None:
 def set_url_expiry(conn: Connection[TupleRow], upload_id: UUID, expires_at: datetime) -> None:
     conn.execute(
         "UPDATE ingest.uploads SET url_expires_at = %s WHERE id = %s", (expires_at, upload_id)
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class LandedUpload:
+    """What the pipeline needs to know about the upload a landed blob belongs to."""
+
+    id: UUID
+    filename: str
+    content_type: str | None
+    size_bytes: int
+    sha256: str | None
+    status: UploadStatus
+
+
+def landed(conn: Connection[TupleRow], name: str) -> LandedUpload | None:
+    """The upload whose blob is `landing/{name}`, without access checks: for the pipeline,
+    which acts for the platform, not for a caller."""
+    with conn.cursor(row_factory=class_row(LandedUpload)) as cur:
+        return cur.execute(
+            """
+            SELECT id, filename, content_type, size_bytes, sha256, status
+            FROM ingest.uploads WHERE blob_name = %s
+            """,
+            (name,),
+        ).fetchone()
+
+
+def close(conn: Connection[TupleRow], upload_id: UUID, status: Outcome) -> None:
+    """Records the pipeline's outcome for a still-pending upload."""
+    conn.execute(
+        "UPDATE ingest.uploads SET status = %s WHERE id = %s AND status = 'pending'",
+        (status, upload_id),
     )

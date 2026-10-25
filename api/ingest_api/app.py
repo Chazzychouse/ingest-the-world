@@ -8,8 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from psycopg_pool import ConnectionPool
 
-from ingest_api import identity, meta
-from ingest_api.adapters.azure_blob import AzureBlobSigner, service_client
+from ingest_api import identity, meta, wiring
 from ingest_api.auth import AuthError, OidcVerifier, verifier_from_settings
 from ingest_api.catalog import routes as catalog
 from ingest_api.deps import Runtime
@@ -19,16 +18,6 @@ from ingest_api.uploads import routes as uploads
 
 POOL_MAX_SIZE = 10
 POOL_OPEN_TIMEOUT_SECONDS = 30
-
-
-def signer_from_settings(settings: Settings, clock: Clock) -> AzureBlobSigner:
-    key = settings.blob_account_key.get_secret_value() if settings.blob_account_key else None
-    return AzureBlobSigner(
-        service_client(settings.blob_account_url, key),
-        clock,
-        account_key=key,
-        public_url=settings.blob_public_url,
-    )
 
 
 def create_app(
@@ -46,7 +35,7 @@ def create_app(
         verifier=verifier or verifier_from_settings(settings),
         ids=ids or UuidIds(),
         clock=clock,
-        signer=signer or signer_from_settings(settings, clock),
+        signer=signer or wiring.blob_signer(settings, clock),
         pool=ConnectionPool(settings.database_url, min_size=1, max_size=POOL_MAX_SIZE, open=False),
     )
 

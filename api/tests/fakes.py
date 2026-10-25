@@ -13,8 +13,11 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ingest_api.events import blob_created
 from ingest_api.ports import (
     MAX_DELIVERIES_EXCEEDED,
+    BlobChanged,
+    BlobExists,
     BlobNotFound,
     BlobProps,
     DeadLetter,
@@ -22,6 +25,14 @@ from ingest_api.ports import (
     Message,
     TransientStorageError,
 )
+
+
+def event_for(props: BlobProps) -> dict[str, Any]:
+    """The BlobCreated event Event Grid would send for `props`; one per version, so its id is
+    the etag."""
+    return blob_created(
+        props, account_url="http://sim", event_id=props.etag, event_time=SimClock().now()
+    )
 
 
 class SimClock:
@@ -56,6 +67,7 @@ class Faults:
     """Probabilities, each drawn from the owner's seeded RNG."""
 
     transient: float = 0.0  # a storage call fails with TransientStorageError
+    lost_ack: float = 0.0  # a storage write takes effect, then reports TransientStorageError
     duplicate: float = 0.0  # a sent message is enqueued twice
     reorder: float = 0.0  # a receive returns messages out of order
     lost_complete: float = 0.0  # a completion is acknowledged but not applied
@@ -79,13 +91,28 @@ class MemoryBlobStore:
         if self.faults.transient and self._rng.random() < self.faults.transient:
             raise TransientStorageError("injected")
 
-    def put(self, container, name, data, *, content_type=None, metadata=None) -> BlobProps:
-        self._maybe_fail()
+    def _maybe_lose_ack(self) -> None:
+        if self.faults.lost_ack and self._rng.random() < self.faults.lost_ack:
+            raise TransientStorageError("injected after the write took effect")
+
+    def _write(self, container, name, data, content_type, metadata) -> BlobProps:
         self._writes += 1
         etag = hashlib.sha256(f"{self._writes}:{container}/{name}".encode()).hexdigest()[:16]
         props = BlobProps(container, name, len(data), etag, content_type, dict(metadata or {}))
         self._blobs[(container, name)] = (props, bytes(data))
         return props
+
+    def put(self, container, name, data, *, content_type=None, metadata=None) -> BlobProps:
+        self._maybe_fail()
+        return self._write(container, name, data, content_type, metadata)
+
+    def content(self, container: str, name: str) -> bytes:
+        """The blob's bytes, for checks; not part of the port and never faulty or counted."""
+        return self._blobs[(container, name)][1]
+
+    def names(self, container: str) -> list[str]:
+        """Every blob in `container`, for checks; not part of the port and never faulty."""
+        return sorted(n for c, n in self._blobs if c == container)
 
     def head(self, container, name) -> BlobProps | None:
         self._maybe_fail()
@@ -102,9 +129,28 @@ class MemoryBlobStore:
         self.bytes_read[key] = self.bytes_read.get(key, 0) + len(chunk)
         return chunk
 
-    def delete(self, container, name) -> None:
+    def delete(self, container, name, *, if_match=None) -> None:
         self._maybe_fail()
-        self._blobs.pop((container, name), None)
+        entry = self._blobs.get((container, name))
+        if entry is None:
+            return
+        if if_match is not None and entry[0].etag != if_match:
+            raise BlobChanged(f"{container}/{name} is not {if_match}")
+        del self._blobs[(container, name)]
+        self._maybe_lose_ack()
+
+    def copy(self, source, destination, *, if_match, metadata=None) -> BlobProps:
+        self._maybe_fail()
+        entry = self._blobs.get(source)
+        if entry is None or entry[0].etag != if_match:
+            raise BlobChanged(f"{source} is not {if_match}")
+        if destination in self._blobs:
+            raise BlobExists(f"{destination}")
+        props, data = entry
+        container, name = destination
+        copied = self._write(container, name, data, props.content_type, metadata or props.metadata)
+        self._maybe_lose_ack()
+        return copied
 
     def list(self, container, prefix="") -> Iterator[BlobProps]:
         self._maybe_fail()
@@ -202,3 +248,41 @@ class SimQueue:
 
     def __len__(self) -> int:
         return len(self._entries)
+
+
+class CrashAfter:
+    """A `BlobStore` whose `calls`-th call takes effect and then fails, as if the worker died
+    before hearing back. Every later call works. Lets a test interrupt a job after each step."""
+
+    def __init__(self, store: MemoryBlobStore, calls: int):
+        self._store = store
+        self._remaining = calls
+        self.crashed = False
+
+    def _after(self, result):
+        self._remaining -= 1
+        if self._remaining == 0:
+            self.crashed = True
+            raise TransientStorageError("injected crash after the call took effect")
+        return result
+
+    def put(self, container, name, data, *, content_type=None, metadata=None) -> BlobProps:
+        props = self._store.put(container, name, data, content_type=content_type, metadata=metadata)
+        return self._after(props)
+
+    def head(self, container, name) -> BlobProps | None:
+        return self._after(self._store.head(container, name))
+
+    def read_range(self, container, name, offset, length) -> bytes:
+        return self._after(self._store.read_range(container, name, offset, length))
+
+    def delete(self, container, name, *, if_match=None) -> None:
+        self._after(self._store.delete(container, name, if_match=if_match))
+
+    def copy(self, source, destination, *, if_match, metadata=None) -> BlobProps:
+        return self._after(
+            self._store.copy(source, destination, if_match=if_match, metadata=metadata)
+        )
+
+    def list(self, container, prefix="") -> Iterator[BlobProps]:
+        return self._after(self._store.list(container, prefix))

@@ -10,7 +10,7 @@ Postgres database, and after every step checks:
 - the database holds the same collections, grants and uploads as the model.
 
 Failures shrink to a minimal sequence of steps and print how to replay them. Runs are
-seeded: `make sim SEED=123`. Worker and faulty-queue actors join later in M1.
+seeded: `make sim SEED=123`. The pipeline has its own machine, `test_pipeline_sim.py`.
 """
 
 from datetime import UTC, datetime

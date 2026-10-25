@@ -25,8 +25,9 @@ jobs:
             -e POSTGRES_USER=ingest -e POSTGRES_PASSWORD=ingest -e POSTGRES_DB=ingest \
             --health-cmd "pg_isready -U ingest" --health-interval 2s ingest-postgres:ci
           until [ "$(docker inspect -f '{{.State.Health.Status}}' db)" = healthy ]; do sleep 1; done
-      - name: Start Azurite (blob store contract tests)
-        run: docker run -d --name azurite -p 10000:10000 mcr.microsoft.com/azure-storage/azurite:3.37.0 azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+      - name: Start Azurite (blob store contract tests; same accounts as Compose)
+        working-directory: .
+        run: docker compose up -d --wait azurite
       # The emulator's and SQL Server's licences are accepted per repository, by setting the
       # repository variable ACCEPT_EULA=Y (see .env.example). Without it the queue tests skip.
       - name: Start the Service Bus emulator (queue contract tests)

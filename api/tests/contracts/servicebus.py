@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import pytest
 from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode, ServiceBusSubQueue
 
+from ingest_api import wiring
 from ingest_api.adapters.service_bus import ServiceBusQueue
 from tests.conftest import EMULATOR_CONNECTION, app_settings
 
@@ -74,12 +75,5 @@ def emulator_queue(name: str) -> Generator[ServiceBusQueue]:
     """The adapter on an emptied emulator queue."""
     _require_emulator()
     _purge(name)
-    settings = app_settings(database_url="")
-    connection = settings.queue_connection
-    with ServiceBusQueue.connect(
-        name,
-        connection_string=connection.get_secret_value() if connection else None,
-        namespace=None,
-        max_wait_seconds=1.0,
-    ) as queue:
+    with wiring.queue(app_settings(database_url=""), name=name) as queue:
         yield queue

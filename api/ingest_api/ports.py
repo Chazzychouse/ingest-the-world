@@ -66,6 +66,14 @@ class TransientStorageError(StorageError):
     """Worth retrying: throttling, timeouts, 5xx."""
 
 
+class BlobChanged(StorageError):
+    """A conditional call's blob is missing or no longer the version (etag) it named."""
+
+
+class BlobExists(StorageError):
+    """A copy refused to overwrite its destination."""
+
+
 @dataclass(frozen=True)
 class BlobProps:
     container: str
@@ -74,6 +82,8 @@ class BlobProps:
     etag: str
     content_type: str | None = None
     metadata: dict[str, str] = field(default_factory=dict[str, str])
+    # A server-side copy into this blob is still running; its content isn't final yet.
+    copy_pending: bool = False
 
 
 class BlobStore(Protocol):
@@ -98,8 +108,27 @@ class BlobStore(Protocol):
         """
         ...
 
-    def delete(self, container: str, name: str) -> None:
-        """Removes the blob. Deleting a missing blob is not an error."""
+    def delete(self, container: str, name: str, *, if_match: str | None = None) -> None:
+        """Removes the blob. Deleting a missing blob is not an error.
+
+        With `if_match`, only that version is removed; a newer one raises BlobChanged.
+        """
+        ...
+
+    def copy(
+        self,
+        source: tuple[str, str],
+        destination: tuple[str, str],
+        *,
+        if_match: str,
+        metadata: dict[str, str] | None = None,
+    ) -> BlobProps:
+        """Copies version `if_match` of the `(container, name)` source, server side, to a
+        destination that must not exist yet, and waits for it to finish.
+
+        Raises BlobChanged if the source isn't that version and BlobExists if the destination
+        is taken.
+        """
         ...
 
     def list(self, container: str, prefix: str = "") -> Iterator[BlobProps]:
@@ -131,6 +160,18 @@ class LockLost(QueueError):
 
 # The dead-letter reason Service Bus records when a message exhausts its deliveries.
 MAX_DELIVERIES_EXCEEDED = "MaxDeliveryCountExceeded"
+
+
+@dataclass(frozen=True, slots=True)
+class ScanResult:
+    clean: bool
+    signature: str | None = None  # what was found, when not clean
+
+
+class Scanner(Protocol):
+    """Malware scanning: Defender for Storage in the cloud, a stand-in locally."""
+
+    def scan(self, container: str, name: str) -> ScanResult: ...
 
 
 @dataclass(frozen=True, slots=True)
