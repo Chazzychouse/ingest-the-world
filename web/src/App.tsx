@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { useApi, type Collection, type Marking, type Me } from './api'
+import { useApi, type Collection, type Marking, type Me, type StacItem } from './api'
 import { bannerFor } from './markings'
+import { Search } from './Search'
 
 function MarkingBanner({ marking, position }: { marking: Marking; position: 'top' | 'bottom' }) {
   return (
@@ -16,7 +18,7 @@ function SignIn() {
     <main className="signin">
       <h1>Ingest the World</h1>
       <p>Geospatial data ingestion, cataloging and search.</p>
-      <button onClick={() => auth.signinRedirect()} disabled={auth.isLoading}>
+      <button onClick={() => auth.signinRedirect({ state: window.location.search })} disabled={auth.isLoading}>
         Sign in with your organization
       </button>
       {auth.error && <p className="error">Sign-in failed: {auth.error.message}</p>}
@@ -89,28 +91,44 @@ function Collections({ collections }: { collections: Collection[] }) {
   )
 }
 
+type Tab = 'search' | 'collections'
+
 function Workspace() {
   const auth = useAuth()
   const me = useApi<Me>('/me')
   const collections = useApi<Collection[]>('/collections')
+  const [tab, setTab] = useState<Tab>('search')
+  const [shown, setShown] = useState<StacItem[]>([])
 
-  const banner = bannerFor(collections.data ?? [])
+  // The highest marking on screen: the collections listed, and on the search tab its results.
+  const banner = bannerFor(collections.data ?? [], tab === 'search' ? shown : [])
 
   return (
     <>
       <MarkingBanner marking={banner} position="top" />
       <header className="topbar">
         <span className="brand">Ingest the World</span>
+        <nav className="tabs">
+          {(['search', 'collections'] as const).map((t) => (
+            <button key={t} className={`link${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
+              {t === 'search' ? 'Search' : 'Collections'}
+            </button>
+          ))}
+        </nav>
         <button className="link" onClick={() => auth.signoutRedirect()}>
           Sign out
         </button>
       </header>
-      <main className="workspace">
-        {me.error && <p className="error">Couldn't load your profile: {me.error}</p>}
-        {me.data && <Identity me={me.data} />}
-        {collections.error && <p className="error">Couldn't load collections: {collections.error}</p>}
-        {collections.data && <Collections collections={collections.data} />}
-      </main>
+      {collections.error && <p className="error">Couldn't load collections: {collections.error.message}</p>}
+      {tab === 'search' ? (
+        <Search collections={collections.data ?? []} onShown={setShown} />
+      ) : (
+        <main className="workspace">
+          {me.error && <p className="error">Couldn't load your profile: {me.error.message}</p>}
+          {me.data && <Identity me={me.data} />}
+          {collections.data && <Collections collections={collections.data} />}
+        </main>
+      )}
       <MarkingBanner marking={banner} position="bottom" />
     </>
   )
