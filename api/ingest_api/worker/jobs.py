@@ -26,6 +26,9 @@ class Reason(StrEnum):
     SUPERSEDED = "superseded"  # a newer version of the blob replaced this one
     SIZE_MISMATCH = "size-mismatch"  # the bytes don't match the size the upload declared
     CHECKSUM_MISMATCH = "checksum-mismatch"  # nor the checksum it declared
+    DUPLICATE = "duplicate"  # its collection already has an item with these bytes (ING-9)
+    RETRIES_EXHAUSTED = "retries-exhausted"  # still failing on its message's last delivery
+    DEAD_LETTERED = "dead-lettered"  # its message was dead-lettered before it had an outcome
 
 
 @dataclass(frozen=True, slots=True)

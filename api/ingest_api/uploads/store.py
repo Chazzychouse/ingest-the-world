@@ -115,6 +115,8 @@ class LandedUpload:
     """What the pipeline needs to know about the upload a landed blob belongs to."""
 
     id: UUID
+    collection_id: str
+    marking: str  # the collection's, which every event about the upload carries (ACC-5)
     filename: str
     content_type: str | None
     size_bytes: int
@@ -128,8 +130,10 @@ def landed(conn: Connection[TupleRow], name: str) -> LandedUpload | None:
     with conn.cursor(row_factory=class_row(LandedUpload)) as cur:
         return cur.execute(
             """
-            SELECT id, filename, content_type, size_bytes, sha256, status
-            FROM ingest.uploads WHERE blob_name = %s
+            SELECT u.id, u.collection_id, c.marking, u.filename, u.content_type, u.size_bytes,
+                   u.sha256, u.status
+            FROM ingest.uploads u JOIN catalog.collections c ON c.id = u.collection_id
+            WHERE u.blob_name = %s
             """,
             (name,),
         ).fetchone()

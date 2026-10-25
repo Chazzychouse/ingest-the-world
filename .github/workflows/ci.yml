@@ -61,6 +61,14 @@ jobs:
           name: invariants
           path: api/reports/invariants.json
 
+  # The image the worker runs, built and exercised: its native readers must load (slice 4 shipped
+  # one whose GDAL couldn't find libexpat, which only a live upload revealed).
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: make image-smoke
+
   web:
     runs-on: ubuntu-latest
     defaults:

@@ -8,12 +8,19 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from psycopg import Connection
+from psycopg import Connection, errors
 from psycopg.rows import TupleRow
 from psycopg.types.json import Jsonb
 
 from ingest_api.items.kinds import Kind
 from ingest_api.items.metadata import Metadata
+
+# The index that keeps one item per content per collection (migration 0007, ING-9).
+ONE_PER_CONTENT = "items_one_per_content"
+
+
+class Duplicate(Exception):
+    """The collection already has an item with these bytes (ING-9)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +38,20 @@ def insert_from_upload(
     conn: Connection[TupleRow], upload_id: UUID, contents: Contents, *, created_at: datetime
 ) -> None:
     """Catalogs an upload. Its collection, name, tags and creator come from the upload, and its
-    marking from the collection (ACC-3: the database refuses anything lower)."""
+    marking from the collection (ACC-3: the database refuses anything lower). Raises Duplicate,
+    with the transaction rolled back, if the collection already holds these bytes (ING-9)."""
+    try:
+        _insert(conn, upload_id, contents, created_at=created_at)
+    except errors.UniqueViolation as exc:
+        if exc.diag.constraint_name != ONE_PER_CONTENT:
+            raise
+        conn.rollback()
+        raise Duplicate(contents.sha256) from exc
+
+
+def _insert(
+    conn: Connection[TupleRow], upload_id: UUID, contents: Contents, *, created_at: datetime
+) -> None:
     metadata = contents.metadata
     box = metadata.bbox
     conn.execute(

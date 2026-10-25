@@ -9,6 +9,7 @@ import io
 import json
 import struct
 from collections.abc import Mapping
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -25,9 +26,9 @@ from ingest_api.items.kinds import Kind
 from ingest_api.items.metadata import Bbox
 from ingest_api.ports import Container, StorageError
 from ingest_api.worker.classify import Media
-from ingest_api.worker.extract import MAX_EXTRACT_BYTES, BlobSource, Extraction, extract
+from ingest_api.worker.extract import MAX_EXTRACT_BYTES, Budget, Extraction, extract
 from ingest_api.worker.formats import READERS, glb, las
-from tests.fakes import Faults, MemoryBlobStore
+from tests.fakes import Faults, InlineSandbox, MemoryBlobStore
 from tests.invariants import check
 
 RAW = Container.RAW
@@ -121,9 +122,13 @@ def parquet_file(*, geo: Mapping[str, object] | None = None) -> bytes:
     return buffer.getvalue()
 
 
+def _budget(store: MemoryBlobStore, size: int) -> Budget:
+    return Budget(partial(store.read_range, RAW, "item"), "item", size)
+
+
 def _extract(store: MemoryBlobStore, media: Media, data: bytes) -> Extraction:
     props = store.put(RAW, "item", data)
-    return extract(READERS.get(media), BlobSource(store, RAW, "item", props.size))
+    return extract(READERS.get(media), _budget(store, props.size), InlineSandbox())
 
 
 def _within_budget(store: MemoryBlobStore, extraction: Extraction) -> None:
@@ -260,7 +265,7 @@ def test_a_storage_failure_while_reading_is_retried_not_recorded(tmp_path, media
     store.faults = Faults(transient=1.0)
 
     with pytest.raises(StorageError):
-        extract(READERS[media], BlobSource(store, RAW, "item", props.size))
+        extract(READERS[media], _budget(store, props.size), InlineSandbox())
 
 
 SIGNATURES = {

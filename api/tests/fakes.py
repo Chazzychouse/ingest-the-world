@@ -25,6 +25,7 @@ from ingest_api.ports import (
     Message,
     TransientStorageError,
 )
+from ingest_api.worker.extract import Budget, Failed, Found, Reader, read_header
 
 
 def event_for(props: BlobProps) -> dict[str, Any]:
@@ -173,8 +174,10 @@ class SimQueue:
     """Peek-lock queue with Service Bus semantics, driven by a `SimClock`.
 
     Messages whose lock expires are redelivered; after `max_delivery_count` deliveries they
-    move to `dead_letters`. Faults add duplicates, reordering and lost completions, the
-    behaviours at-least-once consumers have to survive.
+    move to the dead-letter queue, which is itself peek-lock. With `max_lock_renewal_seconds`
+    set, a received message's lock is renewed (as the adapter's lock renewer does) until it is
+    settled or that long has passed since it was received. Faults add duplicates, reordering and
+    lost completions, the behaviours at-least-once consumers have to survive.
     """
 
     clock: SimClock
@@ -182,25 +185,37 @@ class SimQueue:
     faults: Faults = field(default_factory=Faults.none)
     lock_seconds: float = 60.0
     max_delivery_count: int = 10
-    _entries: list[_Entry] = field(default_factory=list)
-    dead_letters: list[DeadLetter] = field(default_factory=list[DeadLetter])
+    max_lock_renewal_seconds: float = 0.0
+    _entries: list[_Entry] = field(default_factory=list[_Entry])
+    _dead: list[tuple[_Entry, str]] = field(default_factory=list[tuple[_Entry, str]])
     _seq: int = 0
 
     def _next_id(self) -> str:
         self._seq += 1
         return f"m{self._seq}"
 
+    @property
+    def dead_letters(self) -> list[DeadLetter]:
+        return [DeadLetter(e.id, e.body, reason) for e, reason in self._dead]
+
     def send(self, body: dict[str, Any]) -> None:
         copies = 2 if self.faults.duplicate and self.rng.random() < self.faults.duplicate else 1
         for _ in range(copies):
             self._entries.append(_Entry(self._next_id(), dict(body)))
 
-    def _available(self) -> list[_Entry]:
+    def _ready(self, entries: list[_Entry]) -> list[_Entry]:
         now = self.clock.monotonic()
-        return [e for e in self._entries if e.locked_until is None or e.locked_until <= now]
+        return [e for e in entries if e.locked_until is None or e.locked_until <= now]
+
+    def _lock(self, entry: _Entry, prefix: str = "") -> Message:
+        entry.delivery_count += 1
+        lock = self.lock_seconds + self.max_lock_renewal_seconds
+        entry.locked_until = self.clock.monotonic() + lock
+        entry.lock_token = f"{prefix}{entry.id}:{entry.delivery_count}"
+        return Message(entry.id, dict(entry.body), entry.delivery_count, entry.lock_token)
 
     def receive(self, max_messages: int = 1) -> list[Message]:
-        ready = self._available()
+        ready = self._ready(self._entries)
         if self.faults.reorder and self.rng.random() < self.faults.reorder:
             self.rng.shuffle(ready)
         out = []
@@ -210,15 +225,16 @@ class SimQueue:
             if entry.delivery_count >= self.max_delivery_count:
                 self._move_to_dead_letters(entry, MAX_DELIVERIES_EXCEEDED)
                 continue
-            entry.delivery_count += 1
-            entry.locked_until = self.clock.monotonic() + self.lock_seconds
-            entry.lock_token = f"{entry.id}:{entry.delivery_count}"
-            out.append(Message(entry.id, dict(entry.body), entry.delivery_count, entry.lock_token))
+            out.append(self._lock(entry))
         return out
+
+    def receive_dead_letters(self, max_messages: int = 1) -> list[Message]:
+        ready = self._ready([e for e, _ in self._dead])[:max_messages]
+        return [self._lock(entry, "dead:") for entry in ready]
 
     def _locked(self, message: Message) -> _Entry:
         now = self.clock.monotonic()
-        for entry in self._entries:
+        for entry in [*self._entries, *(e for e, _ in self._dead)]:
             if (
                 entry.lock_token == message.lock_token
                 and entry.locked_until is not None
@@ -229,19 +245,29 @@ class SimQueue:
 
     def _move_to_dead_letters(self, entry: _Entry, reason: str) -> None:
         self._entries.remove(entry)
-        self.dead_letters.append(DeadLetter(entry.id, entry.body, reason))
+        entry.locked_until = None
+        self._dead.append((entry, reason))
+
+    def _remove(self, entry: _Entry) -> None:
+        if entry in self._entries:
+            self._entries.remove(entry)
+            return
+        self._dead = [(e, r) for e, r in self._dead if e is not entry]
 
     def complete(self, message: Message) -> None:
         entry = self._locked(message)
         if self.faults.lost_complete and self.rng.random() < self.faults.lost_complete:
             return
-        self._entries.remove(entry)
+        self._remove(entry)
 
     def abandon(self, message: Message) -> None:
         self._locked(message).locked_until = None
 
     def dead_letter(self, message: Message, *, reason: str) -> None:
-        self._move_to_dead_letters(self._locked(message), reason)
+        entry = self._locked(message)
+        if entry not in self._entries:
+            raise LockLost(f"{message.id} is a dead letter already")
+        self._move_to_dead_letters(entry, reason)
 
     def peek_dead_letters(self, max_messages: int) -> list[DeadLetter]:
         return self.dead_letters[:max_messages]
@@ -286,3 +312,11 @@ class CrashAfter:
 
     def list(self, container, prefix="") -> Iterator[BlobProps]:
         return self._after(self._store.list(container, prefix))
+
+
+class InlineSandbox:
+    """Runs readers in this process: a reader that raises unexpectedly fails the test instead of
+    becoming a `failed` extraction, which is what the format tests want."""
+
+    def run(self, reader: Reader, budget: Budget) -> Found | Failed | None:
+        return read_header(reader, budget.fetch, budget.name, budget.size)

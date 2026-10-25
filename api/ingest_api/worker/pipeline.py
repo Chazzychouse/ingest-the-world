@@ -13,11 +13,14 @@ lock on its name. The scan comes before anything reaches `raw/` (ING-4).
 """
 
 import hashlib
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from functools import partial
 
 from psycopg import Connection
 from psycopg.rows import TupleRow
 
+from ingest_api.audit import PIPELINE, AuditAction, Auditor, Detail, RequestContext, Target
 from ingest_api.events import BlobCreated
 from ingest_api.items import store as items
 from ingest_api.ports import (
@@ -34,7 +37,7 @@ from ingest_api.ports import (
 from ingest_api.uploads import store as uploads
 from ingest_api.worker import jobs
 from ingest_api.worker.classify import HEAD_BYTES, classify
-from ingest_api.worker.extract import BlobSource, extract
+from ingest_api.worker.extract import Budget, Reader, Sandbox, extract
 from ingest_api.worker.formats import READERS
 
 # Blob metadata naming the landing version a copy was made from.
@@ -54,6 +57,9 @@ class Pipeline:
     store: BlobStore
     scanner: Scanner
     clock: Clock
+    sandbox: Sandbox
+    # Which reader extracts each classified media type; anything else is `unsupported`.
+    readers: Mapping[str, Reader] = field(default_factory=lambda: READERS)
 
 
 def quarantine_name(event: BlobCreated) -> str:
@@ -61,14 +67,42 @@ def quarantine_name(event: BlobCreated) -> str:
     return f"{event.etag}/{event.name}"
 
 
+type Decide = Callable[
+    [Connection[TupleRow], Pipeline, BlobCreated, uploads.LandedUpload | None], jobs.Outcome
+]
+
+
 def process(conn: Connection[TupleRow], pipeline: Pipeline, event: BlobCreated) -> jobs.Outcome:
     """Brings this version to its outcome (or finds the one it already has) and clears it from
     landing. Raises Busy, StorageError or psycopg errors for the caller to retry."""
+    return _once(conn, pipeline, event, _decide_first)
+
+
+def give_up(
+    conn: Connection[TupleRow], pipeline: Pipeline, event: BlobCreated, reason: jobs.Reason
+) -> jobs.Outcome:
+    """Ends a version that can't be processed, so nothing is retried forever (ING-2): it is
+    rejected with `reason`, or as superseded if a newer version has replaced it, unless it
+    already has an outcome. Raises like `process`."""
+    return _once(conn, pipeline, event, partial(_abandon, reason=reason))
+
+
+def _once(
+    conn: Connection[TupleRow], p: Pipeline, event: BlobCreated, decide: Decide
+) -> jobs.Outcome:
+    """Runs `decide` on a version that has no outcome yet, under the lock on its blob name, then
+    clears it from landing."""
     if not jobs.lock(conn, event.name):
         raise Busy(event.name)
     try:
-        outcome = _decide_once(conn, pipeline, event)
-        _clear_landing(pipeline.store, event)
+        upload = uploads.landed(conn, event.name)
+        job = jobs.begin(
+            conn, event.name, event.etag, upload_id=upload.id if upload else None, now=p.clock.now()
+        )
+        conn.commit()
+        # A duplicate or redelivery: the outcome stands (ING-1).
+        outcome = job.stage if job.stage != "received" else decide(conn, p, event, upload)
+        _clear_landing(p.store, event)
         return outcome
     finally:
         conn.rollback()
@@ -76,14 +110,27 @@ def process(conn: Connection[TupleRow], pipeline: Pipeline, event: BlobCreated) 
         conn.commit()
 
 
-def _decide_once(conn: Connection[TupleRow], p: Pipeline, event: BlobCreated) -> jobs.Outcome:
-    upload = uploads.landed(conn, event.name)
-    job = jobs.begin(
-        conn, event.name, event.etag, upload_id=upload.id if upload else None, now=p.clock.now()
-    )
-    conn.commit()
-    if job.stage != "received":
-        return job.stage  # a duplicate or redelivery: the outcome stands (ING-1)
+def _abandon(
+    conn: Connection[TupleRow],
+    p: Pipeline,
+    event: BlobCreated,
+    upload: uploads.LandedUpload | None,
+    *,
+    reason: jobs.Reason,
+) -> jobs.Outcome:
+    landing = p.store.head(LANDING, event.name)
+    if landing is not None and landing.etag != event.etag:
+        return _reject(conn, p, event, jobs.Reason.SUPERSEDED)
+    open_upload = upload if upload is not None and upload.status == "pending" else None
+    return _reject(conn, p, event, reason, closes=open_upload)
+
+
+def _decide_first(
+    conn: Connection[TupleRow],
+    p: Pipeline,
+    event: BlobCreated,
+    upload: uploads.LandedUpload | None,
+) -> jobs.Outcome:
     if upload is None:
         return _reject(conn, p, event, jobs.Reason.NO_UPLOAD)
     if upload.status != "pending":
@@ -114,12 +161,47 @@ def _finish(
     reason: str | None = None,
     closes: uploads.LandedUpload | None = None,
 ) -> jobs.Outcome:
-    """Commits the version's outcome, and the upload's when this version decides it."""
-    jobs.finish(conn, event.name, event.etag, outcome, reason=reason, now=p.clock.now())
+    """Commits the version's outcome, and the upload's when this version decides it, with the
+    outcome's audit event."""
+    finished = jobs.finish(conn, event.name, event.etag, outcome, reason=reason, now=p.clock.now())
     if closes is not None:
         uploads.close(conn, closes.id, outcome)
-    conn.commit()
+    _commit_outcome(conn, event.name, event.etag, outcome, reason=reason, audit=finished)
     return outcome
+
+
+_ACTIONS: Mapping[jobs.Outcome, AuditAction] = {
+    "cataloged": AuditAction.ITEM_CATALOG,
+    "quarantined": AuditAction.UPLOAD_QUARANTINE,
+    "rejected": AuditAction.UPLOAD_REJECT,
+}
+
+
+def _commit_outcome(
+    conn: Connection[TupleRow],
+    name: str,
+    etag: str,
+    outcome: jobs.Outcome,
+    *,
+    reason: str | None,
+    audit: bool,
+) -> None:
+    """Commits a version's outcome, with exactly one audit event if this call recorded it
+    (ACC-5): as the system actor, keyed by the version, marked as its collection."""
+    if not audit:
+        conn.commit()
+        return
+    upload = uploads.landed(conn, name)
+    auditor = Auditor(conn, RequestContext(request_id=f"{name}@{etag}", ip=None), PIPELINE)
+    kind = "item" if outcome == "cataloged" else "upload"
+    target = Target(kind, str(upload.id)) if upload else Target("blob", name)
+    marking = upload.marking if upload else None
+    detail: Detail = {"blob": name, "etag": etag}
+    if outcome == "cataloged":
+        auditor.allowed(_ACTIONS[outcome], target=target, marking=marking, detail=detail)
+        return
+    reason = reason or outcome
+    auditor.denied(_ACTIONS[outcome], reason=reason, target=target, marking=marking, detail=detail)
 
 
 def _reject(
@@ -176,11 +258,14 @@ def _catalog(
     # moved on.
     head = p.store.read_range(RAW, event.name, 0, HEAD_BYTES)
     found = classify(head, upload.filename, upload.content_type)
-    source = BlobSource(p.store, RAW, event.name, raw.size)
-    extraction = extract(READERS.get(found.media_type), source)
+    budget = Budget(partial(p.store.read_range, RAW, event.name), event.name, raw.size)
+    extraction = extract(p.readers.get(found.media_type), budget, p.sandbox)
     kind = extraction.kind or found.kind
     contents = items.Contents(kind, found.media_type, sha256, raw.size, extraction.metadata)
-    items.insert_from_upload(conn, upload.id, contents, created_at=p.clock.now())
+    try:
+        items.insert_from_upload(conn, upload.id, contents, created_at=p.clock.now())
+    except items.Duplicate:
+        return _reject(conn, p, event, jobs.Reason.DUPLICATE, closes=upload)
     return _finish(conn, p, event, "cataloged", closes=upload)
 
 
@@ -222,8 +307,9 @@ def _supersede(conn: Connection[TupleRow], p: Pipeline, name: str, raw: BlobProp
     if older is None:
         raise StorageError(f"raw/{name} has no {SOURCE_ETAG}; it was not made by the pipeline")
     p.store.delete(RAW, name, if_match=raw.etag)
-    jobs.finish(conn, name, older, "rejected", reason=jobs.Reason.SUPERSEDED, now=p.clock.now())
-    conn.commit()
+    reason = jobs.Reason.SUPERSEDED
+    finished = jobs.finish(conn, name, older, "rejected", reason=reason, now=p.clock.now())
+    _commit_outcome(conn, name, older, "rejected", reason=reason, audit=finished)
 
 
 def _clear_landing(store: BlobStore, event: BlobCreated) -> None:

@@ -129,6 +129,30 @@ def test_dead_lettering_keeps_the_reason_and_stops_delivery(broker, body):
     ]
 
 
+def test_a_dead_letter_can_be_received_and_completed(broker, body):
+    broker.queue.send(body)
+    broker.queue.dead_letter(_receive_one(broker.queue), reason="Swept")
+
+    letters = [m for m in broker.queue.receive_dead_letters(10) if m.body == body]
+    assert len(letters) == 1
+    broker.queue.complete(letters[0])
+    assert _dead_letters_of(broker.queue, body) == []
+    assert broker.queue.receive() == []
+
+
+def test_an_abandoned_dead_letter_stays_dead_lettered(broker, body):
+    broker.queue.send(body)
+    broker.queue.dead_letter(_receive_one(broker.queue), reason="Swept")
+    [letter] = [m for m in broker.queue.receive_dead_letters(10) if m.body == body]
+
+    broker.queue.abandon(letter)
+    [again] = [m for m in broker.queue.receive_dead_letters(10) if m.body == body]
+    assert again.id == letter.id
+    with pytest.raises(LockLost):
+        broker.queue.dead_letter(again, reason="Twice")  # a dead letter goes no further
+    assert broker.queue.receive() == []
+
+
 def test_receive_returns_at_most_the_batch_size(broker):
     bodies = [{"n": i} for i in range(3)]
     for b in bodies:

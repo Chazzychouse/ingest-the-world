@@ -1,21 +1,30 @@
 """Header-only metadata extraction (ING-6): what a promoted original says about itself.
 
-Formats are read through `BlobSource`, a view of the blob store that fetches
-aligned blocks by range and refuses to fetch more than `MAX_EXTRACT_BYTES` in total. Header
-readers (`worker.formats`) seek straight to the parts they need, so a multi-GB file costs a few
-range requests. A format that needs more than the budget is cataloged without metadata
-(`over-budget`); bytes that don't parse are `unreadable`. Neither fails the upload: the file is
-still kept and searchable by name. A storage failure while reading is retried like any other.
+A format reader parses hostile bytes in native code (GDAL, Arrow), so it runs in a `Sandbox`:
+in production a child process with time and memory limits (`adapters.process_sandbox`), so a
+reader that crashes, hangs or exhausts memory fails that one extraction, not the worker (ING-8).
+The reader sees the blob through `BlobSource`, a file-like view that fetches aligned blocks;
+every fetch is served by the worker's `Budget`, which refuses to fetch more than
+`MAX_EXTRACT_BYTES` in total and keeps the first storage or budget failure. Header readers
+(`worker.formats`) seek straight to the parts they need, so a multi-GB file costs a few range
+requests. A format that needs more than the budget is cataloged without metadata
+(`over-budget`); bytes that don't parse are `unreadable`; a reader that dies is `failed`. None of
+them fails the upload: the file is still kept and searchable by name. A storage failure while
+reading is retried like any other.
 """
 
 import io
+import logging
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from ingest_api.items.kinds import Kind
 from ingest_api.items.metadata import Bbox, Json, Metadata, Status
-from ingest_api.ports import BlobStore, StorageError
+from ingest_api.ports import StorageError
+
+log = logging.getLogger("ingest.worker")
 
 # The most one extraction may fetch from storage, whatever the file's size (ING-6).
 MAX_EXTRACT_BYTES = 4 * 1024 * 1024
@@ -48,18 +57,44 @@ class Extraction:
     kind: Kind | None  # the reader's refinement of the classifier's kind, if any
 
 
-class BlobSource:
-    """One blob, read by range in aligned blocks, fetching at most MAX_EXTRACT_BYTES in all.
+type Fetch = Callable[[int, int], bytes]
 
-    Format libraries read it from native code, which may swallow exceptions; `failure` keeps
-    the first storage or budget error so `extract` can act on what really happened.
-    """
 
-    def __init__(self, store: BlobStore, container: str, name: str, size: int):
-        self._store, self._container, self.name = store, container, name
-        self.size = size
+class Budget:
+    """The worker's gate on one blob: every byte a reader gets passes through `fetch`, which is
+    the one place the budget is enforced (ING-6). It runs in the worker, never in the sandbox,
+    so nothing a file makes a reader do can overspend it or hide a failure from it."""
+
+    def __init__(self, read_range: Fetch, name: str, size: int):
+        """`read_range(offset, length)` reads the blob from storage, e.g. a `BlobStore.read_range`
+        with the blob's container and name bound."""
+        self._read_range, self.name, self.size = read_range, name, size
         self.fetched = 0
         self.failure: StorageError | BudgetExceeded | None = None
+
+    def fetch(self, offset: int, length: int) -> bytes:
+        """`length` bytes at `offset`, counted against the budget."""
+        if offset < 0 or length < 0 or offset + length > self.size:
+            raise Unreadable(f"wants bytes {offset}+{length} of a {self.size}-byte file")
+        if self.fetched + length > MAX_EXTRACT_BYTES:
+            self.failure = self.failure or BudgetExceeded(self.name)
+            raise self.failure
+        try:
+            data = self._read_range(offset, length)
+        except StorageError as exc:
+            self.failure = self.failure or exc
+            raise
+        self.fetched += length
+        return data
+
+
+class BlobSource:
+    """One blob as a reader sees it: read by range in aligned blocks, the most recent of which
+    are kept for nearby reads. Blocks come from `fetch`, which is the worker's `Budget` (or,
+    from a sandbox, a request to it)."""
+
+    def __init__(self, fetch: Fetch, name: str, size: int):
+        self._fetch, self.name, self.size = fetch, name, size
         self._blocks: OrderedDict[int, bytes] = OrderedDict()
 
     def read(self, offset: int, length: int) -> bytes:
@@ -91,16 +126,7 @@ class BlobSource:
             self._blocks.move_to_end(index)
             return self._blocks[index]
         offset = index * BLOCK_BYTES
-        length = min(BLOCK_BYTES, self.size - offset)
-        if self.fetched + length > MAX_EXTRACT_BYTES:
-            self.failure = self.failure or BudgetExceeded(self.name)
-            raise self.failure
-        try:
-            block = self._store.read_range(self._container, self.name, offset, length)
-        except StorageError as exc:
-            self.failure = self.failure or exc
-            raise
-        self.fetched += length
+        block = self._fetch(offset, min(BLOCK_BYTES, self.size - offset))
         self._blocks[index] = block
         if len(self._blocks) > MAX_CACHED_BLOCKS:
             self._blocks.popitem(last=False)
@@ -134,7 +160,7 @@ class SourceFile(io.RawIOBase):
 
     def readinto(self, buffer: bytearray | memoryview) -> int:  # pyright: ignore[reportIncompatibleMethodOverride] - io's stub takes any buffer
         """Never raises: GDAL aborts the process when a Python read callback does. A failed
-        read looks like the end of the file, and `extract` finds the cause in `failure`."""
+        read looks like the end of the file, and the budget keeps the cause."""
         try:
             data = self._source.read(self._position, len(buffer))
         except (StorageError, BudgetExceeded, Unreadable):
@@ -147,26 +173,49 @@ class SourceFile(io.RawIOBase):
 type Reader = Callable[[BlobSource], Found]
 
 
-def extract(reader: Reader | None, source: BlobSource) -> Extraction:
-    """Runs `reader` over `source`. Raises StorageError if storage failed under it, so the job
-    is retried rather than cataloged without metadata."""
-    if reader is None:
-        return _without("unsupported", source)
-    found: Found | None
+@dataclass(frozen=True, slots=True)
+class Failed:
+    """The reader crashed, ran out of time or memory, or raised something it shouldn't."""
+
+    reason: str
+
+
+class Sandbox(Protocol):
+    """Where readers run: a child process in production, inline in some tests."""
+
+    def run(self, reader: Reader, budget: Budget) -> Found | Failed | None:
+        """What `reader` found in the budget's blob; None if the bytes don't parse."""
+        ...
+
+
+def read_header(reader: Reader, fetch: Fetch, name: str, size: int) -> Found | None:
+    """Runs `reader` over the blob `fetch` serves: a sandbox's job, wherever it runs."""
     try:
-        found = reader(source)
+        return reader(BlobSource(fetch, name, size))
     except (Unreadable, BudgetExceeded, StorageError):
-        found = None
-    # Checked even after a success: a library may have swallowed the failure and carried on.
-    if isinstance(source.failure, StorageError):
-        raise source.failure
-    if isinstance(source.failure, BudgetExceeded):
-        return _without("over-budget", source)
+        return None
+
+
+def extract(reader: Reader | None, budget: Budget, sandbox: Sandbox) -> Extraction:
+    """Runs `reader` in `sandbox` over the budget's blob. Raises StorageError if storage failed
+    under it, so the job is retried rather than cataloged without metadata."""
+    if reader is None:
+        return _without("unsupported", budget)
+    found = sandbox.run(reader, budget)
+    # The budget's record wins over the reader's: a library may have swallowed the failure and
+    # carried on, and a sandboxed reader can't be trusted to report it.
+    if isinstance(budget.failure, StorageError):
+        raise budget.failure
+    if isinstance(budget.failure, BudgetExceeded):
+        return _without("over-budget", budget)
+    if isinstance(found, Failed):
+        log.warning("reader for %s failed: %s", budget.name, found.reason)
+        return _without("failed", budget)
     if found is None:
-        return _without("unreadable", source)
-    metadata = Metadata("extracted", source.fetched, found.properties, found.bbox, found.crs)
+        return _without("unreadable", budget)
+    metadata = Metadata("extracted", budget.fetched, found.properties, found.bbox, found.crs)
     return Extraction(metadata, found.kind)
 
 
-def _without(status: Status, source: BlobSource) -> Extraction:
-    return Extraction(Metadata(status, source.fetched), None)
+def _without(status: Status, budget: Budget) -> Extraction:
+    return Extraction(Metadata(status, budget.fetched), None)

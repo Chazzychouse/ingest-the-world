@@ -62,6 +62,10 @@ the request disclosed or, for a refusal on an existing target, that target's mar
 Malformed requests (401, 422) carry no identity or intent worth auditing and are left to
 request logs. Health, public config and `/me` are not catalog data and are exempt.
 
+The pipeline is audited the same way: every outcome it gives a blob version writes exactly one
+event, as the system actor `system:pipeline`, committed in the same transaction as the outcome.
+A cataloged version is `allowed`; a quarantined or rejected one is `denied`, with the reason.
+
 ### ACC-6 Audit is append-only
 
 Status: enforced
@@ -105,16 +109,24 @@ Status: enforced
 
 Every blob version that lands ends in exactly one of `cataloged`, `quarantined` or `rejected`:
 never lost, never cataloged twice, and an outcome once reached never changes. An upload yields
-at most one item. Checked once the simulation drains with faults off.
+at most one item.
+
+Nothing is retried forever. A version still failing on its message's last delivery is
+rejected as `retries-exhausted`, and one whose message is dead-lettered anyway (the worker died
+on that delivery) is rejected as `dead-lettered` when the worker sweeps the dead-letter queue.
+Its upload is closed as rejected unless a newer version has replaced it. Since outcomes are
+final, an operator cannot replay a swept version: the uploader uploads it again. Checked once
+the simulation sweeps dead letters and drains with faults off.
 
 ### ING-3 Originals are immutable
 
 Status: enforced
 
 Once an item is cataloged, its raw blob is never overwritten, changed or deleted by the
-pipeline; its content hash is fixed. A new upload of the same file is a new item with its own
-raw blob. (A version that loses to a newer one before it is cataloged may have its raw copy
-discarded; nothing ever referred to it.)
+pipeline; its content hash is fixed. A new upload of the same file into another collection is a
+new item with its own raw blob; into the same collection it is a duplicate (ING-9). (A version
+that loses to a newer one before it is cataloged may have its raw copy discarded; nothing ever
+referred to it.)
 
 ### ING-4 Quarantine is sealed
 
@@ -140,6 +152,33 @@ the file's size or contents; a header that needs more is recorded as `over-budge
 Every format reader goes through the blob store port, so GDAL and Arrow are bound by the same
 budget. Checked against a byte-counting blob store with files several times the budget, by
 fuzzing every reader, and in the pipeline simulation on every cataloged item.
+
+### ING-8 Readers can't take the worker down
+
+Status: enforced
+
+Format readers parse untrusted bytes in native code, so each extraction runs in a child process
+with a deadline and a memory limit. A reader that crashes, hangs, runs out of memory or raises
+unexpectedly leaves its item cataloged with extraction `failed` and no metadata, and the
+worker goes on to the next message. The budget (ING-6) is enforced outside the child.
+
+### ING-9 One item per content per collection
+
+Status: enforced
+
+No two items in a collection have the same checksum. A version whose bytes match an item
+already in its collection is rejected as `duplicate`, and its raw copy is discarded; the
+database refuses a second item with the same checksum even when two such uploads race. Items
+cataloged before this rule (migration 0007) are exempt.
+
+### ING-10 A running job keeps its message
+
+Status: enforced
+
+While the worker processes a message, its lock is renewed (up to `queue_lock_renewal_seconds`),
+so a long copy or hash is never redelivered to another worker mid-job or charged a delivery for
+a lock that lapsed. Checked against the fake queue's lock model with a slow store, and against
+the Service Bus emulator.
 
 ### ING-7 Derivatives are rebuildable
 

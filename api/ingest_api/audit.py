@@ -1,12 +1,14 @@
-"""The Auditor: the one way routes record what they allowed and refused (ACC-5).
+"""The Auditor: the one way the platform records what it allowed and refused (ACC-5).
 
-Each request gets an Auditor bound to its connection, caller and request id. Recording an
-event commits it together with whatever the request changed, so a response is never sent
-before its audit row is durable.
+Each request gets an Auditor bound to its connection, caller and request id; the pipeline gets
+one per blob version, acting as the system actor. Recording an event commits it together with
+whatever the request (or the pipeline step) changed, so nothing is reported or acted on before
+its audit row is durable.
 """
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Self
 
 from fastapi import HTTPException
 from psycopg import Connection
@@ -27,6 +29,26 @@ class AuditAction(StrEnum):
     UPLOAD_READ = "upload.read"
     UPLOAD_RENEW = "upload.renew"
     ROLE_CHECK = "authz.role"
+    # The pipeline's outcomes for a landed blob version.
+    ITEM_CATALOG = "item.catalog"
+    UPLOAD_QUARANTINE = "upload.quarantine"
+    UPLOAD_REJECT = "upload.reject"
+
+
+@dataclass(frozen=True, slots=True)
+class Actor:
+    """Who an event is about: a signed-in principal, or the platform itself."""
+
+    subject: str
+    name: str | None
+
+    @classmethod
+    def of(cls, principal: Principal) -> Self:
+        return cls(principal.subject, principal.username or principal.name)
+
+
+# The pipeline acts for the platform, not for whoever uploaded.
+PIPELINE = Actor("system:pipeline", "ingest pipeline")
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,10 +67,10 @@ type Detail = dict[str, str | int | list[str] | None]
 
 
 class Auditor:
-    def __init__(self, conn: Connection[TupleRow], ctx: RequestContext, principal: Principal):
+    def __init__(self, conn: Connection[TupleRow], ctx: RequestContext, actor: Actor):
         self._conn = conn
         self._ctx = ctx
-        self._principal = principal
+        self._actor = actor
 
     def allowed(
         self,
@@ -75,9 +97,22 @@ class Auditor:
         """Records and commits a refusal, discarding the request's other changes, and returns
         the exception to raise: `raise auditor.refuse(...)`."""
         self._conn.rollback()
-        self._record(action, "denied", target, marking, {"reason": message, **(detail or {})})
-        self._conn.commit()
+        self.denied(action, reason=message, target=target, marking=marking, detail=detail)
         return HTTPException(status_code, message)
+
+    def denied(
+        self,
+        action: AuditAction,
+        *,
+        reason: str,
+        target: Target | None = None,
+        marking: str | None = None,
+        detail: Detail | None = None,
+    ) -> None:
+        """Records a refused action and commits it with the changes made so far, which record
+        the refusal itself (a pipeline rejection is an outcome, not a rollback)."""
+        self._record(action, "denied", target, marking, {"reason": reason, **(detail or {})})
+        self._conn.commit()
 
     def _record(
         self,
@@ -87,7 +122,7 @@ class Auditor:
         marking: str | None,
         detail: Detail,
     ) -> None:
-        principal = self._principal
+        actor = self._actor
         self._conn.execute(
             """
             INSERT INTO audit.events
@@ -96,8 +131,8 @@ class Auditor:
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                principal.subject,
-                principal.username or principal.name,
+                actor.subject,
+                actor.name,
                 action.value,
                 target.kind if target else None,
                 target.id if target else None,
