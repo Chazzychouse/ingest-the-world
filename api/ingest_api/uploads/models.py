@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import ConfigDict, Field
 
-from ingest_api.catalog.models import MAX_LIST_ITEMS, NO_NUL_PATTERN, CollectionId
+from ingest_api.collections.models import MAX_LIST_ITEMS, NO_NUL_PATTERN, CollectionId
 from ingest_api.schema import ApiModel
 
 # One path segment of a blob name: no separators or control characters, and no trailing dot or

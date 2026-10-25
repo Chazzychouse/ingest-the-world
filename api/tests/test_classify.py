@@ -5,7 +5,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from ingest_api.items.kinds import Kind
-from ingest_api.worker.classify import HEAD_BYTES, OCTET_STREAM, Classification, classify
+from ingest_api.worker.classify import HEAD_BYTES, Classification, Media, classify
 
 
 @pytest.mark.parametrize(
@@ -32,7 +32,7 @@ def test_known_formats(head, filename, expected):
 
 
 def test_anything_else_is_generic_with_its_declared_type():
-    assert classify(b"\x00\x01", "blob.bin") == Classification(Kind.GENERIC, OCTET_STREAM)
+    assert classify(b"\x00\x01", "blob.bin") == Classification(Kind.GENERIC, Media.OCTET_STREAM)
     assert classify(b"\x00\x01", "x.dwg", "image/vnd.dwg") == Classification(
         Kind.GENERIC, "image/vnd.dwg"
     )

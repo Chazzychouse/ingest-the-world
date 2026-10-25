@@ -35,7 +35,7 @@ LIST_AUDIT = "    auditor.allowed(\n        AuditAction.COLLECTION_LIST,"
 PUT_GRANT_CHECK = (
     "row = readable_or_404(conn, auditor, action, collection_id, principal)\n    store.put_grant("
 )
-ROUTES = "ingest_api/catalog/routes.py"
+ROUTES = "ingest_api/collections/routes.py"
 UPLOAD_ROUTES = "ingest_api/uploads/routes.py"
 # The latest definition of the access functions; earlier migrations' versions are replaced.
 UPLOADS_SQL = "migrations/0003_uploads.sql"
@@ -111,7 +111,7 @@ MUTANTS = [
     ),
     Mutant(
         "nul-reaches-postgres",
-        "ingest_api/catalog/models.py",
+        "ingest_api/collections/models.py",
         "title: str = Field(min_length=1, max_length=200, pattern=NO_NUL_PATTERN)",
         "title: str = Field(min_length=1, max_length=200)",
         ("ROB-1",),
@@ -225,6 +225,13 @@ MUTANTS = [
         "    IF false AND (SELECT rank FROM authz.markings WHERE code = NEW.marking) < (",
         ("ACC-3",),
     ),
+    Mutant(
+        "extraction-ignores-budget",
+        "ingest_api/worker/extract.py",
+        "        if self.fetched + length > MAX_EXTRACT_BYTES:",
+        "        if False and self.fetched + length > MAX_EXTRACT_BYTES:",
+        ("ING-6",),
+    ),
 ]
 
 
@@ -243,14 +250,11 @@ SKIP = shutil.ignore_patterns(
 )
 
 
-def run(mutant: Mutant) -> tuple[bool, str]:
-    """Applies `mutant` to a throwaway copy of the repository and runs the suite there.
-
-    The working tree is never modified, so editing code while mutants run is safe.
-    """
+def run(mutant: Mutant, snapshot: Path) -> tuple[bool, str]:
+    """Applies `mutant` to a throwaway copy of `snapshot` and runs the suite there."""
     with tempfile.TemporaryDirectory() as tmp:
         sandbox = Path(tmp) / "repo"
-        shutil.copytree(REPO, sandbox, ignore=SKIP)
+        shutil.copytree(snapshot, sandbox)
         path = sandbox / "api" / mutant.file
         original = path.read_text()
         if original.count(mutant.old) != 1:
@@ -289,10 +293,15 @@ def run(mutant: Mutant) -> tuple[bool, str]:
 def main(argv: list[str]) -> int:
     selected = [m for m in MUTANTS if not argv or any(a in m.name for a in argv)]
     survived = 0
-    for mutant in selected:
-        ok, message = run(mutant)
-        survived += not ok
-        print(f"{'ok  ' if ok else 'FAIL'} {mutant.name:<30} {message}", flush=True)
+    # Every mutant runs against the tree as it was at the start, so editing code while
+    # mutants run neither breaks the run nor leaks half-made changes into it.
+    with tempfile.TemporaryDirectory() as tmp:
+        snapshot = Path(tmp) / "repo"
+        shutil.copytree(REPO, snapshot, ignore=SKIP)
+        for mutant in selected:
+            ok, message = run(mutant, snapshot)
+            survived += not ok
+            print(f"{'ok  ' if ok else 'FAIL'} {mutant.name:<30} {message}", flush=True)
     print(f"\n{len(selected) - survived}/{len(selected)} mutants caught")
     return 1 if survived else 0
 

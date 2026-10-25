@@ -14,7 +14,7 @@ from psycopg.types.json import Jsonb
 
 from ingest_api import authz
 from ingest_api.auth import Principal
-from ingest_api.catalog.models import Access, CollectionIn, PrincipalType
+from ingest_api.collections.models import Access, CollectionIn, PrincipalType
 
 # Hard caps on result sets (Power of 10, rule 3). Real pagination arrives with search in M1
 # (SRCH-2); until then a catalog this large is a configuration problem, not a page to render.

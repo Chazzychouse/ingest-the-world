@@ -6,10 +6,11 @@ them on a faulty queue (duplicates, reordering, lost completions), and runs the 
 a faulty blob store (transient errors, writes whose acknowledgement is lost) and Postgres.
 
 After every step it checks that catalog and storage agree (ING-5), that nothing flagged left
-quarantine (ING-4), that cataloged originals never change (ING-3), and that no outcome ever
-changes or contradicts its bytes (ING-2). At the end it turns faults off, replays dead
-letters as an operator would, drains the queue, and checks that every version reached exactly
-one outcome (ING-2); then it delivers every event again and checks nothing moved (ING-1).
+quarantine (ING-4), that cataloged originals never change (ING-3), that no outcome ever
+changes or contradicts its bytes (ING-2), and that extraction kept to its budget (ING-6). At
+the end it turns faults off, replays dead letters as an operator would, drains the queue, and
+checks that every version reached exactly one outcome (ING-2); then it delivers every event
+again and checks nothing moved (ING-1).
 """
 
 import hashlib
@@ -31,6 +32,7 @@ from hypothesis.stateful import (
 
 from ingest_api.adapters.eicar_scanner import EICAR, EicarScanner
 from ingest_api.ports import Container
+from ingest_api.worker.extract import MAX_EXTRACT_BYTES
 from ingest_api.worker.pipeline import Pipeline
 from ingest_api.worker.runner import run_once
 from tests.conftest import make_app, reset_catalog
@@ -180,6 +182,12 @@ class PipelineMachine(RuleBasedStateMachine):
         rows = self.db.execute("SELECT id, raw_blob, sha256 FROM catalog.items").fetchall()
         return {str(i): (raw, sha) for i, raw, sha in rows}
 
+    @invariant()
+    def extraction_stays_within_its_budget(self):
+        rows = self.db.execute("SELECT id, extracted_bytes FROM catalog.items").fetchall()
+        for item_id, extracted in rows:
+            check("ING-6", extracted <= MAX_EXTRACT_BYTES, f"{item_id} read {extracted} bytes")
+
     def _jobs(self) -> dict[tuple[str, str], tuple[str, str | None]]:
         rows = self.db.execute("SELECT blob_name, etag, stage, reason FROM ingest.jobs")
         return {(n, e): (stage, reason) for n, e, stage, reason in rows}
@@ -262,7 +270,7 @@ class PipelineMachine(RuleBasedStateMachine):
         return self._jobs(), self._items(), uploads, storage
 
 
-@pytest.mark.invariant("ING-1", "ING-2", "ING-3", "ING-4", "ING-5")
+@pytest.mark.invariant("ING-1", "ING-2", "ING-3", "ING-4", "ING-5", "ING-6")
 def test_pipeline_simulation(fresh_database, idp):
     url = fresh_database()
     with TestClient(make_app(url, idp)) as client, psycopg.connect(url, autocommit=True) as db:
