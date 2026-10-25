@@ -3,7 +3,7 @@ malformed searches. `sim/test_search_sim.py` checks the filters and paging at la
 
 import uuid
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from psycopg.types.json import Jsonb
@@ -99,6 +99,22 @@ def test_search_terms_match_wildcards_literally(client, auth, db):
 
     check("SRCH-1", _search(client, auth, "bob", q="0%", ids=ids) == ids[:1], "% matched all")
     check("SRCH-1", _search(client, auth, "bob", q="0_", ids=ids) == [], "_ matched a char")
+
+
+@pytest.mark.invariant("SRCH-2")
+def test_paging_returns_items_sharing_a_timestamp_exactly_once(client, auth, db):
+    times = [NOW, NOW, NOW, NOW - timedelta(hours=1), NOW - timedelta(hours=1)]
+    ids = [str(_item(db, created_at=t).id) for t in times]
+    body: dict = {"ids": ids, "limit": 2}
+    seen: list[str] = []
+    for _ in range(len(ids) + 1):  # bounded: one page per item, plus the last
+        page = client.post("/search", json=body, headers=auth("bob")).json()
+        seen += [feature["id"] for feature in page["features"]]
+        if not page["links"]:
+            break
+        body = {**body, **page["links"][0]["body"]}
+
+    check("SRCH-2", sorted(seen) == sorted(ids), f"paged {seen}, wanted each of {ids} once")
 
 
 def _ring(*corners):

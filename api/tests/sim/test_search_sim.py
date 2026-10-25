@@ -218,16 +218,21 @@ class SearchMachine(RuleBasedStateMachine):
             check("ACC-1", response.json()["id"] == item_id, f"{item_id} served as another")
             self._expect_audit(AuditAction.ITEM_READ, "allowed", item.marking)
             return
-        self._expect_audit(AuditAction.ITEM_READ, "denied", item.marking if item else None)
+        # The response before the audit: serving it is a leak, whatever the audit says.
+        check("ACC-1", response.status_code != 200, f"{actor} was served unreadable {item_id}")
         check(
             "ACC-2",
             (response.status_code, response.json()) == (404, {"detail": NOT_FOUND}),
             f"{actor} on item {item_id}: {response.status_code} {response.text}",
         )
+        self._expect_audit(AuditAction.ITEM_READ, "denied", item.marking if item else None)
 
     # -- search -----------------------------------------------------------------------
 
     def _query(self, data) -> Query:
+        # Half the searches are broad, so they span pages and paging itself is tested (SRCH-2).
+        if data.draw(st.booleans()):
+            return Query()
         geometry = data.draw(st.sampled_from(["none", "bbox", "point", "box"]))
         box = data.draw(boxes()) if geometry == "box" else None
         if box is not None:  # a GeoJSON polygon is planar: it never wraps the antimeridian
