@@ -71,9 +71,13 @@ def _purge(name: str) -> None:
 
 
 @contextmanager
-def emulator_queue(name: str) -> Generator[ServiceBusQueue]:
-    """The adapter on an emptied emulator queue."""
+def emulator_queue(name: str, *, lock_renewal_seconds: float = 0) -> Generator[ServiceBusQueue]:
+    """The adapter on an emptied emulator queue; by default without lock renewal, so tests can
+    watch locks expire."""
     _require_emulator()
     _purge(name)
-    with wiring.queue(app_settings(database_url=""), name=name) as queue:
+    settings = app_settings(database_url="").model_copy(
+        update={"queue_lock_renewal_seconds": lock_renewal_seconds}
+    )
+    with wiring.queue(settings, name=name) as queue:
         yield queue

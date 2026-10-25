@@ -56,9 +56,21 @@ class Settings(BaseSettings):
     queue_name: str = "ingest"
     # How long a receive waits for a message before returning none.
     queue_max_wait_seconds: float = Field(default=5.0, gt=0, le=60)
+    # Deliveries before the queue dead-letters a message; the queue's own setting
+    # (`infra/terraform/messaging.tf`), so the worker knows a last delivery when it sees one.
+    queue_max_deliveries: int = Field(default=5, gt=0, le=100)
+    # How long a held message's lock is renewed while its job runs (ING-10). Covers copying and
+    # hashing the largest file the platform takes; 0 turns renewal off.
+    queue_lock_renewal_seconds: float = Field(default=3600.0, ge=0, le=86400)
 
     # Messages a worker takes per receive. It handles them one at a time.
     worker_batch: int = Field(default=4, gt=0, le=32)
+    # How often the worker sweeps the dead-letter queue, giving up each version found there.
+    dead_letter_sweep_seconds: float = Field(default=60.0, gt=0, le=3600)
+
+    # Limits on the child process each extraction's reader runs in (ING-8).
+    extract_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    extract_memory_mib: int = Field(default=1024, ge=256, le=16384)
 
     # The local event shim's polling interval (`ingest_api.event_shim`).
     shim_poll_seconds: float = Field(default=1.0, gt=0, le=60)

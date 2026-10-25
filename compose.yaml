@@ -87,6 +87,7 @@ services:
     command: ["python", "-m", "ingest_api.event_shim"]
     environment: *api-env
     profiles: [queue]
+    restart: unless-stopped
     depends_on:
       migrate: { condition: service_completed_successfully }
       azurite: { condition: service_started }
@@ -98,6 +99,9 @@ services:
     command: ["python", "-m", "ingest_api.worker"]
     environment: *api-env
     profiles: [queue]
+    # A bug the worker doesn't catch stops it; its message comes back to the restarted worker,
+    # and after the queue's last delivery is swept from the dead letters (ING-2).
+    restart: unless-stopped
     depends_on:
       migrate: { condition: service_completed_successfully }
       azurite: { condition: service_started }

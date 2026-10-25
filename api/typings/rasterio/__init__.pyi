@@ -24,6 +24,10 @@ class DatasetReader:
     crs: CRS | None
     bounds: BoundingBox
     transform: Affine
+    block_shapes: list[tuple[int, int]]
+    def get_tag_item(
+        self, ns: str, dm: str | None = None, bidx: int = 0, ovr: int | None = None
+    ) -> str | None: ...
     def __getattr__(self, name: str) -> Any: ...
     def __enter__(self) -> Self: ...
     def __exit__(

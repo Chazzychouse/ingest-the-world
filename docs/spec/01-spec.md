@@ -58,8 +58,8 @@ An internal platform that takes in any file a geospatial organization produces (
 2. **Transfer.** The SPA uploads blocks in parallel (default 8–32 MiB blocks, 4–8 concurrent; adaptive). Progress is kept in IndexedDB so an upload resumes after a page reload.
 3. **Commit → event.** `Put Block List` fires `BlobCreated`. Event Grid forwards it to Service Bus `ingest`. Locally, the event shim does this job.
 4. **Sniff and classify.** A range-read of the first ~4 KB and last ~64 KB is matched against magic-byte rules, refined by a ZIP central-directory listing. The result is a Kind plus a confidence score. Bundles wait until all expected members arrive or a timeout passes.
-5. **Scan and promote.** The file is malware-scanned (Defender for Storage in cloud, ClamAV locally); failures go to `quarantine`. A server-side copy then moves it `landing → raw`, a full-file SHA-256 is computed while streaming, and the file is deduplicated by checksum within its collection. The Item inherits its collection's marking (D3).
-6. **Extract.** Header-only extraction runs first, within a byte budget (e.g. COG IFDs, LAS/COPC header, GLB JSON chunk, Parquet footer). The fallback is a streaming read. Output is normalized to a STAC Item:
+5. **Scan and promote.** The file is malware-scanned (Defender for Storage in cloud, ClamAV locally); failures go to `quarantine`. A server-side copy then moves it `landing → raw`, a full-file SHA-256 is computed while streaming, and the file is deduplicated by checksum within its collection: a file whose checksum matches an item already in the collection is rejected as `duplicate` (its raw copy discarded), not linked to the existing item, so an item always has exactly one upload, one uploader and one raw blob (ING-9). The rejection names nothing about the existing item; the uploader can read the collection and find it. The Item inherits its collection's marking (D3).
+6. **Extract.** Header-only extraction runs first, in a child process with a deadline and a memory limit (ING-8), within a byte budget (e.g. COG IFDs, LAS/COPC header, GLB JSON chunk, Parquet footer). The fallback is a streaming read. Output is normalized to a STAC Item:
    - `geometry` is the WGS84 footprint, or `null` for non-spatial data
    - `proj:*` holds the native CRS
    - `file:*` holds size and checksum
@@ -79,7 +79,7 @@ An internal platform that takes in any file a geospatial organization produces (
 
 `POST /readings` takes a batch of JSON Lines or CSV rows (≤ 5 MB per request), authenticated with a device or service identity. It validates each row against the collection's reading schema and inserts into the `readings.measurements` hypertable. A nightly compaction job writes per-device-per-day Parquet to `raw/` and upserts one STAC Item for each. File-based readings go through the same compaction output, so search sees one model either way. An MQTT / Event Hubs adapter is a later plugin that posts to the same service.
 
-**Idempotency.** Every stage is keyed on `(blob_url, etag, stage)`, so repeat deliveries are no-ops. A message that fails 5 times goes to the dead-letter queue and appears in the admin UI with its error.
+**Idempotency.** Every stage is keyed on `(blob_url, etag, stage)`, so repeat deliveries are no-ops. A failed attempt backs off before its message is released for redelivery, and the message's lock is renewed while a job runs (ING-10). On the 5th and last delivery a version that still fails is rejected as `retries-exhausted`; a message that dead-letters anyway is swept by the worker, which rejects its version as `dead-lettered` (ING-2). Either way the job keeps its last error for the admin UI, and the uploader uploads again.
 
 **Size classes.** Workers are scheduled by size: S (< 100 MB), M (< 5 GB) and L (≥ 5 GB, mesh). Each class gets its own queue subscription and resource profile. An L mesh job requests 32–64 GB RAM and local NVMe scratch.
 

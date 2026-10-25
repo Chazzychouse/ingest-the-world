@@ -6,10 +6,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal, Self
 
-# `extracted`, or why there is nothing: no reader for the format, bytes that don't parse, or a
-# header that would take more than the byte budget to read. Kept in step with the database by
-# tests/test_items.py.
-Status = Literal["extracted", "unsupported", "unreadable", "over-budget"]
+# `extracted`, or why there is nothing: no reader for the format, bytes that don't parse, a
+# header that would take more than the byte budget to read, or a reader that crashed, hung or ran
+# out of memory (ING-8). Kept in step with the database by tests/test_items.py.
+Status = Literal["extracted", "unsupported", "unreadable", "over-budget", "failed"]
 type Json = str | int | float | bool | list[Json] | dict[str, Json] | None
 
 

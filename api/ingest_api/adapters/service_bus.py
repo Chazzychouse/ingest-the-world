@@ -7,6 +7,7 @@ from typing import Any, NoReturn, Self, cast
 
 from azure.identity import DefaultAzureCredential
 from azure.servicebus import (
+    AutoLockRenewer,
     ServiceBusClient,
     ServiceBusMessage,
     ServiceBusReceivedMessage,
@@ -68,20 +69,35 @@ def _id(message: ServiceBusReceivedMessage) -> str:
 
 
 class ServiceBusQueue:
-    """One queue, through one sender and one peek-lock receiver.
+    """One queue, through one sender and two peek-lock receivers: the queue's and its
+    dead-letter queue's.
 
     Use as a context manager, which owns the AMQP connection. Settling needs the SDK's message
-    object, so received messages are held by lock token until they are settled; a message
-    whose lock has expired is dropped from that table on the next receive.
+    object and the receiver it came from, so received messages are held by lock token until they
+    are settled; a message whose lock has expired is dropped from that table on the next receive.
+    With `max_lock_renewal_seconds`, a lock renewer keeps every held message locked until it is
+    settled or that long has passed (ING-10).
     """
 
-    def __init__(self, client: ServiceBusClient, queue_name: str, *, max_wait_seconds: float):
+    def __init__(
+        self,
+        client: ServiceBusClient,
+        queue_name: str,
+        *,
+        max_wait_seconds: float,
+        max_lock_renewal_seconds: float,
+    ):
         self._client = client
         self._queue_name = queue_name
         self._max_wait = max_wait_seconds
         self._sender: ServiceBusSender = client.get_queue_sender(queue_name)
         self._receiver: ServiceBusReceiver = client.get_queue_receiver(queue_name)
-        self._held: dict[str, ServiceBusReceivedMessage] = {}
+        self._dead_receiver: ServiceBusReceiver = client.get_queue_receiver(
+            queue_name, sub_queue=ServiceBusSubQueue.DEAD_LETTER
+        )
+        self._renewal = max_lock_renewal_seconds
+        self._renewer = AutoLockRenewer(max_lock_renewal_duration=max_lock_renewal_seconds)
+        self._held: dict[str, tuple[ServiceBusReceiver, ServiceBusReceivedMessage]] = {}
 
     @classmethod
     def connect(
@@ -91,6 +107,7 @@ class ServiceBusQueue:
         connection_string: str | None,
         namespace: str | None,
         max_wait_seconds: float,
+        max_lock_renewal_seconds: float,
     ) -> Self:
         """With a connection string (the emulator) it authenticates with the shared key in it.
         Otherwise it uses the process's Entra identity against `namespace`; set
@@ -101,12 +118,19 @@ class ServiceBusQueue:
             client = ServiceBusClient(namespace, DefaultAzureCredential())
         else:
             raise ValueError("set a queue connection string or namespace")
-        return cls(client, queue_name, max_wait_seconds=max_wait_seconds)
+        return cls(
+            client,
+            queue_name,
+            max_wait_seconds=max_wait_seconds,
+            max_lock_renewal_seconds=max_lock_renewal_seconds,
+        )
 
     def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_: object) -> None:
+        self._renewer.close()
+        self._dead_receiver.close()
         self._receiver.close()
         self._sender.close()
         self._client.close()
@@ -120,23 +144,36 @@ class ServiceBusQueue:
             _raise_translated(exc)
 
     def receive(self, max_messages: int = 1) -> list[Message]:
+        return self._receive(self._receiver, max_messages)
+
+    def receive_dead_letters(self, max_messages: int = 1) -> list[Message]:
+        return self._receive(self._dead_receiver, max_messages)
+
+    def _receive(self, receiver: ServiceBusReceiver, max_messages: int) -> list[Message]:
         self._forget_expired()
         try:
-            received = self._receiver.receive_messages(
+            received = receiver.receive_messages(
                 max_message_count=max_messages, max_wait_time=self._max_wait
             )
         except ServiceBusError as exc:
             _raise_translated(exc)
-        return [m for m in (self._accept(r) for r in received) if m is not None]
+        return [m for m in (self._accept(receiver, r) for r in received) if m is not None]
 
-    def _accept(self, received: ServiceBusReceivedMessage) -> Message | None:
+    def _accept(
+        self, receiver: ServiceBusReceiver, received: ServiceBusReceivedMessage
+    ) -> Message | None:
         """Holds a received message for settlement, or dead-letters it if it can't be read."""
         body = _decode(received)
         if body is None:
-            self._settle(lambda: self._receiver.dead_letter_message(received, UNREADABLE_BODY))
+            if receiver is self._dead_receiver:  # unreadable dead letters have nowhere to go
+                self._settle(lambda: receiver.complete_message(received))
+                return None
+            self._settle(lambda: receiver.dead_letter_message(received, UNREADABLE_BODY))
             return None
         token = str(received.lock_token)
-        self._held[token] = received
+        self._held[token] = (receiver, received)
+        if self._renewal > 0:
+            self._renewer.register(receiver, received, max_lock_renewal_duration=self._renewal)
         # The SDK passes on AMQP's delivery-count, the number of *earlier* failed deliveries; the
         # port counts this one too, as Service Bus's other SDKs do.
         attempt = (received.delivery_count or 0) + 1
@@ -145,15 +182,15 @@ class ServiceBusQueue:
     def _forget_expired(self) -> None:
         """Bounds the table: a consumer that never settles a message can't grow it forever."""
         now = datetime.now(UTC)
-        expired = [t for t, m in self._held.items() if (m.locked_until_utc or now) <= now]
+        expired = [t for t, (_, m) in self._held.items() if (m.locked_until_utc or now) <= now]
         for token in expired:
             del self._held[token]
 
-    def _take(self, message: Message) -> ServiceBusReceivedMessage:
-        received = self._held.pop(message.lock_token, None)
-        if received is None:
+    def _take(self, message: Message) -> tuple[ServiceBusReceiver, ServiceBusReceivedMessage]:
+        held = self._held.pop(message.lock_token, None)
+        if held is None:
             raise LockLost(message.id)
-        return received
+        return held
 
     def _settle(self, settle: Callable[[], None]) -> None:
         try:
@@ -162,16 +199,18 @@ class ServiceBusQueue:
             _raise_translated(exc)
 
     def complete(self, message: Message) -> None:
-        received = self._take(message)
-        self._settle(lambda: self._receiver.complete_message(received))
+        receiver, received = self._take(message)
+        self._settle(lambda: receiver.complete_message(received))
 
     def abandon(self, message: Message) -> None:
-        received = self._take(message)
-        self._settle(lambda: self._receiver.abandon_message(received))
+        receiver, received = self._take(message)
+        self._settle(lambda: receiver.abandon_message(received))
 
     def dead_letter(self, message: Message, *, reason: str) -> None:
-        received = self._take(message)
-        self._settle(lambda: self._receiver.dead_letter_message(received, reason))
+        receiver, received = self._take(message)
+        if receiver is self._dead_receiver:
+            raise LockLost(f"{message.id} is a dead letter already")
+        self._settle(lambda: receiver.dead_letter_message(received, reason))
 
     def peek_dead_letters(self, max_messages: int) -> list[DeadLetter]:
         dead_letters = self._client.get_queue_receiver(

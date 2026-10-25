@@ -86,3 +86,34 @@ def test_a_job_outcome_cannot_change(db):
             "UPDATE ingest.jobs SET stage = 'cataloged', reason = NULL WHERE blob_name = %s",
             (name,),
         )
+
+
+def _insert_item(db, upload_id: uuid.UUID, *, sha256: str, exempt: bool = False) -> None:
+    db.execute(
+        """
+        INSERT INTO catalog.items (id, collection_id, kind, media_type, filename, size_bytes,
+                                   sha256, raw_blob, marking, created_by, created_at,
+                                   extraction, extracted_bytes, predates_dedup)
+        VALUES (%s, 'site-survey-alpha', 'generic', 'application/octet-stream', 'f.bin', 1,
+                %s, %s, 'UNCLASSIFIED', 'sub-test', now(), 'unsupported', 0, %s)
+        """,
+        (upload_id, sha256, upload_id.hex, exempt),
+    )
+
+
+@pytest.mark.invariant("ING-9")
+def test_two_items_in_a_collection_cannot_share_a_checksum(db):
+    sha256 = uuid.uuid4().hex * 2
+    _insert_item(db, _upload(db, "site-survey-alpha"), sha256=sha256)
+
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        _insert_item(db, _upload(db, "site-survey-alpha"), sha256=sha256)
+
+
+@pytest.mark.invariant("ING-9")
+def test_no_new_item_can_claim_the_dedup_exemption(db):
+    sha256 = uuid.uuid4().hex * 2
+    _insert_item(db, _upload(db, "site-survey-alpha"), sha256=sha256)
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        _insert_item(db, _upload(db, "site-survey-alpha"), sha256=sha256, exempt=True)

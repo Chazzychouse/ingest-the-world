@@ -11,7 +11,7 @@ from psycopg import Connection
 from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
-from ingest_api.audit import AuditAction, Auditor, RequestContext
+from ingest_api.audit import Actor, AuditAction, Auditor, RequestContext
 from ingest_api.auth import AuthError, OidcVerifier, Principal, Role
 from ingest_api.ports import BlobSigner, Clock, Ids
 from ingest_api.settings import Settings
@@ -73,7 +73,7 @@ CurrentPrincipal = Annotated[Principal, Depends(current_principal)]
 
 
 def get_auditor(conn: Conn, ctx: Ctx, principal: CurrentPrincipal) -> Auditor:
-    return Auditor(conn, ctx, principal)
+    return Auditor(conn, ctx, Actor.of(principal))
 
 
 Audit = Annotated[Auditor, Depends(get_auditor)]

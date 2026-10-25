@@ -184,8 +184,8 @@ MUTANTS = [
     Mutant(
         "redelivery-decides-again",
         PIPELINE,
-        "return job.stage  # a duplicate or redelivery: the outcome stands (ING-1)",
-        "pass",
+        'outcome = job.stage if job.stage != "received" else decide(conn, p, event, upload)',
+        "outcome = decide(conn, p, event, upload)",
         # The duplicate finds its upload closed, "rejects" itself and discards the item's raw.
         ("ING-1", "ING-3", "ING-5"),
     ),
@@ -230,6 +230,67 @@ MUTANTS = [
         "    IF (SELECT rank FROM authz.markings WHERE code = NEW.marking) < (",
         "    IF false AND (SELECT rank FROM authz.markings WHERE code = NEW.marking) < (",
         ("ACC-3",),
+    ),
+    Mutant(
+        # Slice 3-4 review: a reader that crashed natively took the worker down on every
+        # delivery, and its version never reached an outcome.
+        "reader-crash-escapes-sandbox",
+        "ingest_api/adapters/process_sandbox.py",
+        "            return EXITED\n",
+        '            raise RuntimeError("the extraction child died")\n',
+        ("ING-8",),
+    ),
+    Mutant(
+        "last-delivery-not-given-up",
+        "ingest_api/worker/runner.py",
+        "        if message.delivery_count >= retry.max_deliveries:\n",
+        "        if False:\n",
+        ("ING-2",),
+    ),
+    Mutant(
+        "dead-letters-dropped-by-sweep",
+        "ingest_api/worker/runner.py",
+        "    return _give_up(connect, pipeline, event, jobs.Reason.DEAD_LETTERED)\n",
+        "    return Settlement.COMPLETE\n",
+        ("ING-2",),
+    ),
+    Mutant(
+        "message-locks-not-renewed",
+        "ingest_api/adapters/service_bus.py",
+        "        if self._renewal > 0:\n",
+        "        if False:\n",
+        ("ING-10",),
+    ),
+    Mutant(
+        "pipeline-outcome-not-audited",
+        PIPELINE,
+        "    if not audit:\n",
+        "    if True:\n",
+        ("ACC-5",),
+    ),
+    Mutant(
+        "duplicates-not-rejected",
+        "migrations/0007_dedup.sql",
+        "CREATE UNIQUE INDEX items_one_per_content ON catalog.items (collection_id, sha256)",
+        "CREATE INDEX items_one_per_content ON catalog.items (collection_id, sha256)",
+        ("ING-9",),
+    ),
+    Mutant(
+        # Found by the sample corpus: a COG cut short kept its header, so it was cataloged as
+        # extracted, with metadata for pixels that aren't there.
+        "truncated-tiff-extracted",
+        "ingest_api/worker/formats/raster.py",
+        "            _check_complete(dataset, source.size)\n",
+        "",
+        ("ING-6",),
+    ),
+    Mutant(
+        # Found by the sample corpus: every 3DEP and COPC tile's CRS was stored as pages of WKT.
+        "compound-crs-as-wkt",
+        "ingest_api/worker/formats/crs.py",
+        "    return _compound_code(crs, wkt) or wkt\n",
+        "    return wkt\n",
+        ("ING-6",),
     ),
     Mutant(
         "extraction-ignores-budget",

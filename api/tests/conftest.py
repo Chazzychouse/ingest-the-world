@@ -2,8 +2,10 @@ import json
 import os
 import uuid
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
 
 import psycopg
 import pytest
@@ -13,6 +15,7 @@ from hypothesis import HealthCheck, Phase, settings
 from psycopg import sql
 from pydantic import SecretStr
 
+from ingest_api.adapters.process_sandbox import Limits, ProcessSandbox
 from ingest_api.app import create_app
 from ingest_api.migrate import DEV_SEED, migrate, sql_file
 from ingest_api.settings import Settings
@@ -182,3 +185,71 @@ def auth(idp: TestIdp) -> Callable[[str], dict[str, str]]:
         return idp.bearer(f"sub-{user}", roles=USERS[user])
 
     return headers
+
+
+# Tight enough that the tests which hang or bloat a reader on purpose finish quickly.
+TEST_LIMITS = Limits(timeout_seconds=10.0, memory_bytes=1024 * 1024 * 1024)
+
+
+@pytest.fixture(scope="session")
+def sandbox() -> ProcessSandbox:
+    """The production sandbox: readers run in a child process, as the worker runs them."""
+    return ProcessSandbox(TEST_LIMITS)
+
+
+@dataclass(frozen=True, slots=True)
+class Landed:
+    upload_id: UUID
+    name: str
+
+
+@pytest.fixture
+def new_collection(client, auth) -> Callable[[], str]:
+    """Makes collections of the test's own, writable by Contributors, so its uploads never meet
+    another test's as duplicates (ING-9)."""
+
+    def make() -> str:
+        collection_id = f"t-{uuid.uuid4().hex[:12]}"
+        made = client.post(
+            "/collections", json={"id": collection_id, "title": "Test"}, headers=auth("alice")
+        )
+        assert made.status_code == 201, made.text
+        path = f"/collections/{collection_id}/grants/role/Contributor"
+        granted = client.put(path, json={"access": "write"}, headers=auth("alice"))
+        assert granted.status_code == 200, granted.text
+        return collection_id
+
+    return make
+
+
+@pytest.fixture
+def fresh_collection(new_collection) -> str:
+    return new_collection()
+
+
+@pytest.fixture
+def start(client, auth, db, fresh_collection) -> Callable[..., Landed]:
+    """Starts an upload as carol, into the test's own collection unless told otherwise, and
+    returns where its bytes go."""
+
+    def _start(
+        size: int,
+        *,
+        sha256: str | None = None,
+        filename: str = "ortho.tif",
+        collection: str | None = None,
+    ) -> Landed:
+        body = {
+            "collection_id": collection or fresh_collection,
+            "filename": filename,
+            "size_bytes": size,
+        }
+        if sha256:
+            body["sha256"] = sha256
+        response = client.post("/uploads", json=body, headers=auth("carol"))
+        assert response.status_code == 201, response.text
+        upload_id = response.json()["upload"]["id"]
+        row = db.execute("SELECT blob_name FROM ingest.uploads WHERE id = %s", (upload_id,))
+        return Landed(UUID(upload_id), row.fetchone()[0])
+
+    return _start

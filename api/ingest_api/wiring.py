@@ -50,6 +50,7 @@ def queue(settings: Settings, *, name: str | None = None) -> ServiceBusQueue:
         connection_string=connection.get_secret_value() if connection else None,
         namespace=settings.queue_namespace,
         max_wait_seconds=settings.queue_max_wait_seconds,
+        max_lock_renewal_seconds=settings.queue_lock_renewal_seconds,
     )
 
 

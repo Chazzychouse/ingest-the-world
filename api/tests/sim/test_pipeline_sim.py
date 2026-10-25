@@ -8,9 +8,9 @@ a faulty blob store (transient errors, writes whose acknowledgement is lost) and
 After every step it checks that catalog and storage agree (ING-5), that nothing flagged left
 quarantine (ING-4), that cataloged originals never change (ING-3), that no outcome ever
 changes or contradicts its bytes (ING-2), and that extraction kept to its budget (ING-6). At
-the end it turns faults off, replays dead letters as an operator would, drains the queue, and
-checks that every version reached exactly one outcome (ING-2); then it delivers every event
-again and checks nothing moved (ING-1).
+the end it turns faults off, drains the queue, sweeps the dead letters as the worker does (giving
+up their versions), and checks that every version reached exactly one outcome (ING-2); then it
+delivers every event again and checks nothing moved (ING-1).
 """
 
 import hashlib
@@ -32,9 +32,9 @@ from hypothesis.stateful import (
 
 from ingest_api.adapters.eicar_scanner import EICAR, EicarScanner
 from ingest_api.ports import Container
-from ingest_api.worker.extract import MAX_EXTRACT_BYTES
+from ingest_api.worker.extract import MAX_EXTRACT_BYTES, Sandbox
 from ingest_api.worker.pipeline import Pipeline
-from ingest_api.worker.runner import run_once
+from ingest_api.worker.runner import Retry, run_once, sweep_once
 from tests.conftest import make_app, reset_catalog
 from tests.fakes import Faults, MemoryBlobStore, SimClock, SimQueue, event_for
 from tests.invariants import check
@@ -50,6 +50,7 @@ payloads = st.one_of(
     st.binary(min_size=1, max_size=64).map(lambda b: b"II*\x00" + b),  # a "TIFF"
     st.binary(min_size=1, max_size=64),
     st.just(EICAR),
+    st.sampled_from([b"II*\x00same", b"same again"]),  # often uploaded twice: duplicates
 )
 faults = st.builds(
     Faults,
@@ -91,9 +92,17 @@ class Version:
 class PipelineMachine(RuleBasedStateMachine):
     uploads = Bundle("uploads")
 
-    def __init__(self, client: TestClient, db: psycopg.Connection, url: str, idp: TestIdp):
+    def __init__(
+        self,
+        client: TestClient,
+        db: psycopg.Connection,
+        url: str,
+        idp: TestIdp,
+        sandbox: Sandbox,
+    ):
         super().__init__()
         self.client, self.db, self.url, self.idp = client, db, url, idp
+        self.sandbox = sandbox
         reset_catalog(db)
         self.versions: dict[tuple[str, str], Version] = {}  # (name, etag), in commit order
         self.outcomes: dict[tuple[str, str], str] = {}  # first outcome seen per version
@@ -106,8 +115,11 @@ class PipelineMachine(RuleBasedStateMachine):
         self.clock = SimClock()
         self.faults = faults
         self.store = MemoryBlobStore(rng, faults)
-        self.queue = SimQueue(clock=self.clock, rng=rng, faults=faults, lock_seconds=60)
-        self.pipeline = Pipeline(self.store, EicarScanner(self.store), self.clock)
+        # Few deliveries, so faults alone exhaust some versions and the give-up paths run.
+        self.queue = SimQueue(
+            clock=self.clock, rng=rng, faults=faults, lock_seconds=60, max_delivery_count=3
+        )
+        self.pipeline = Pipeline(self.store, EicarScanner(self.store), self.clock, self.sandbox)
         return self._start_upload(COLLECTIONS[0], data, 0, "right")
 
     # -- browser and Event Grid ----------------------------------------------------------
@@ -174,7 +186,13 @@ class PipelineMachine(RuleBasedStateMachine):
 
     @rule(batch=st.integers(1, 3))
     def work(self, batch):
-        run_once(self.queue, lambda: psycopg.connect(self.url), self.pipeline, batch=batch)
+        run_once(
+            self.queue,
+            lambda: psycopg.connect(self.url),
+            self.pipeline,
+            retry=Retry(self.queue.max_delivery_count),
+            batch=batch,
+        )
 
     @rule()
     def locks_expire(self):
@@ -213,8 +231,43 @@ class PipelineMachine(RuleBasedStateMachine):
             check("ING-4", not self.store.content(RAW, name).startswith(EICAR), f"{name} raw")
 
     @invariant()
+    def every_outcome_is_audited_once(self):
+        rows = self.db.execute(
+            """
+            SELECT j.blob_name, j.etag, j.stage, count(e.id), min(e.action), min(e.actor_sub)
+            FROM ingest.jobs j
+            LEFT JOIN audit.events e ON e.request_id = j.blob_name || '@' || j.etag
+            WHERE j.stage <> 'received'
+            GROUP BY j.blob_name, j.etag, j.stage
+            """
+        ).fetchall()
+        for name, etag, stage, events, action, actor in rows:
+            key = f"{name}@{etag}"
+            check("ACC-5", events == 1, f"{key} is {stage} with {events} audit events")
+            check("ACC-5", actor == "system:pipeline", f"{key} audited as {actor}")
+            check("ACC-5", (action == "item.catalog") == (stage == "cataloged"), f"{key} {action}")
+
+    @invariant()
+    def one_item_per_content_per_collection(self):
+        rows = self.db.execute(
+            "SELECT collection_id, sha256, count(*) FROM catalog.items "
+            "GROUP BY collection_id, sha256 HAVING count(*) > 1"
+        ).fetchall()
+        check("ING-9", rows == [], f"items sharing a checksum in a collection: {rows}")
+
+    def _has_item_like(self, version: Version) -> bool:
+        """Whether another upload's item in this version's collection has its bytes."""
+        sha = hashlib.sha256(version.data).hexdigest()
+        row = self.db.execute(
+            "SELECT 1 FROM catalog.items i JOIN ingest.uploads u ON u.id = %s "
+            "WHERE i.collection_id = u.collection_id AND i.sha256 = %s AND i.id <> u.id",
+            (version.upload.id, sha),
+        ).fetchone()
+        return row is not None
+
+    @invariant()
     def outcomes_are_final_and_honest(self):
-        for key, (stage, _) in self._jobs().items():
+        for key, (stage, reason) in self._jobs().items():
             if stage == "received":
                 continue
             first = self.outcomes.setdefault(key, stage)
@@ -228,6 +281,8 @@ class PipelineMachine(RuleBasedStateMachine):
                 check("ING-4", version.infected, f"{key} quarantined but clean")
             if version.infected:
                 check("ING-4", stage != "cataloged", f"{key} infected yet cataloged")
+            if reason == "duplicate":
+                check("ING-9", self._has_item_like(version), f"{key} a duplicate of nothing")
 
     def teardown(self):
         if not hasattr(self, "store"):  # the run failed before `start`
@@ -241,18 +296,22 @@ class PipelineMachine(RuleBasedStateMachine):
         check("ING-1", self._snapshot() == before, "redelivering every event changed state")
 
     def _drain(self) -> None:
-        """Faults off; replay dead letters, as an operator would from the admin UI; run the
-        worker until the queue is empty."""
+        """Faults off; run the worker until the queue is empty, then sweep the dead letters, as
+        the worker does on a timer."""
         self.store.faults = self.queue.faults = Faults.none()
-        for dead in self.queue.dead_letters:
-            self.queue.send(dead.body)
-        self.queue.dead_letters.clear()
         for _ in range(MAX_DRAIN_ROUNDS):
             self.clock.advance(61)
             if len(self.queue) == 0:
                 break
             self.work(batch=3)
         check("ING-2", len(self.queue) == 0, "the queue did not drain with faults off")
+        for _ in range(MAX_DRAIN_ROUNDS):
+            if (
+                sweep_once(self.queue, lambda: psycopg.connect(self.url), self.pipeline, batch=3)
+                == 0
+            ):
+                break
+        check("ING-2", self.queue.dead_letters == [], "dead letters left after the sweep")
 
     def _check_every_version_settled(self) -> None:
         jobs = self._jobs()
@@ -274,9 +333,9 @@ class PipelineMachine(RuleBasedStateMachine):
         return self._jobs(), self._items(), uploads, storage
 
 
-@pytest.mark.invariant("ING-1", "ING-2", "ING-3", "ING-4", "ING-5", "ING-6")
-def test_pipeline_simulation(fresh_database, idp):
+@pytest.mark.invariant("ACC-5", "ING-1", "ING-2", "ING-3", "ING-4", "ING-5", "ING-6", "ING-9")
+def test_pipeline_simulation(fresh_database, idp, sandbox):
     url = fresh_database()
     with TestClient(make_app(url, idp)) as client, psycopg.connect(url, autocommit=True) as db:
         # Hypothesis accepts any factory here; its annotation only says `type`.
-        run_state_machine_as_test(lambda: PipelineMachine(client, db, url, idp))  # pyright: ignore[reportArgumentType]
+        run_state_machine_as_test(lambda: PipelineMachine(client, db, url, idp, sandbox))  # pyright: ignore[reportArgumentType]

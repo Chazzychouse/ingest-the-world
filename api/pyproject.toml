@@ -32,6 +32,9 @@ dev = [
 pythonpath = ["."]
 testpaths = ["tests"]
 filterwarnings = ["error"]  # Power of 10, rule 10: warnings fail the build
+# The end-to-end suite needs the running stack and the sample cache; `make e2e` selects it.
+addopts = ["-m", "not e2e"]
+markers = ["e2e: drives the running local stack (make up) with the sample corpus"]
 
 [tool.ruff]
 line-length = 100

@@ -218,3 +218,9 @@ class Queue(Protocol):
     def peek_dead_letters(self, max_messages: int) -> list[DeadLetter]:
         """The oldest dead-lettered messages, without removing them."""
         ...
+
+    def receive_dead_letters(self, max_messages: int = 1) -> list[Message]:
+        """Up to `max_messages` dead letters, locked as `receive` locks messages. Completing one
+        removes it from the dead-letter queue; abandoning it leaves it there to be received
+        again. Dead letters are never dead-lettered further."""
+        ...
