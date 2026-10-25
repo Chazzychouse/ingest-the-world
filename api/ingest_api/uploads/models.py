@@ -43,6 +43,9 @@ class Upload(UploadIn):
 
     id: UUID
     status: UploadStatus
+    # Why it was quarantined (the scanner's signature) or rejected (a `worker.jobs.Reason`,
+    # such as `duplicate`); null while pending, once cataloged, or if abandoned.
+    reason: str | None
     marking: str  # the collection's: everything uploaded into it carries at least this
     marking_rank: int
     created_by: str

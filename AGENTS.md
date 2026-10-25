@@ -60,7 +60,8 @@ api/ingest_api/
   collections/   collections and their grants: models.py, store.py, routes.py
   uploads/       upload sessions and their signed URLs: models.py, store.py, routes.py
   items/         cataloged files: kinds.py (what a file is), metadata.py (what its header
-                 says), store.py (only the pipeline writes)
+                 says), models.py (STAC Items and searches), store.py (only the pipeline
+                 writes; reads and keyset search), routes.py (/items/{id}, /search)
   worker/        the pipeline: pipeline.py (one blob version's step machine), classify.py,
                  extract.py (budgeted header reads), formats/ (one reader per format family),
                  jobs.py (its store), runner.py (queue -> settle, dead-letter sweep),
@@ -186,8 +187,11 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
   random actors and operations, checking invariants after every step.
   `test_catalog_sim.py` covers catalog changes and upload sessions (ACC-*);
   `test_pipeline_sim.py` runs the worker over a faulty queue and blob store, then drains and
-  replays every event (ING-1 to ING-5).
+  replays every event (ING-1 to ING-5); `test_search_sim.py` pages through random searches
+  while items arrive, against its own model of the filters (SRCH-1, SRCH-2).
 - `api/tests/strategies.py`: the shared Hypothesis strategies (actors, grantees, names).
+- `api/tests/items.py`: catalogs items straight through the pipeline's stores, for read and
+  search tests that don't need bytes.
 - `api/tests/fakes.py`: seeded, fault-injecting implementations of the ports, and
   `CrashAfter`, which interrupts a job after its N-th storage call (`test_pipeline.py`).
 - `api/tests/contracts/`: one behavioural suite per port, run against the fake *and* the real

@@ -73,6 +73,18 @@ def test_a_read_grant_does_not_allow_uploading(client, auth, db):
     )
 
 
+@pytest.mark.invariant("ACC-7")
+def test_a_write_grant_without_the_contributor_role_does_not_allow_uploading(
+    client, auth, fresh_collection
+):
+    path = f"/collections/{fresh_collection}/grants/user/sub-bob"
+    assert client.put(path, json={"access": "write"}, headers=auth("alice")).status_code == 200
+
+    response = _start(client, auth, "bob", fresh_collection)
+
+    assert (response.status_code, response.json()) == (403, {"detail": NO_WRITE_ACCESS})
+
+
 @pytest.mark.invariant("ACC-2")
 def test_uploading_into_an_unreadable_collection_looks_like_a_missing_one(client, auth):
     hidden = _start(client, auth, "bob", "range-ops-cui")

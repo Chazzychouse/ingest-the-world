@@ -47,6 +47,9 @@ UPLOAD_ROUTES = "ingest_api/uploads/routes.py"
 UPLOADS_SQL = "migrations/0003_uploads.sql"
 ITEMS_SQL = "migrations/0004_items_and_jobs.sql"
 PIPELINE = "ingest_api/worker/pipeline.py"
+ITEM_ROUTES = "ingest_api/items/routes.py"
+ITEM_STORE = "ingest_api/items/store.py"
+SEARCH_SQL = "migrations/0008_item_search.sql"
 READ_GRANTED = (
     "      AND c.id IN (SELECT authz.granted_collections(subject, roles, groups, 'read'))"
 )
@@ -305,6 +308,58 @@ MUTANTS = [
         "        if self.fetched + length > MAX_EXTRACT_BYTES:",
         "        if False and self.fetched + length > MAX_EXTRACT_BYTES:",
         ("ING-6",),
+    ),
+    Mutant(
+        # An item marked above its collection is shown to anyone who can read the collection.
+        "item-marking-ignored",
+        SEARCH_SQL,
+        "    WHERE authz.cleared_for(m.code, clearances)\n",
+        "    WHERE true\n",
+        ("ACC-1",),
+    ),
+    Mutant(
+        "unreadable-item-is-forbidden",
+        ITEM_ROUTES,
+        "            status_code=status.HTTP_404_NOT_FOUND,",
+        "            status_code=status.HTTP_403_FORBIDDEN if store.marking_of(conn, item_id)\n"
+        "            else status.HTTP_404_NOT_FOUND,",
+        ("ACC-2",),
+    ),
+    Mutant(
+        "search-unaudited",
+        ITEM_ROUTES,
+        "    auditor.allowed(\n        AuditAction.ITEM_SEARCH,",
+        "    (lambda *_, **__: None)(\n        AuditAction.ITEM_SEARCH,",
+        ("ACC-5",),
+    ),
+    Mutant(
+        # Items sharing a timestamp with the end of a page are skipped.
+        "cursor-without-tiebreak",
+        ITEM_STORE,
+        '"(i.created_at, i.id) < (%s, %s)"',
+        '"(i.created_at < %s OR %s IS NULL)"',
+        ("SRCH-2",),
+    ),
+    Mutant(
+        "cursor-repeats-last-item",
+        ITEM_STORE,
+        '"(i.created_at, i.id) < (%s, %s)"',
+        '"(i.created_at, i.id) <= (%s, %s)"',
+        ("SRCH-2",),
+    ),
+    Mutant(
+        "bbox-wraps-the-wrong-way",
+        ITEM_STORE,
+        "    if west <= east:\n        return [bbox]",
+        "    if True:\n        return [bbox]",
+        ("SRCH-1",),
+    ),
+    Mutant(
+        "search-terms-unescaped",
+        ITEM_STORE,
+        '    return f"%{escaped}%"',
+        '    return f"%{term}%"',
+        ("SRCH-1",),
     ),
 ]
 

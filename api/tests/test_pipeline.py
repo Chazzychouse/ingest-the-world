@@ -7,10 +7,13 @@ send, and checks the job, the upload, the item and every container afterwards.
 import contextlib
 import hashlib
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 import psycopg
 import pytest
+from fastapi.testclient import TestClient
 
 from ingest_api.adapters.azure_blob import AzureBlobStore
 from ingest_api.adapters.eicar_scanner import EICAR, EicarScanner
@@ -83,6 +86,36 @@ def _audits(db, props: BlobProps) -> list[tuple[str, str, str, str | None, str |
     ).fetchall()
 
 
+@dataclass(frozen=True)
+class Served:
+    """What the API makes of an upload once the pipeline has decided it."""
+
+    client: TestClient
+    auth: Callable[[str], dict[str, str]]
+
+    def item(self, upload_id: UUID) -> dict[str, Any]:
+        response = self.client.get(f"/items/{upload_id}", headers=self.auth("carol"))
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def anywhere(self, upload_id: UUID) -> bool:
+        """Whether any item route serves it, even to an Admin cleared for CUI."""
+        admin = self.auth("alice")
+        read = self.client.get(f"/items/{upload_id}", headers=admin)
+        search = self.client.post("/search", json={"ids": [str(upload_id)]}, headers=admin)
+        assert search.status_code == 200, search.text
+        return read.status_code != 404 or bool(search.json()["features"])
+
+    def reason(self, upload_id: UUID) -> str | None:
+        """Why the pipeline decided as it did, as the uploader sees it."""
+        return self.client.get(f"/uploads/{upload_id}", headers=self.auth("carol")).json()["reason"]
+
+
+@pytest.fixture
+def served(client, auth) -> Served:
+    return Served(client, auth)
+
+
 def _raw(store: BlobStore, name: str) -> bytes | None:
     props = store.head(RAW, name)
     return None if props is None else store.read_range(RAW, name, 0, props.size)
@@ -103,24 +136,22 @@ def test_a_clean_upload_is_cataloged_from_its_raw_copy(store, start, database_ur
 
 
 @pytest.mark.invariant("ING-6")
-def test_a_geotiff_is_cataloged_with_its_footprint(store, start, database_url, db, tmp_path, work):
+def test_a_geotiff_is_served_with_its_footprint(store, start, db, tmp_path, work, served):
     data = geotiff(tmp_path)
     landed = start(len(data))
     props = store.put(LANDING, landed.name, data)
 
     assert work(store, props) == "cataloged"
-    row = db.execute(
-        """
-        SELECT extraction, crs, ST_XMin(footprint), ST_YMax(footprint), extracted_bytes,
-               properties ->> 'raster:band_count'
-        FROM catalog.items WHERE id = %s
-        """,
-        (landed.upload_id,),
-    ).fetchone()
-    assert row is not None
-    extraction, crs, west, north, extracted, bands = row
-    assert (extraction, crs, bands) == ("extracted", UTM_13N, "1")
+    item = served.item(landed.upload_id)
+    properties = item["properties"]
+    assert (properties["ingest:extraction"], properties["proj:code"]) == ("extracted", UTM_13N)
+    assert (properties["ingest:kind"], properties["raster:band_count"]) == ("raster", 1)
+    west, _, _, north = item["bbox"]
     assert (round(west, 3), round(north, 3)) == (DENVER[0], round(DENVER[3], 3))
+    assert item["geometry"]["type"] == "Polygon"
+    extracted = db.execute(
+        "SELECT extracted_bytes FROM catalog.items WHERE id = %s", (landed.upload_id,)
+    ).fetchone()[0]
     assert extracted <= MAX_EXTRACT_BYTES < len(data)
 
 
@@ -164,7 +195,7 @@ def test_redelivering_an_event_changes_nothing(store, start, database_url, db, w
 
 
 @pytest.mark.invariant("ING-4")
-def test_an_infected_upload_is_quarantined_and_never_promoted(store, start, database_url, db, work):
+def test_an_infected_upload_is_quarantined_and_never_served(store, start, db, work, served):
     infected = EICAR + b"\n"
     landed = start(len(infected), filename="invoice.pdf")
     props = store.put(LANDING, landed.name, infected)
@@ -172,7 +203,9 @@ def test_an_infected_upload_is_quarantined_and_never_promoted(store, start, data
     assert work(store, props) == "quarantined"
     assert _job(db, props) == ("quarantined", "EICAR-Test-File")
     assert _status(db, landed.upload_id) == "quarantined"
+    assert served.reason(landed.upload_id) == "EICAR-Test-File"
     assert _item(db, landed.upload_id) is None
+    check("ING-4", not served.anywhere(landed.upload_id), "a quarantined file is served")
     assert store.head(RAW, landed.name) is None
     held = store.head(QUARANTINE, f"{props.etag}/{landed.name}")
     assert held is not None and held.metadata[SOURCE_ETAG] == props.etag
@@ -332,8 +365,8 @@ def test_a_stray_blob_is_audited_without_a_marking(store, db, work):
     ]
 
 
-@pytest.mark.invariant("ING-9", "ING-5")
-def test_the_same_bytes_twice_in_one_collection_are_a_duplicate(store, start, db, work):
+@pytest.mark.invariant("ING-9", "ING-5", "ING-4")
+def test_the_same_bytes_twice_in_one_collection_are_a_duplicate(store, start, db, work, served):
     first, second = start(len(TIFF)), start(len(TIFF))
     work(store, store.put(LANDING, first.name, TIFF))
     item = _item(db, first.upload_id)
@@ -342,7 +375,10 @@ def test_the_same_bytes_twice_in_one_collection_are_a_duplicate(store, start, db
     assert work(store, props) == "rejected"
     check("ING-9", _job(db, props) == ("rejected", Reason.DUPLICATE), f"{_job(db, props)}")
     assert _status(db, second.upload_id) == "rejected"
+    assert served.reason(second.upload_id) == Reason.DUPLICATE
     assert (_item(db, first.upload_id), _item(db, second.upload_id)) == (item, None)
+    check("ING-4", not served.anywhere(second.upload_id), "a rejected file is served")
+    assert served.anywhere(first.upload_id)
     check("ING-5", store.head(RAW, second.name) is None, "the duplicate's raw copy was kept")
     assert store.head(LANDING, second.name) is None
 

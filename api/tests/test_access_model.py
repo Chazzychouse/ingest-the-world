@@ -69,12 +69,12 @@ def _ids(conn, query, principal: Principal) -> set[str]:
     return {row[0] for row in conn.execute(query, authz.principal_args(principal))}
 
 
-def _compare(invariant: str, what: str, actor: Actor, got: set[str], expected: set[str]) -> None:
+def _compare[T](invariant: str, what: str, actor: Actor, got: set[T], expected: set[T]) -> None:
     check(
         invariant,
         got == expected,
-        f"{actor} {what}: SQL allows {sorted(got - expected)}, model allows "
-        f"{sorted(expected - got)} that SQL refuses",
+        f"{actor} {what}: SQL allows {sorted(got - expected, key=str)}, model allows "
+        f"{sorted(expected - got, key=str)} that SQL refuses",
     )
 
 
@@ -88,6 +88,14 @@ def test_sql_predicates_match_the_model(tx, idp, world, actor_list):
             principal = _principal(idp, actor)
             readable = _ids(tx, authz.READABLE_IDS, principal)
             _compare("ACC-1", "reading", actor, readable, full.readable(actor))
+            scopes = set(tx.execute(authz.READABLE_SCOPES, authz.principal_args(principal)))
+            expected = {
+                (cid, marking)
+                for cid in full.collections
+                for marking in full.markings
+                if full.can_read_item(actor, cid, marking)
+            }
+            _compare("ACC-1", "reading items", actor, scopes, expected)
             writable = _ids(tx, authz.WRITABLE_IDS, principal)
             _compare("ACC-7", "writing", actor, writable, full.writable(actor))
             for cid in full.collections:

@@ -1,9 +1,9 @@
 """Access rules, asked of the database.
 
 The rules live in SQL (`authz.cleared_for`, `authz.readable_collections`,
-`authz.writable_collections`) so that every query, whichever route issues it, filters through
-the same definition (ACC-1, ACC-7). This module only passes a `Principal` to those functions;
-it never re-implements them.
+`authz.readable_scopes`, `authz.writable_collections`) so that every query, whichever route
+issues it, filters through the same definition (ACC-1, ACC-7). This module only passes a
+`Principal` to those functions; it never re-implements them.
 """
 
 from dataclasses import dataclass
@@ -15,6 +15,10 @@ from ingest_api.auth import Principal
 
 # Use as `WHERE c.id IN ({READABLE_IDS})` with `principal_args(principal)` as parameters.
 READABLE_IDS = "SELECT authz.readable_collections(%s, %s, %s, %s)"
+# The (collection, marking) pairs whose items `principal_args(principal)` may read: use as
+# `WHERE (i.collection_id, i.marking) IN ({READABLE_SCOPES})`. An item can be marked above its
+# collection (ACC-3), so a readable collection doesn't make all its items readable.
+READABLE_SCOPES = "SELECT collection_id, marking FROM authz.readable_scopes(%s, %s, %s, %s)"
 # The collections `principal_args(principal)` may upload into; always a subset of READABLE_IDS.
 WRITABLE_IDS = "SELECT authz.writable_collections(%s, %s, %s, %s)"
 
@@ -28,7 +32,7 @@ class Marking:
 
 
 def principal_args(principal: Principal) -> tuple[str, list[str], list[str], list[str]]:
-    """The parameters for `READABLE_IDS`, in order."""
+    """The parameters for `READABLE_IDS`, `READABLE_SCOPES` and `WRITABLE_IDS`, in order."""
     return (
         principal.subject,
         sorted(principal.effective_roles),

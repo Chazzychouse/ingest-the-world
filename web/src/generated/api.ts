@@ -111,6 +111,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/items/{item_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Item */
+        get: operations["get_item_items__item_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -122,6 +139,27 @@ export interface paths {
         get: operations["me_me_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search
+         * @description One page of readable items matching every filter, newest first. Follow the `next` link,
+         *     merging its body into this request, for the following page.
+         */
+        post: operations["search_search_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -186,6 +224,17 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Asset */
+        Asset: {
+            /** Href */
+            href: string;
+            /** Roles */
+            roles: string[];
+            /** Title */
+            title: string;
+            /** Type */
+            type: string;
+        };
         /**
          * Collection
          * @description A collection as returned by the API; built straight from `store.CollectionRow`.
@@ -279,6 +328,78 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** ItemCollection */
+        ItemCollection: {
+            /** Features */
+            features: components["schemas"]["StacItem"][];
+            /** Links */
+            links: components["schemas"]["NextLink"][];
+            /** Numberreturned */
+            numberReturned: number;
+            /**
+             * Type
+             * @default FeatureCollection
+             * @constant
+             */
+            type: "FeatureCollection";
+        };
+        /**
+         * ItemProperties
+         * @description Core fields plus whatever the header said (`proj:shape`, `raster:bands`, `pc:count`,
+         *     `mesh:triangles`, ...), which is why other keys are allowed.
+         */
+        ItemProperties: {
+            /**
+             * Created
+             * Format: date-time
+             */
+            created: string;
+            /**
+             * Datetime
+             * Format: date-time
+             */
+            datetime: string;
+            /** File:Checksum */
+            "file:checksum": string;
+            /** File:Size */
+            "file:size": number;
+            /**
+             * Ingest:Extraction
+             * @enum {string}
+             */
+            "ingest:extraction": "extracted" | "unsupported" | "unreadable" | "over-budget" | "failed";
+            "ingest:kind": components["schemas"]["Kind"];
+            /** Ingest:Marking */
+            "ingest:marking": string;
+            /** Ingest:Marking Rank */
+            "ingest:marking_rank": number;
+            /** Ingest:Media Type */
+            "ingest:media_type": string;
+            /** Keywords */
+            keywords: string[];
+            /** Proj:Code */
+            "proj:code": string | null;
+            /** Proj:Wkt2 */
+            "proj:wkt2": string | null;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * Kind
+         * @enum {string}
+         */
+        Kind: "raster" | "vector" | "pointcloud" | "mesh" | "tabular" | "document" | "generic";
+        /** Link */
+        Link: {
+            /** Href */
+            href: string;
+            /** Rel */
+            rel: string;
+            /** Type */
+            type: string;
+        };
         /** Marking */
         Marking: {
             /** Banner Color */
@@ -304,6 +425,58 @@ export interface components {
             /** Username */
             username: string | null;
         };
+        /** MultiPolygon */
+        MultiPolygon: {
+            /** Coordinates */
+            coordinates: [
+                number,
+                number
+            ][][][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "MultiPolygon";
+        };
+        /** NextBody */
+        NextBody: {
+            /** Token */
+            token: string;
+        };
+        /**
+         * NextLink
+         * @description STAC's link to the next page of a POST search: repeat the request with `body` merged
+         *     into it.
+         */
+        NextLink: {
+            body: components["schemas"]["NextBody"];
+            /** Href */
+            href: string;
+            /**
+             * Merge
+             * @default true
+             * @constant
+             */
+            merge: true;
+            /**
+             * Method
+             * @default POST
+             * @constant
+             */
+            method: "POST";
+            /**
+             * Rel
+             * @default next
+             * @constant
+             */
+            rel: "next";
+            /**
+             * Type
+             * @default application/geo+json
+             * @constant
+             */
+            type: "application/geo+json";
+        };
         /** OidcClientConfig */
         OidcClientConfig: {
             /** Authority */
@@ -312,6 +485,32 @@ export interface components {
             client_id: string;
             /** Scope */
             scope: string;
+        };
+        /** Point */
+        Point: {
+            /** Coordinates */
+            coordinates: [
+                number,
+                number
+            ];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "Point";
+        };
+        /** Polygon */
+        Polygon: {
+            /** Coordinates */
+            coordinates: [
+                number,
+                number
+            ][][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "Polygon";
         };
         /** Retention */
         "Retention-Input": {
@@ -336,6 +535,78 @@ export interface components {
             retain_days: number | null;
             /** Tiering */
             tiering: components["schemas"]["TierStep"][];
+        };
+        /**
+         * SearchIn
+         * @description Every filter given must hold for every result (SRCH-1); a list filter that is empty
+         *     matches nothing.
+         */
+        SearchIn: {
+            /** Bbox */
+            bbox?: [
+                number,
+                number,
+                number,
+                number
+            ] | null;
+            /** Collections */
+            collections?: string[] | null;
+            /** Datetime */
+            datetime?: string | null;
+            /** Ids */
+            ids?: string[] | null;
+            /** Intersects */
+            intersects?: (components["schemas"]["Point"] | components["schemas"]["Polygon"] | components["schemas"]["MultiPolygon"]) | null;
+            /** Kinds */
+            kinds?: components["schemas"]["Kind"][] | null;
+            /**
+             * Limit
+             * @default 20
+             */
+            limit: number;
+            /** Q */
+            q?: string | null;
+            /** Token */
+            token?: string | null;
+        };
+        /** StacItem */
+        StacItem: {
+            /** Assets */
+            assets: {
+                [key: string]: components["schemas"]["Asset"];
+            };
+            /** Bbox */
+            bbox?: [
+                number,
+                number,
+                number,
+                number
+            ] | null;
+            /** Collection */
+            collection: string;
+            geometry: components["schemas"]["Polygon"] | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Links */
+            links: components["schemas"]["Link"][];
+            properties: components["schemas"]["ItemProperties"];
+            /** Stac Extensions */
+            stac_extensions: string[];
+            /**
+             * Stac Version
+             * @default 1.1.0
+             * @constant
+             */
+            stac_version: "1.1.0";
+            /**
+             * Type
+             * @default Feature
+             * @constant
+             */
+            type: "Feature";
         };
         /** TierStep */
         TierStep: {
@@ -374,6 +645,8 @@ export interface components {
             marking: string;
             /** Marking Rank */
             marking_rank: number;
+            /** Reason */
+            reason: string | null;
             /** Sha256 */
             sha256: string | null;
             /** Size Bytes */
@@ -664,6 +937,37 @@ export interface operations {
             };
         };
     };
+    get_item_items__item_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StacItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     me_me_get: {
         parameters: {
             query?: never;
@@ -680,6 +984,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+        };
+    };
+    search_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemCollection"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
