@@ -17,7 +17,7 @@ const range = fc
 const mapView = fc.record({
   lon: fc.integer({ min: -18_000_000, max: 18_000_000 }).map((n) => n / 1e5),
   lat: fc.integer({ min: -9_000_000, max: 9_000_000 }).map((n) => n / 1e5),
-  zoom: fc.integer({ min: 0, max: 240 }).map((n) => n / 10),
+  zoom: fc.integer({ min: -20, max: 240 }).map((n) => n / 10),
 })
 
 const state: fc.Arbitrary<SearchUrl> = fc

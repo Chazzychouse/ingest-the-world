@@ -15,7 +15,8 @@ export type SearchUrl = {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const DAY = /^\d{4}-\d{2}-\d{2}$/
-const MAX_ZOOM = 24
+// MapLibre's zoom range; below 0 the world is smaller than the map, as on a phone.
+const [MIN_ZOOM, MAX_ZOOM] = [-2, 24]
 
 const round = (value: number, places: number) => Number(value.toFixed(places))
 
@@ -54,7 +55,7 @@ function distinct<T extends string>(values: string[], keep: (value: string) => v
 function view(text: string | null): View | undefined {
   const [zoom, lat, lon] = (text ?? '').split('/').map(Number)
   if (zoom === undefined || lat === undefined || lon === undefined) return undefined
-  if (!(zoom >= 0 && zoom <= MAX_ZOOM && Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) return undefined
+  if (!(zoom >= MIN_ZOOM && zoom <= MAX_ZOOM && Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) return undefined
   return { lon, lat, zoom }
 }
 

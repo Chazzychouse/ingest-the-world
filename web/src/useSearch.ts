@@ -6,6 +6,9 @@ import { nextPage, PAGE_SIZE } from './search'
 // The most results kept on screen; past this, narrowing the search beats scrolling.
 export const MAX_RESULTS = 20 * PAGE_SIZE
 
+// One empty list, so a search with nothing loaded yet reports the same items every render.
+const NONE: StacItem[] = []
+
 /** The pages loaded so far for one search, named by its first request. */
 type Loaded = { key: string; items: StacItem[]; next: SearchIn | undefined; error?: string }
 
@@ -71,7 +74,7 @@ export function useSearch(body: SearchIn, { enabled }: { enabled: boolean }): Se
     )
   }, [request, key, fetchPage])
 
-  const items = loaded?.items ?? []
+  const items = loaded?.items ?? NONE
   return {
     items,
     more: current?.next !== undefined && items.length < MAX_RESULTS,
