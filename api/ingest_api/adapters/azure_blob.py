@@ -3,7 +3,7 @@
 import time
 from collections.abc import Iterable, Iterator
 from datetime import datetime, timedelta
-from typing import NoReturn
+from typing import BinaryIO, NoReturn
 from urllib.parse import quote, urlsplit
 
 from azure.core.exceptions import (
@@ -156,6 +156,29 @@ class AzureBlobStore:
                 content_settings=ContentSettings(content_type=content_type),
             )
             return _props(container, blob.get_blob_properties())
+        except (HttpResponseError, ServiceRequestError) as exc:
+            _raise_translated(exc)
+
+    def create(
+        self,
+        container: str,
+        name: str,
+        data: BinaryIO,
+        *,
+        content_type: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> BlobProps:
+        blob = self._service.get_blob_client(container, name)
+        try:
+            blob.upload_blob(
+                data,
+                overwrite=False,  # committed with If-None-Match: *, so a taken name is refused
+                metadata=metadata or {},
+                content_settings=ContentSettings(content_type=content_type),
+            )
+            return _props(container, blob.get_blob_properties())
+        except ResourceExistsError as exc:
+            raise BlobExists(f"{container}/{name}") from exc
         except (HttpResponseError, ServiceRequestError) as exc:
             _raise_translated(exc)
 

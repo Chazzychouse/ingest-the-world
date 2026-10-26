@@ -20,6 +20,18 @@ resource "azurerm_servicebus_queue" "ingest" {
   default_message_ttl                  = "P7D"
 }
 
+# Derive requests, relayed from the database's outbox by the pipeline worker (M2 slice 3).
+resource "azurerm_servicebus_queue" "derive" {
+  name         = "derive"
+  namespace_id = azurerm_servicebus_namespace.main.id
+
+  # A render can take minutes; the worker renews the lock while it runs.
+  lock_duration                        = "PT5M"
+  max_delivery_count                   = 5
+  dead_lettering_on_message_expiration = true
+  default_message_ttl                  = "P7D"
+}
+
 resource "azurerm_role_assignment" "workload_servicebus" {
   for_each             = toset(["Azure Service Bus Data Receiver", "Azure Service Bus Data Sender"])
   scope                = azurerm_servicebus_namespace.main.id

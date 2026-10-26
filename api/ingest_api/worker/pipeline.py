@@ -3,6 +3,7 @@
     landing ──scan──► infected ──copy──► quarantine/                     quarantined
        │
        └──copy──► raw/ ──hash, classify, extract──► catalog.items        cataloged
+                                                    + a derive request (worker/outbox.py)
        (wrong size, wrong checksum, superseded, no or closed upload)     rejected
 
 Every step can fail midway and be retried from the top on redelivery, so each is idempotent:
@@ -36,7 +37,7 @@ from ingest_api.ports import (
 )
 from ingest_api.uploads import store as uploads
 from ingest_api.uploads.models import Reason
-from ingest_api.worker import jobs
+from ingest_api.worker import jobs, outbox
 from ingest_api.worker.classify import HEAD_BYTES, classify
 from ingest_api.worker.extract import Budget, Reader, Sandbox, extract
 from ingest_api.worker.formats import READERS
@@ -267,6 +268,8 @@ def _catalog(
         items.insert_from_upload(conn, upload.id, contents, created_at=p.clock.now())
     except items.Duplicate:
         return _reject(conn, p, event, Reason.DUPLICATE, closes=upload)
+    # In the outcome's transaction, so every cataloged item is derived and nothing else is.
+    outbox.request_derive(conn, upload.id, now=p.clock.now())
     return _finish(conn, p, event, "cataloged", closes=upload)
 
 

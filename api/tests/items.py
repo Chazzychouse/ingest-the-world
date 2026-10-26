@@ -1,6 +1,7 @@
 """Cataloging items straight into the database, through the stores the pipeline writes with, for
 tests about reading and searching them."""
 
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -27,6 +28,8 @@ class NewItem:
     # where a new item sorts against a page cursor replays exactly.
     id: uuid.UUID | None = None
     captured: Captured | None = None
+    # Its original's bytes, for tests that read them; without them it has a checksum of its own.
+    content: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,13 +39,16 @@ class Cataloged:
     id: uuid.UUID
     marking: str
     item: NewItem
+    raw_blob: str  # where its original is in `raw/`
 
 
 def catalog(db: psycopg.Connection, new: NewItem) -> Cataloged:
     """Catalogs an item as the pipeline would, from an upload of its own."""
     upload_id = new.id or uuid.uuid4()
+    content = new.content
+    size = 1 if content is None else len(content)
     upload = UploadIn(
-        collection_id=new.collection, filename=new.filename, size_bytes=1, tags=list(new.tags)
+        collection_id=new.collection, filename=new.filename, size_bytes=size, tags=list(new.tags)
     )
     uploads.insert(
         db,
@@ -54,12 +60,14 @@ def catalog(db: psycopg.Connection, new: NewItem) -> Cataloged:
     )
     status = "extracted" if new.bbox or new.captured else "unsupported"
     metadata = Metadata(status, 0, bbox=new.bbox, captured=new.captured)
-    sha256 = uuid.uuid4().hex * 2
-    contents = items.Contents(new.kind, "application/octet-stream", sha256, 1, metadata)
+    sha256 = uuid.uuid4().hex * 2 if content is None else hashlib.sha256(content).hexdigest()
+    contents = items.Contents(new.kind, "application/octet-stream", sha256, size, metadata)
     items.insert_from_upload(db, upload_id, contents, created_at=new.created_at)
     uploads.close(db, upload_id, "cataloged")
     if new.raise_to is not None:
         db.execute("UPDATE catalog.items SET marking = %s WHERE id = %s", (new.raise_to, upload_id))
-    row = db.execute("SELECT marking FROM catalog.items WHERE id = %s", (upload_id,)).fetchone()
+    row = db.execute(
+        "SELECT marking, raw_blob FROM catalog.items WHERE id = %s", (upload_id,)
+    ).fetchone()
     assert row is not None
-    return Cataloged(upload_id, row[0], new)
+    return Cataloged(upload_id, row[0], new, row[1])

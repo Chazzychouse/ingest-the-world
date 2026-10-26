@@ -125,10 +125,13 @@ def fresh_database() -> Iterator[Callable[[], str]]:
 
 
 def reset_catalog(conn: psycopg.Connection) -> None:
-    """Puts collections and grants back to the seed, with no uploads, jobs or items. Audit
+    """Puts collections and grants back to the seed, with no uploads, jobs, items or assets. Audit
     events stay: they're append-only, and checks read them as a delta from a high-water mark."""
     with conn.transaction():
         conn.execute("DELETE FROM ingest.jobs")
+        conn.execute("DELETE FROM ingest.outbox")
+        conn.execute("DELETE FROM ingest.derive_jobs")
+        conn.execute("DELETE FROM catalog.assets")
         conn.execute("DELETE FROM catalog.items")
         conn.execute("DELETE FROM ingest.uploads")
         conn.execute("DELETE FROM authz.collection_grants")

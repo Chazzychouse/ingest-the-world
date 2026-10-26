@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -66,6 +67,12 @@ class Settings(BaseSettings):
     # How long a held message's lock is renewed while its job runs (ING-10). Covers copying and
     # hashing the largest file the platform takes; 0 turns renewal off.
     queue_lock_renewal_seconds: float = Field(default=3600.0, ge=0, le=86400)
+
+    # The queue derive requests are relayed to from the outbox, and that the derive stage takes
+    # them from (`python -m ingest_api.worker --derive`).
+    derive_queue_name: str = "derive"
+    # Where the derive stage renders; each render gets, and then removes, a directory under it.
+    derive_scratch_dir: Path = Path("/tmp/ingest-derive")  # noqa: S108 - a container-local default
 
     # Messages a worker takes per receive. It handles them one at a time.
     worker_batch: int = Field(default=4, gt=0, le=32)

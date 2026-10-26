@@ -7,11 +7,12 @@ a faulty blob store (transient errors, writes whose acknowledgement is lost) and
 
 After every step it checks that catalog and storage agree (ING-5), that nothing flagged left
 quarantine (ING-4), that cataloged originals never change (ING-3), that no outcome ever changes
-or contradicts its bytes (ING-2), and that extraction kept to its budget (ING-6). At the end it
-turns faults off, drains the queue, sweeps the dead letters as the worker does (giving up their
-versions), and checks that every version reached exactly one outcome (ING-2) and that the API
-serves exactly the cataloged ones as items (ING-4); then it delivers every event again and
-checks nothing moved (ING-1).
+or contradicts its bytes (ING-2), that extraction kept to its budget (ING-6), and that every
+item, and nothing else, was handed to the derive stage once (ING-11). At the end it turns faults
+off, drains the queue, sweeps the dead letters as the worker does (giving up their versions), and
+checks that every version reached exactly one outcome (ING-2) and that the API serves exactly the
+cataloged ones as items (ING-4); then it delivers every event again and checks nothing moved
+(ING-1).
 """
 
 import hashlib
@@ -250,6 +251,12 @@ class PipelineMachine(RuleBasedStateMachine):
             check("ACC-5", (action == "item.catalog") == (stage == "cataloged"), f"{key} {action}")
 
     @invariant()
+    def every_item_and_nothing_else_is_handed_to_derive_once(self):
+        rows = self.db.execute("SELECT body ->> 'item_id' FROM ingest.outbox").fetchall()
+        requested = sorted(item_id for (item_id,) in rows)
+        check("ING-11", requested == sorted(self._items()), f"derive requests {requested}")
+
+    @invariant()
     def one_item_per_content_per_collection(self):
         rows = self.db.execute(
             "SELECT collection_id, sha256, count(*) FROM catalog.items "
@@ -351,7 +358,9 @@ class PipelineMachine(RuleBasedStateMachine):
         return self._jobs(), self._items(), uploads, storage
 
 
-@pytest.mark.invariant("ACC-5", "ING-1", "ING-2", "ING-3", "ING-4", "ING-5", "ING-6", "ING-9")
+@pytest.mark.invariant(
+    "ACC-5", "ING-1", "ING-2", "ING-3", "ING-4", "ING-5", "ING-6", "ING-9", "ING-11"
+)
 def test_pipeline_simulation(fresh_database, idp, sandbox):
     url = fresh_database()
     with TestClient(make_app(url, idp)) as client, psycopg.connect(url, autocommit=True) as db:

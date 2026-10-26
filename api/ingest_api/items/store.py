@@ -1,7 +1,8 @@
 """SQL for catalog items. Typed rows out; no HTTP.
 
-Only the pipeline creates items. An item's id is its upload's, and its original lives in
-`raw/` under the same name the upload landed under (`uploads.store.blob_name`).
+Only the pipeline creates items, and only the derive stage adds their assets. An item's id is its
+upload's, and its original lives in `raw/` under the same name the upload landed under
+(`uploads.store.blob_name`).
 
 Every read filters through `authz.READABLE_SCOPES`, so the database decides which items a
 principal may see, for a single item and a search alike (ACC-1).
@@ -88,6 +89,66 @@ def _insert(
             Jsonb(dict(metadata.properties)),
             Range(when.start, when.end, "[]") if when else None,
             upload_id,
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Original:
+    """What the derive stage needs to know about an item's original in `raw/`."""
+
+    id: UUID
+    collection_id: str
+    kind: Kind
+    media_type: str
+    raw_blob: str
+    size_bytes: int
+    sha256: str
+
+
+def original_of(conn: Connection[TupleRow], item_id: UUID) -> Original | None:
+    """The item's original regardless of access, for the derive stage; None if there is no such
+    item, as for anything quarantined or rejected (ING-11)."""
+    with conn.cursor(row_factory=class_row(Original)) as cur:
+        return cur.execute(
+            "SELECT id, collection_id, kind, media_type, raw_blob, size_bytes, sha256 "
+            "FROM catalog.items WHERE id = %s",
+            (item_id,),
+        ).fetchone()
+
+
+@dataclass(frozen=True, slots=True)
+class NewAsset:
+    item_id: UUID
+    role: str
+    recipe_version: int
+    media_type: str
+    blob_name: str  # in `derived/`
+    size_bytes: int
+    sha256: str
+    lineage: dict[str, Any]  # STAC `processing:` fields
+
+
+def record_asset(conn: Connection[TupleRow], asset: NewAsset, *, created_at: datetime) -> None:
+    """Records a derivative whose blob is already written. Recording it again is a no-op: there
+    is one asset per (item, role, recipe version) (ING-12)."""
+    conn.execute(
+        """
+        INSERT INTO catalog.assets (item_id, role, recipe_version, media_type, blob_name,
+                                    size_bytes, sha256, lineage, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (item_id, role, recipe_version) DO NOTHING
+        """,
+        (
+            asset.item_id,
+            asset.role,
+            asset.recipe_version,
+            asset.media_type,
+            asset.blob_name,
+            asset.size_bytes,
+            asset.sha256,
+            Jsonb(asset.lineage),
+            created_at,
         ),
     )
 

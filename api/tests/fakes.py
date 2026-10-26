@@ -107,6 +107,14 @@ class MemoryBlobStore:
         self._maybe_fail()
         return self._write(container, name, data, content_type, metadata)
 
+    def create(self, container, name, data, *, content_type=None, metadata=None) -> BlobProps:
+        self._maybe_fail()
+        if (container, name) in self._blobs:
+            raise BlobExists(f"{container}/{name}")
+        props = self._write(container, name, data.read(), content_type, metadata)
+        self._maybe_lose_ack()
+        return props
+
     def content(self, container: str, name: str) -> bytes:
         """The blob's bytes, for checks; not part of the port and never faulty or counted."""
         return self._blobs[(container, name)][1]
@@ -294,6 +302,12 @@ class CrashAfter:
 
     def put(self, container, name, data, *, content_type=None, metadata=None) -> BlobProps:
         props = self._store.put(container, name, data, content_type=content_type, metadata=metadata)
+        return self._after(props)
+
+    def create(self, container, name, data, *, content_type=None, metadata=None) -> BlobProps:
+        props = self._store.create(
+            container, name, data, content_type=content_type, metadata=metadata
+        )
         return self._after(props)
 
     def head(self, container, name) -> BlobProps | None:

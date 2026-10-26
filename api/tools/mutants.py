@@ -51,6 +51,7 @@ PIPELINE = "ingest_api/worker/pipeline.py"
 ITEM_ROUTES = "ingest_api/items/routes.py"
 ITEM_STORE = "ingest_api/items/store.py"
 SEARCH_SQL = "migrations/0008_item_search.sql"
+DERIVE = "ingest_api/worker/derive.py"
 READ_GRANTED = (
     "      AND c.id IN (SELECT authz.granted_collections(subject, roles, groups, 'read'))"
 )
@@ -261,7 +262,7 @@ MUTANTS = [
     Mutant(
         "dead-letters-dropped-by-sweep",
         "ingest_api/worker/runner.py",
-        "    return _give_up(connect, pipeline, event, Reason.DEAD_LETTERED)\n",
+        "    return _give_up(connect, _ingest(pipeline, event, Reason.DEAD_LETTERED))\n",
         "    return Settlement.COMPLETE\n",
         ("ING-2",),
     ),
@@ -385,6 +386,55 @@ MUTANTS = [
         "    \" && tstzrange(%s, %s, '[]')\")",
         # Returns items off the filter (SRCH-1) and misses ones on it (SRCH-2).
         ("SRCH-1", "SRCH-2"),
+    ),
+    Mutant(
+        # Two versions of a recipe share a blob: the newer claims the older's derivative.
+        "derivative-name-ignores-version",
+        DERIVE,
+        "/{recipe.role}/v{recipe.version}{recipe.suffix}",
+        "/{recipe.role}{recipe.suffix}",
+        ("ING-12",),
+    ),
+    Mutant(
+        # Looks the original up by upload, so a request naming a rejected upload is derived.
+        "derive-reads-uploads-not-items",
+        ITEM_STORE,
+        '            "SELECT id, collection_id, kind, media_type, raw_blob, size_bytes, sha256 "\n'
+        '            "FROM catalog.items WHERE id = %s",',
+        "            \"SELECT u.id, u.collection_id, coalesce(i.kind, 'generic') AS kind, \"\n"
+        "            \"coalesce(i.media_type, '') AS media_type, u.blob_name AS raw_blob, \"\n"
+        "            \"u.size_bytes, coalesce(i.sha256, u.sha256, '') AS sha256 \"\n"
+        '            "FROM ingest.uploads u LEFT JOIN catalog.items i ON i.id = u.id "\n'
+        '            "WHERE u.id = %s",',
+        ("ING-11",),
+    ),
+    Mutant(
+        # Found by the derive simulation: a write whose acknowledgement was lost, then retries
+        # running out, left a blob in derived/ that no asset or job accounted for.
+        "give-up-orphans-a-written-derivative",
+        DERIVE,
+        "written = d.store.head(DERIVED, blob_name(source.collection_id, source.item_id, recipe))",
+        "written = None",
+        ("ING-12",),
+    ),
+    Mutant(
+        # Records the asset whether or not its blob was written.
+        "asset-recorded-without-its-blob",
+        DERIVE,
+        "        try:\n"
+        '            with path.open("rb") as data:\n'
+        "                return d.store.create(",
+        "        written = BlobProps(DERIVED, name, size, '', recipe.media_type, metadata)\n"
+        "        try:\n"
+        '            with path.open("rb") as data:\n'
+        "                d.store.create(DERIVED, name, data, metadata=metadata)\n"
+        "        except StorageError:\n"
+        "            pass\n"
+        "        return written\n"
+        "        try:\n"
+        '            with path.open("rb") as data:\n'
+        "                return d.store.create(",
+        ("ING-12",),
     ),
 ]
 

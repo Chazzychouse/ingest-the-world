@@ -4,6 +4,7 @@ If the fake drifts from real Blob Storage, the simulator stops telling the truth
 suite is what keeps them honest. New BlobStore behaviour gets a test here first.
 """
 
+import io
 import uuid
 
 import pytest
@@ -115,3 +116,22 @@ def test_copy_never_overwrites(store, name):
     with pytest.raises(BlobExists):
         store.copy((C, name), (C, f"{name}.copy"), if_match=source.etag)
     assert store.head(C, f"{name}.copy") == existing
+
+
+def test_create_streams_a_new_blob(store, name):
+    created = store.create(
+        C, name, io.BytesIO(b"made"), content_type="image/png", metadata={"k": "v"}
+    )
+
+    assert store.head(C, name) == created
+    assert (created.size, created.content_type, created.metadata) == (4, "image/png", {"k": "v"})
+    assert store.read_range(C, name, 0, 10) == b"made"
+
+
+def test_create_never_overwrites(store, name):
+    existing = store.put(C, name, b"first")
+
+    with pytest.raises(BlobExists):
+        store.create(C, name, io.BytesIO(b"second"))
+    assert store.head(C, name) == existing
+    assert store.read_range(C, name, 0, 10) == b"first"

@@ -196,25 +196,30 @@ the Service Bus emulator.
 
 ### ING-7 Derivatives are rebuildable
 
-Status: planned (M2)
+Status: enforced
 
 Deleting every derivative and rerunning derive yields equivalent assets: the same roles, media
 types and lineage, with equal checksums where the recipe is deterministic, ignoring timestamps.
+Checked at the end of the derive simulation, which deletes every derivative and asks again.
 
-### ING-11 Deriving never changes an outcome
+### ING-11 Deriving follows cataloging and never changes it
 
-Status: planned (M2)
+Status: enforced
 
-A derive job only adds assets to a cataloged item. It never changes the item's identity,
-marking or outcome, and never runs on a version that was quarantined or rejected (ING-4).
+Every cataloged item, and nothing else, is handed to the derive stage, by the transaction that
+catalogs it. A derive job only adds assets to a cataloged item: it never changes the item or its
+original, and never runs on a version that was quarantined or rejected (ING-4), which has no
+item. Checked by the pipeline simulation (the hand-off) and the derive simulation (the rest).
 
 ### ING-12 One asset per role and recipe
 
-Status: planned (M2)
+Status: enforced
 
-However often a derive job is redelivered or interrupted, an item ends with at most one asset
-per `(role, recipe_version)`, and every asset row and its blob in `derived/` agree (ING-1 and
-ING-5, extended to derivatives).
+However often a derive job is redelivered or interrupted, it reaches one outcome, `derived` or
+`failed`, which never changes; an item ends with at most one asset per `(role,
+recipe_version)`; every asset row and its blob in `derived/` agree; and every blob there has an
+asset or an unfinished job (ING-1, ING-2 and ING-5, extended to derivatives). Holds after every
+step of the derive simulation, including those that fail midway.
 
 ## Lifecycle
 
