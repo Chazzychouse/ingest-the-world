@@ -21,6 +21,7 @@ from psycopg import Connection
 from psycopg.rows import TupleRow
 
 from ingest_api.events import BlobCreated, InvalidEvent, parse_blob_created
+from ingest_api.items.models import DeriveReason
 from ingest_api.ports import Clock, Container, LockLost, Message, Queue, StorageError
 from ingest_api.uploads.models import Reason
 from ingest_api.worker import derive, jobs
@@ -164,7 +165,7 @@ def _derive_request(message: Message) -> DeriveRequest | None:
         return None
 
 
-def _derive(deriver: Deriver, request: DeriveRequest, reason: derive.Reason) -> Work:
+def _derive(deriver: Deriver, request: DeriveRequest, reason: DeriveReason) -> Work:
     """Deriving an item, whose unfinished derivatives fail with `reason` if it has to be given
     up."""
     item_id = request.item_id
@@ -184,7 +185,7 @@ def handle_derive(message: Message, connect: Connect, deriver: Deriver, retry: R
     request = _derive_request(message)
     if request is None:
         return Settlement.DEAD_LETTER
-    work = _derive(deriver, request, derive.Reason.RETRIES_EXHAUSTED)
+    work = _derive(deriver, request, DeriveReason.RETRIES_EXHAUSTED)
     return _attempt(message, work, connect, deriver.clock, retry)
 
 
@@ -192,7 +193,7 @@ def sweep_derive(message: Message, connect: Connect, deriver: Deriver) -> Settle
     request = _derive_request(message)
     if request is None:
         return Settlement.COMPLETE
-    return _give_up(connect, _derive(deriver, request, derive.Reason.DEAD_LETTERED))
+    return _give_up(connect, _derive(deriver, request, DeriveReason.DEAD_LETTERED))
 
 
 # -- queues -----------------------------------------------------------------------------------

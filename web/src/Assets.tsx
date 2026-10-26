@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { ApiError, getApi, useApi, type Asset, type AssetUrl, type StacItem } from './api'
+import { ApiError, getApi, useApi, type Asset, type AssetUrl, type Marking, type StacItem } from './api'
 import { bytes } from './format'
 
 // The asset key of an item's original; every other asset is a derivative, keyed by its role.
@@ -31,8 +31,9 @@ function ordered(item: StacItem): [string, Asset][] {
   )
 }
 
-/** An item's files, each downloaded through a link the API signs at the moment it's asked for. */
-export function Files({ item }: { item: StacItem }) {
+/** An item's files, each downloaded through a link the API signs at the moment it's asked for,
+ * and each carrying the item's marking: a derivative is marked as its original is. */
+export function Files({ item, marking }: { item: StacItem; marking: Marking }) {
   const token = useAuth().user?.access_token
   const [error, setError] = useState<string>()
   const download = (asset: Asset) => {
@@ -53,6 +54,9 @@ export function Files({ item }: { item: StacItem }) {
               {key === ORIGINAL ? 'Original' : asset.title}
             </button>
             <span className="meta">
+              <span className="chip" style={{ background: marking.banner_color }}>
+                {marking.label}
+              </span>
               {asset.type.split(';')[0]} · {bytes(asset['file:size'])}
               {asset.roles.includes('cloud-optimized') && ' · cloud-optimized'}
             </span>

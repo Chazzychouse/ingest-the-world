@@ -16,9 +16,11 @@ const DOTS = 'centres'
 // Below this zoom a footprint can be too small to see or click, so its centre is marked too.
 const DOTS_UNTIL = 6
 const [BLUE, AMBER] = ['#1f5f8b', '#e0a100']
-const LAYERS = ['fill', 'dots', 'others-fill'] // the layers a pointer picks items from
-// Every match's footprint, from the API's vector tiles (layer `footprints`), under the results.
+const LAYERS = ['fill', 'dots', 'others-fill', 'others-dots'] // the layers a pointer picks items from
+// Every match's footprint, from the API's vector tiles (layer `footprints`), under the results. A
+// footprint too small for its tile comes as a point, so every match shows at low zoom.
 const OTHERS = 'others'
+const POINTS = ['==', ['geometry-type'], 'Point'] as maplibregl.FilterSpecification
 const GREY = '#5d6662'
 // Past this zoom the tiles are stretched rather than fetched again.
 const OTHERS_MAX_ZOOM = 14
@@ -30,6 +32,7 @@ type Props = {
   items: StacItem[]
   footprintTiles: string | undefined // every match's footprints, as vector tiles
   preview: Preview | undefined // a raster to draw, from the tiler
+  previewOpacity: number
   selected: string | undefined
   hovered: string | undefined
   onSelect: (id: string) => void
@@ -99,7 +102,7 @@ function bounds([west, south, east, north]: Bbox): LngLatBoundsLike {
 }
 
 /** The search map: footprints of the results, kept in step with the viewport. */
-export function MapView({ items, footprintTiles, preview, selected, hovered, onSelect, onHover, onViewport, initialView, fit }: Props) {
+export function MapView({ items, footprintTiles, preview, previewOpacity, selected, hovered, onSelect, onHover, onViewport, initialView, fit }: Props) {
   const token = useAuth().user?.access_token
   // Tile requests go out long after a render; each carries whichever token is current.
   const tokenRef = useRef(token)
@@ -161,6 +164,14 @@ export function MapView({ items, footprintTiles, preview, selected, hovered, onS
         source: OTHERS,
         'source-layer': 'footprints',
         paint: { 'line-color': GREY, 'line-width': 0.75, 'line-opacity': 0.6 },
+      })
+      m.addLayer({
+        id: 'others-dots',
+        type: 'circle',
+        source: OTHERS,
+        'source-layer': 'footprints',
+        filter: POINTS,
+        paint: { 'circle-color': GREY, 'circle-radius': 3, 'circle-opacity': 0.6, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1 },
       })
       m.addSource(SOURCE, { type: 'geojson', data: footprints([]) })
       m.addSource(DOTS, { type: 'geojson', data: centres([]) })
@@ -225,11 +236,17 @@ export function MapView({ items, footprintTiles, preview, selected, hovered, onS
   }, [ready, footprintTiles])
 
   const tilejson = preview?.tilejson
+  // Read when the layer is made; changes after that are applied to it in place.
+  const opacityRef = useRef(previewOpacity)
+  useEffect(() => {
+    opacityRef.current = previewOpacity
+    if (ready && map.current?.getLayer(PREVIEW)) map.current.setPaintProperty(PREVIEW, 'raster-opacity', previewOpacity)
+  }, [ready, previewOpacity])
   useEffect(() => {
     const m = map.current
     if (!ready || !m || !tilejson) return
     m.addSource(PREVIEW, { type: 'raster', url: tilejson, tileSize: 256 })
-    m.addLayer({ id: PREVIEW, type: 'raster', source: PREVIEW }, 'others-fill')
+    m.addLayer({ id: PREVIEW, type: 'raster', source: PREVIEW, paint: { 'raster-opacity': opacityRef.current } }, 'others-fill')
     return () => {
       if (m.getLayer(PREVIEW)) m.removeLayer(PREVIEW)
       if (m.getSource(PREVIEW)) m.removeSource(PREVIEW)

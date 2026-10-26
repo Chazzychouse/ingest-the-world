@@ -37,11 +37,12 @@ from hypothesis.stateful import (
 )
 
 from ingest_api.items.kinds import Kind
+from ingest_api.items.models import DeriveReason
 from ingest_api.ports import Container
 from ingest_api.uploads import store as uploads
 from ingest_api.uploads.models import UploadIn
 from ingest_api.worker import outbox
-from ingest_api.worker.derive import Deriver, Reason, blob_name
+from ingest_api.worker.derive import Deriver, blob_name
 from ingest_api.worker.recipe import Recipe
 from ingest_api.worker.runner import Retry, derive_once, sweep_derive_once
 from tests.conftest import reset_catalog
@@ -56,7 +57,7 @@ NOW = datetime(2026, 1, 1, tzinfo=UTC)
 MAX_DRAIN_ROUNDS = 200
 RELAY_LIMIT = 3
 # Outcomes that say the attempts ran out, not what the original makes: a rebuild may differ.
-TRANSIENT = {Reason.RETRIES_EXHAUSTED, Reason.DEAD_LETTERED}
+TRANSIENT = {DeriveReason.RETRIES_EXHAUSTED, DeriveReason.DEAD_LETTERED}
 
 originals = st.one_of(
     st.binary(min_size=1, max_size=48),

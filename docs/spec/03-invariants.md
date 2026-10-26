@@ -248,6 +248,8 @@ An item is marked settled, and its upload reports `ready`, only while every deri
 to it has an outcome: none is in flight, however often its request is redelivered or a derive
 stage dies midway. Once the derive queue drains, every item is settled, so no upload reports
 `deriving` for ever. Holds after every step of the derive simulation, and after it drains.
+The item says the same (`ingest:derivatives`), and lists as failed (`ingest:derivative_failures`)
+only derivatives it lacks: a role whose newest recipe failed but an older one made is not missing.
 
 ## Lifecycle
 

@@ -22,6 +22,7 @@ export type UploadIn = Schemas['UploadIn']
 export type Upload = Schemas['Upload']
 export type UploadPage = Schemas['UploadPage']
 export type Reason = Schemas['Reason']
+export type DeriveReason = Schemas['DeriveReason']
 export type UploadSession = Schemas['UploadSession']
 
 type State<T> = { data?: T; error?: ApiError; loading: boolean }

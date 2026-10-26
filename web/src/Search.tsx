@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useApi, type Collection, type StacItem } from './api'
 import { Files, Thumbnail } from './Assets'
+import { derivativeNotes } from './derivatives'
 import { bytes } from './format'
 import { MapView } from './MapView'
 import { itemMarking } from './markings'
@@ -14,9 +15,11 @@ import { MAX_RESULTS, useSearch } from './useSearch'
 // Shown first in an item's details; the rest follow alphabetically.
 const CORE = ['datetime', 'start_datetime', 'end_datetime', 'created', 'ingest:kind', 'ingest:media_type', 'file:size', 'proj:code', 'ingest:extraction']
 // Shown elsewhere in the details, or only meaningful to the banner.
-const HIDDEN = ['title', 'keywords', 'ingest:marking', 'ingest:marking_rank']
+const HIDDEN = ['title', 'keywords', 'ingest:marking', 'ingest:marking_rank', 'ingest:derivatives', 'ingest:derivative_failures']
 // How long typing pauses before the text is searched.
 const TYPING_MS = 300
+// How opaque a raster preview starts: enough to read, with the basemap still showing through.
+const PREVIEW_OPACITY = 0.85
 
 function toggle<T>(values: T[], value: T): T[] {
   return values.includes(value) ? values.filter((v) => v !== value) : [...values, value]
@@ -158,20 +161,59 @@ function FilterPanel({ collections, filters, onChange }: FilterProps) {
   )
 }
 
+type PreviewProps = {
+  previewing: boolean
+  error: string | undefined
+  opacity: number
+  onPreview: (on: boolean) => void
+  onOpacity: (opacity: number) => void
+}
+
+/** Whether the item's raster is drawn on the map, and how opaquely. */
+function PreviewControls({ previewing, error, opacity, onPreview, onOpacity }: PreviewProps) {
+  return (
+    <div className="preview-controls">
+      <label className="check">
+        <input type="checkbox" checked={previewing} onChange={(e) => onPreview(e.target.checked)} />
+        Show the raster on the map
+      </label>
+      {previewing && !error && (
+        <label className="opacity">
+          Opacity
+          <input
+            type="range"
+            min={0.1}
+            max={1}
+            step={0.05}
+            value={opacity}
+            onChange={(e) => onOpacity(Number(e.target.value))}
+          />
+          <output>{Math.round(opacity * 100)}%</output>
+        </label>
+      )}
+      {previewing && error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
 type DetailsProps = {
   item: StacItem
   collections: Collection[]
-  previewing: boolean
-  previewError: string | undefined
+  preview: Omit<PreviewProps, 'onPreview'>
   onPreview: (on: boolean) => void
   onZoom: (bbox: Bbox) => void
   onBack: () => void
 }
 
-function ItemDetails({ item, collections, previewing, previewError, onPreview, onZoom, onBack }: DetailsProps) {
+function ItemDetails({ item, collections, preview, onPreview, onZoom, onBack }: DetailsProps) {
   const [copied, setCopied] = useState(false)
   const marking = itemMarking(item, collections)
   const bbox = item.bbox
+  const notes = derivativeNotes(item)
   const props = item.properties as Record<string, unknown>
   const rest = Object.keys(props)
     .filter((k) => !CORE.includes(k) && !HIDDEN.includes(k))
@@ -216,18 +258,15 @@ function ItemDetails({ item, collections, previewing, previewError, onPreview, o
           {copied ? 'Link copied' : 'Copy link'}
         </button>
       </div>
-      {previewable(item) && (
-        <label className="check">
-          <input type="checkbox" checked={previewing} onChange={(e) => onPreview(e.target.checked)} />
-          Show the raster on the map
-        </label>
+      {previewable(item) && <PreviewControls {...preview} onPreview={onPreview} />}
+      {notes.length > 0 && (
+        <ul className="notes">
+          {notes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
       )}
-      {previewing && previewError && (
-        <p className="error" role="alert">
-          {previewError}
-        </p>
-      )}
-      <Files item={item} />
+      <Files item={item} marking={marking} />
       <dl>
         {[...CORE, ...rest]
           .filter((k) => props[k] !== undefined && props[k] !== null)
@@ -336,6 +375,7 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
   const [hovered, setHovered] = useState<string | undefined>(undefined)
   // The item whose raster is drawn on the map; one at a time, and only while it's selected.
   const [previewing, setPreviewing] = useState<string | undefined>(undefined)
+  const [previewOpacity, setPreviewOpacity] = useState(PREVIEW_OPACITY)
   const [fit, setFit] = useState<{ bbox: Bbox } | undefined>(undefined)
   const [filtersOpen, setFiltersOpen] = useState(narrowing(initial.filters) > 0)
   // A link to an item without a map view shows the item once it loads.
@@ -418,9 +458,17 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
             key={item.id}
             item={item}
             collections={collections}
-            previewing={previewing === item.id}
-            previewError={preview.error}
-            onPreview={(on) => setPreviewing(on ? item.id : undefined)}
+            preview={{
+              previewing: previewing === item.id,
+              error: preview.error,
+              opacity: previewOpacity,
+              onOpacity: setPreviewOpacity,
+            }}
+            onPreview={(on) => {
+              setPreviewing(on ? item.id : undefined)
+              // The raster is drawn where its footprint is, which may be off the map by now.
+              if (on && item.bbox) setFit({ bbox: item.bbox })
+            }}
             onZoom={(bbox) => setFit({ bbox })}
             onBack={() => setSelected(undefined)}
           />
@@ -472,6 +520,7 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
         items={shown}
         footprintTiles={footprintTiles}
         preview={preview.preview}
+        previewOpacity={previewOpacity}
         selected={selected}
         hovered={hovered}
         onSelect={select}

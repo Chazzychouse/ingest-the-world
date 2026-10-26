@@ -22,7 +22,6 @@ import tempfile
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from enum import StrEnum
 from functools import cache, partial
 from pathlib import Path
 from typing import Any
@@ -32,6 +31,7 @@ from psycopg import Connection
 from psycopg.rows import TupleRow
 
 from ingest_api.items import store as items
+from ingest_api.items.models import DeriveReason
 from ingest_api.ports import BlobExists, BlobProps, BlobStore, Clock, Container, StorageError
 from ingest_api.worker import jobs
 from ingest_api.worker.pipeline import Busy
@@ -49,15 +49,6 @@ MAX_OUTPUT_BYTES = 2 * 1024**3
 MAX_RECIPES = 32
 # The original's copy in an item's scratch directory; each recipe renders in one beside it.
 ORIGINAL = "original"
-
-
-class Reason(StrEnum):
-    """Why a derive job failed."""
-
-    TOO_LARGE = "too-large"
-    UNRENDERABLE = "unrenderable"
-    RETRIES_EXHAUSTED = "retries-exhausted"
-    DEAD_LETTERED = "dead-lettered"
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +86,7 @@ def derive(conn: Connection[TupleRow], d: Deriver, item_id: UUID) -> dict[str, j
 
 
 def give_up(
-    conn: Connection[TupleRow], d: Deriver, item_id: UUID, reason: Reason
+    conn: Connection[TupleRow], d: Deriver, item_id: UUID, reason: DeriveReason
 ) -> dict[str, jobs.DeriveStage]:
     """Ends every derivative of the item that has no outcome yet, so nothing is retried forever:
     one an earlier attempt wrote before it failed is kept, the rest fail with `reason`. Raises
@@ -192,12 +183,12 @@ def _run(
     if job.stage != "received":
         return job.stage  # a redelivery: the outcome stands (ING-12)
     if source.size > d.max_source_bytes:
-        return _fail(conn, d, job, Reason.TOO_LARGE)
+        return _fail(conn, d, job, DeriveReason.TOO_LARGE)
     name = blob_name(source.collection_id, source.item_id, recipe)
     try:
         blob = d.store.head(DERIVED, name) or _render(d, source, recipe, original(), name)
     except Unrenderable:
-        return _fail(conn, d, job, Reason.UNRENDERABLE)
+        return _fail(conn, d, job, DeriveReason.UNRENDERABLE)
     return _keep(conn, d, source, recipe, job, blob)
 
 
@@ -232,7 +223,7 @@ def _keep(
 
 
 def _fail(
-    conn: Connection[TupleRow], d: Deriver, job: jobs.DeriveJobRow, reason: Reason
+    conn: Connection[TupleRow], d: Deriver, job: jobs.DeriveJobRow, reason: DeriveReason
 ) -> jobs.DeriveStage:
     jobs.finish_derive(conn, job, "failed", reason=reason, now=d.clock.now())
     conn.commit()

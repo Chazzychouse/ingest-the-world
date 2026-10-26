@@ -50,8 +50,8 @@ _SELECT_READABLE = f"""
            u.blob_name, u.status,
            CASE WHEN u.status = 'pending' AND running.attempts IS NULL THEN 'awaiting-bytes'
                 WHEN u.status = 'pending' THEN 'processing'
-                WHEN u.status = 'cataloged' AND settled.item_id IS NULL THEN 'deriving'
-                WHEN u.status = 'cataloged' THEN 'ready' END AS stage,
+                -- A cataloged upload's item has the upload's id (ING-13).
+                WHEN u.status = 'cataloged' THEN ingest.derivatives(u.id) END AS stage,
            coalesce(running.attempts, 0) AS attempts,
            CASE WHEN u.status = 'rejected' THEN decided.reason END AS reason,
            CASE WHEN u.status = 'quarantined' THEN decided.reason END AS signature,
@@ -69,8 +69,6 @@ _SELECT_READABLE = f"""
         WHERE upload_id = u.id AND stage = u.status
         ORDER BY updated_at DESC LIMIT 1
     ) decided ON true
-    -- A cataloged upload's item has the upload's id; it is ready once its derivatives settle.
-    LEFT JOIN ingest.derive_settled settled ON settled.item_id = u.id
     JOIN catalog.collections c ON c.id = u.collection_id
     JOIN authz.markings m ON m.code = c.marking
     WHERE u.collection_id IN ({authz.READABLE_IDS})

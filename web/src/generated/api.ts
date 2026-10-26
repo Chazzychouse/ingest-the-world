@@ -451,6 +451,12 @@ export interface components {
             title: string;
         };
         /**
+         * DeriveReason
+         * @description Why a derive job failed.
+         * @enum {string}
+         */
+        DeriveReason: "too-large" | "unrenderable" | "retries-exhausted" | "dead-lettered";
+        /**
          * Filters
          * @description What a search or a footprint map asks for. Every filter given must hold for every item
          *     shown (SRCH-1); a list filter that is empty matches nothing.
@@ -569,6 +575,15 @@ export interface components {
             "file:checksum": string;
             /** File:Size */
             "file:size": number;
+            /** Ingest:Derivative Failures */
+            "ingest:derivative_failures": {
+                [key: string]: components["schemas"]["DeriveReason"];
+            };
+            /**
+             * Ingest:Derivatives
+             * @enum {string}
+             */
+            "ingest:derivatives": "deriving" | "ready";
             /**
              * Ingest:Extraction
              * @enum {string}
