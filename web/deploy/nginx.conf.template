@@ -1,10 +1,25 @@
+# A template: the nginx image fills in ${NGINX_LOCAL_RESOLVERS} (the container's own DNS, from
+# its resolv.conf) at start, and leaves nginx's own variables alone.
+#
+# Upstreams are named through variables so nginx resolves them per request, not once at start: a
+# recreated API or tiler container comes back at a new address, and a name resolved once would
+# leave every request failing with 502 until nginx restarted too.
+resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+
+# `/api/x?q` -> `/x?q`, from the raw request URI, so encoded characters pass through unchanged.
+map $request_uri $api_uri {
+    ~^/api(?<rest>/.*)$ $rest;
+}
+
 server {
     listen 80;
     root /usr/share/nginx/html;
+    set $api api;
+    set $tiler tiler;
 
     # `/api/x` -> `http://api:8000/x`, matching the Vite dev proxy.
     location /api/ {
-        proxy_pass http://api:8000/;
+        proxy_pass http://$api:8000$api_uri;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -13,7 +28,7 @@ server {
 
     # `/tiles/x` -> `http://tiler:8001/tiles/x`: preview tiles, under the API's preview tokens.
     location /tiles/ {
-        proxy_pass http://tiler:8001;
+        proxy_pass http://$tiler:8001$request_uri;
         # With its port: the tiler's TileJSON names its tiles by the host the browser asked.
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

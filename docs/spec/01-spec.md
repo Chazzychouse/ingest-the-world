@@ -147,15 +147,15 @@ True lat/lon world anchoring (ARCore Geospatial, native Unity) is out of scope f
 
 ## 10. Milestones
 
-| M | Scope | Proves |
-|---|-------|--------|
-| M0 | Repo, Compose stack with seeded sample data, Terraform skeleton (commercial + Gov `plan` in CI), OIDC login with Keycloak, audit log | Local parity, OIDC-generic auth, Gov portability (D6) |
-| M0.5 | Invariant catalog (`03-invariants.md`), reference model, stateful simulator, fuzzing, ports + fault-injecting fakes + contract tests, planted-bug runner | Guarantees are explicit and machine-checked before the pipeline exists |
-| M1 | Direct-to-blob resumable upload → event → classify → header metadata → search by text/facets. Workers are resumable step machines over the ports; the simulator gains upload, worker and faulty-queue actors (ACC-7, ACC-8, ING-1 to ING-6, SRCH-1, SRCH-2) | Core pipeline (spikes S2, S4) |
-| M2 | Spatial and temporal search, map UI, raster/vector derivatives, TiTiler previews | Geospatial value |
-| M3 | Mesh pipeline: normalizers (FBX/OBJ/IFC/USD), validation, proxy, thumbnail, 3D Tiles; 3D viewer with "place on map" | Big-file 3D (S1) |
-| M4 | WebXR VR + AR on Quest/Android; `<model-viewer>` + USDZ on item pages | Real-world XR (S5) |
-| M5 | Readings (streaming endpoint, Timescale, compaction to Parquet), semantic/hybrid search, markings + ABAC, retention policies, live commercial-Azure deployment | Breadth + Gov story (S3) |
+| M | Scope | Proves | Status |
+|---|-------|--------|--------|
+| M0 | Repo, Compose stack with seeded sample data, Terraform skeleton (commercial + Gov `plan` in CI), OIDC login with Keycloak, audit log | Local parity, OIDC-generic auth, Gov portability (D6) | Done |
+| M0.5 | Invariant catalog (`03-invariants.md`), reference model, stateful simulator, fuzzing, ports + fault-injecting fakes + contract tests, planted-bug runner | Guarantees are explicit and machine-checked before the pipeline exists | Done |
+| M1 | Direct-to-blob resumable upload → event → classify → header metadata → search by text/facets. Workers are resumable step machines over the ports; the simulator gains upload, worker and faulty-queue actors (ACC-7, ACC-8, ING-1 to ING-6, SRCH-1, SRCH-2) | Core pipeline (spikes S2, S4) | Done |
+| M2 | Spatial and temporal search, map UI, raster/vector derivatives, TiTiler previews | Geospatial value | Done ([plan](../plans/m2.md)) |
+| M3 | Mesh pipeline: normalizers (FBX/OBJ/IFC/USD), validation, proxy, thumbnail, 3D Tiles; 3D viewer with "place on map" | Big-file 3D (S1) | Next |
+| M4 | WebXR VR + AR on Quest/Android; `<model-viewer>` + USDZ on item pages | Real-world XR (S5) | |
+| M5 | Readings (streaming endpoint, Timescale, compaction to Parquet), semantic/hybrid search, markings + ABAC, retention policies, live commercial-Azure deployment | Breadth + Gov story (S3) | |
 
 ## 11. Decisions
 

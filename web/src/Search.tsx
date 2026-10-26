@@ -3,7 +3,7 @@ import { useApi, type Collection, type StacItem } from './api'
 import { Files, Thumbnail } from './Assets'
 import { derivativeNotes } from './derivatives'
 import { bytes } from './format'
-import { MapView } from './MapView'
+import { MapUnavailable, MapView } from './MapView'
 import { itemMarking } from './markings'
 import { KINDS, MAX_QUERY_LENGTH } from './schema'
 import { filterBody, NO_FILTERS, searchBody, type Bbox, type Day, type Filters } from './search'
@@ -11,6 +11,7 @@ import { fromQuery, toQuery, type View } from './searchUrl'
 import { useFootprints } from './useFootprints'
 import { previewable, usePreview } from './usePreview'
 import { MAX_RESULTS, useSearch } from './useSearch'
+import { canDrawMaps } from './webgl'
 
 // Shown first in an item's details; the rest follow alphabetically.
 const CORE = ['datetime', 'start_datetime', 'end_datetime', 'created', 'ingest:kind', 'ingest:media_type', 'file:size', 'proj:code', 'ingest:extraction']
@@ -369,6 +370,8 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
   const [initial] = useState(() => fromQuery(window.location.search))
   const [filters, setFilters] = useState<Filters>(initial.filters)
   const [inArea, setInArea] = useState(initial.inArea)
+  // Without a map there is no view to search within.
+  const [mapless] = useState(() => !canDrawMaps())
   const [viewport, setViewport] = useState<Bbox | undefined>(undefined)
   const [view, setView] = useState<View | undefined>(initial.view)
   const [selected, setSelected] = useState<string | undefined>(initial.item)
@@ -382,9 +385,10 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
   const fitOnLoad = useRef(initial.item !== undefined && initial.view === undefined)
 
   // Wait for the map's first viewport before searching only what's in it.
-  const area = inArea ? viewport : undefined
+  const inView = inArea && !mapless
+  const area = inView ? viewport : undefined
   const body = useMemo(() => searchBody(filters, area), [filters, area])
-  const search = useSearch(body, { enabled: !inArea || viewport !== undefined })
+  const search = useSearch(body, { enabled: !inView || viewport !== undefined })
   const selection = useSelectedItem(selected, search.items)
   // Every match's footprint, beyond the pages loaded, drawn faintly beneath the results.
   const footprintTiles = useFootprints(useMemo(() => filterBody(filters), [filters]))
@@ -429,10 +433,12 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
         <div className="controls">
           <QueryBox q={filters.q} onSearch={(q) => setFilters({ ...filters, q })} />
           <div className="bar">
-            <label className="check">
-              <input type="checkbox" checked={inArea} onChange={(e) => setInArea(e.target.checked)} />
-              Only what's in the map view
-            </label>
+            {!mapless && (
+              <label className="check">
+                <input type="checkbox" checked={inArea} onChange={(e) => setInArea(e.target.checked)} />
+                Only what's in the map view
+              </label>
+            )}
             <button
               className="link"
               aria-expanded={filtersOpen}
@@ -492,13 +498,13 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
         <section className="listing" hidden={selected !== undefined} aria-live="polite" aria-busy={search.loading}>
           <p className="summary">
             {search.loading && n === 0 ? 'Searching…' : `${n} ${n === 1 ? 'item' : 'items'}`}
-            {inArea && ' in the map view'}
+            {inView && ' in the map view'}
             {search.loading && n > 0 && <span className="muted"> · updating</span>}
           </p>
-          {inArea && <p className="hint">Items without a footprint appear only when you search anywhere.</p>}
+          {inView && <p className="hint">Items without a footprint appear only when you search anywhere.</p>}
           {search.error && <p className="error">The search failed ({search.error}). Change a filter to try again.</p>}
           {!search.loading && !search.error && n === 0 && (
-            <Empty inArea={inArea} filtered={count > 0 || filters.q !== ''} onAnywhere={() => setInArea(false)} onClear={clear} />
+            <Empty inArea={inView} filtered={count > 0 || filters.q !== ''} onAnywhere={() => setInArea(false)} onClear={clear} />
           )}
           <Results
             items={search.items}
@@ -516,19 +522,23 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
           {n >= MAX_RESULTS && <p className="hint">Showing the newest {MAX_RESULTS}. Narrow the search to see others.</p>}
         </section>
       </aside>
-      <MapView
-        items={shown}
-        footprintTiles={footprintTiles}
-        preview={preview.preview}
-        previewOpacity={previewOpacity}
-        selected={selected}
-        hovered={hovered}
-        onSelect={select}
-        onHover={setHovered}
-        onViewport={onViewport}
-        initialView={initial.view}
-        fit={fit}
-      />
+      {mapless ? (
+        <MapUnavailable />
+      ) : (
+        <MapView
+          items={shown}
+          footprintTiles={footprintTiles}
+          preview={preview.preview}
+          previewOpacity={previewOpacity}
+          selected={selected}
+          hovered={hovered}
+          onSelect={select}
+          onHover={setHovered}
+          onViewport={onViewport}
+          initialView={initial.view}
+          fit={fit}
+        />
+      )}
     </div>
   )
 }

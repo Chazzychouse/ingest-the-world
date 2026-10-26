@@ -19,7 +19,7 @@ from ingest_api.worker.classify import Media
 from ingest_api.worker.extract import Budget, extract
 from ingest_api.worker.formats import READERS
 from ingest_api.worker.recipe import Recipe, Source, Unrenderable
-from ingest_api.worker.recipes import RECIPES
+from ingest_api.worker.recipes import RASTER, RECIPES
 from ingest_api.worker.recipes.raster import THUMBNAIL_PX, Cog, Thumbnail
 from tests.fakes import InlineSandbox
 from tests.invariants import check
@@ -163,7 +163,7 @@ def test_a_paletted_raster_shows_its_palette(tmp_path):
 
 
 @pytest.mark.invariant("ING-7")
-@pytest.mark.parametrize("recipe", RECIPES, ids=lambda r: r.role)
+@pytest.mark.parametrize("recipe", RASTER, ids=lambda r: r.role)
 def test_the_same_original_renders_the_same_bytes(tmp_path, recipe):
     original = write_raster(tmp_path / "ortho.tif", rgb(700, 900), nodata=0)
 
@@ -173,7 +173,7 @@ def test_the_same_original_renders_the_same_bytes(tmp_path, recipe):
     check("ING-7", recipe.deterministic and first == second, f"{recipe.role} differs")
 
 
-@pytest.mark.parametrize("recipe", RECIPES, ids=lambda r: r.role)
+@pytest.mark.parametrize("recipe", RASTER, ids=lambda r: r.role)
 def test_a_raster_gdal_cannot_read_is_unrenderable(tmp_path, recipe):
     original = tmp_path / "broken.tif"
     original.write_bytes(b"II*\x00" + bytes(range(256)) * 8)
@@ -185,7 +185,7 @@ def test_a_raster_gdal_cannot_read_is_unrenderable(tmp_path, recipe):
 def test_renders_leave_nothing_beside_the_original(tmp_path):
     """No `.aux.xml` or temporary file outside each recipe's own scratch directory."""
     original = write_raster(tmp_path / "ortho.tif", rgb(600, 600))
-    for recipe in RECIPES:
+    for recipe in RASTER:
         render(recipe, original, tmp_path)
 
     assert sorted(p.name for p in tmp_path.iterdir() if p.is_file()) == ["ortho.tif"]

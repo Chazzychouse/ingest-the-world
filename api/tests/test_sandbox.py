@@ -19,6 +19,7 @@ import pytest
 
 from ingest_api.adapters.process_sandbox import Limits, ProcessRenderer, ProcessSandbox
 from ingest_api.ports import Container, StorageError
+from ingest_api.settings import Settings
 from ingest_api.worker.classify import Media
 from ingest_api.worker.extract import (
     BLOCK_BYTES,
@@ -31,11 +32,12 @@ from ingest_api.worker.extract import (
 )
 from ingest_api.worker.formats import READERS
 from ingest_api.worker.recipe import Source, Unrenderable
-from ingest_api.worker.recipes import RECIPES
+from ingest_api.worker.recipes import RASTER, RECIPES, VECTOR
 from tests.fakes import INLINE_RENDERER, Faults, InlineSandbox, MemoryBlobStore
 from tests.invariants import check
 from tests.recipes import Digest
 from tests.test_extract import geotiff
+from tests.test_vector_recipes import uploaded_shapefile
 
 RAW = Container.RAW
 BIG = 3 * MAX_EXTRACT_BYTES
@@ -218,9 +220,11 @@ class ReportsLimits(_Misbehaving):
 
 @pytest.fixture
 def quick_renderer() -> ProcessRenderer:
-    return ProcessRenderer(
-        Limits(timeout_seconds=2.0, memory_bytes=512 * 1024 * 1024), max_file_bytes=MAX_FILE_BYTES
-    )
+    """Quick to time out, with the memory renders get in production: the limit covers the whole
+    address space, about 1 GiB of which GDAL and Arrow reserve before a recipe starts."""
+    memory = Settings.model_fields["derive_memory_mib"].default * 1024 * 1024
+    limits = Limits(timeout_seconds=2.0, memory_bytes=memory)
+    return ProcessRenderer(limits, max_file_bytes=MAX_FILE_BYTES)
 
 
 def _scratch(tmp_path: Path) -> Path:
@@ -256,10 +260,23 @@ def test_a_recipe_runs_where_it_can_dump_no_core_nor_write_past_the_limit(tmp_pa
     check("ING-8", limits == wanted, f"limits {limits}, wanted {wanted}")
 
 
+def _geotiff(tmp_path: Path) -> bytes:
+    return geotiff(tmp_path)
+
+
+def _shapefile(tmp_path: Path) -> bytes:
+    return uploaded_shapefile(tmp_path).read_bytes()
+
+
+# Each recipe on an original of its kind: the vector one on a Shapefile uploaded alone, which it
+# links and indexes in scratch, with pyogrio's GDAL loaded beside rasterio's in the child.
+_ORIGINALS = {**dict.fromkeys(RASTER, _geotiff), **dict.fromkeys(VECTOR, _shapefile)}
+
+
 @pytest.mark.parametrize("recipe", RECIPES, ids=lambda r: r.role)
-def test_both_renderers_render_a_geotiff_alike(tmp_path, quick_renderer, recipe):
+def test_both_renderers_render_an_original_alike(tmp_path, quick_renderer, recipe):
     original = tmp_path / "original"
-    original.write_bytes(geotiff(tmp_path))
+    original.write_bytes(_ORIGINALS[recipe](tmp_path))
 
     inline = INLINE_RENDERER.render(recipe, original, _scratch(tmp_path))
     child = quick_renderer.render(recipe, original, _scratch(tmp_path))

@@ -2,5 +2,8 @@
 
 from ingest_api.worker.recipe import Recipe
 from ingest_api.worker.recipes.raster import Cog, Thumbnail
+from ingest_api.worker.recipes.vector import GeoParquet
 
-RECIPES: tuple[Recipe, ...] = (Cog(), Thumbnail())
+RASTER: tuple[Recipe, ...] = (Cog(), Thumbnail())
+VECTOR: tuple[Recipe, ...] = (GeoParquet(),)
+RECIPES: tuple[Recipe, ...] = (*RASTER, *VECTOR)
