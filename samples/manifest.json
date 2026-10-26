@@ -12,7 +12,7 @@
         "licence": "Copernicus Sentinel Data Terms (free, full and open; attribution required)",
         "licence_url": "https://sentinel.esa.int/documents/247904/690755/Sentinel_Data_Legal_Notice"
       },
-      "notes": "crs, bbox (WGS84), proj:shape, proj:transform from the Earth Search STAC item (assets.visual, properties.proj:epsg); band count from the item's eo:bands (red, green, blue). Cross-checked by hand-parsing the TIFF IFD with struct: 10980x10980, 3x8-bit, 1024 tiles, deflate (code 8), ProjectedCSTypeGeoKey 32610, nodata 0; proj:bbox is native UTM 10N from tiepoint+scale. Licence is Copernicus' own terms, not an SPDX id: free use incl. commercial, attribution 'Contains modified Copernicus Sentinel data [year]'.",
+      "notes": "crs, bbox (WGS84), proj:shape, proj:transform from the Earth Search STAC item (assets.visual, properties.proj:epsg); band count from the item's eo:bands (red, green, blue). Cross-checked by hand-parsing the TIFF IFD with struct: 10980x10980, 3x8-bit, 1024 tiles, deflate (code 8), ProjectedCSTypeGeoKey 32610, nodata 0; proj:bbox is native UTM 10N from tiepoint+scale. Licence is Copernicus' own terms, not an SPDX id: free use incl. commercial, attribution 'Contains modified Copernicus Sentinel data [year]'. Cloud-optimized: Earth Search types the asset profile=cloud-optimized, and walking the IFD chain with struct finds 1024 px tiles and four internal reduced-resolution IFDs (5490 to 687 px).",
       "uploads": [
         {
           "expect": {
@@ -32,7 +32,8 @@
               "proj:shape": [
                 10980,
                 10980
-              ]
+              ],
+              "raster:cloud_optimized": true
             }
           }
         }
@@ -49,7 +50,7 @@
         "licence": "MIT",
         "licence_url": "https://github.com/OSGeo/gdal/blob/739fcf03bfcc075e300dbd45743187b380a17cdc/LICENSE.TXT"
       },
-      "notes": "Hand-parsed TIFF IFD/GeoKeys with struct: 20x20, 1x8-bit, stripped (RowsPerStrip 20, uncompressed), ProjectedCSTypeGeoKey 26711 (NAD27 / UTM 11N), 60 m pixels, tiepoint (440720, 3751320). proj:bbox is native CRS; no independent WGS84 bbox computed (bbox null). Licence: GDAL LICENSE.TXT says GDAL is 'in general' MIT-style; the test file has no per-file notice.",
+      "notes": "Hand-parsed TIFF IFD/GeoKeys with struct: 20x20, 1x8-bit, stripped (RowsPerStrip 20, uncompressed), ProjectedCSTypeGeoKey 26711 (NAD27 / UTM 11N), 60 m pixels, tiepoint (440720, 3751320). proj:bbox is native CRS; no independent WGS84 bbox computed (bbox null). Licence: GDAL LICENSE.TXT says GDAL is 'in general' MIT-style; the test file has no per-file notice. Not cloud-optimized: one stripped IFD and no overviews.",
       "uploads": [
         {
           "expect": {
@@ -63,7 +64,8 @@
               "proj:shape": [
                 20,
                 20
-              ]
+              ],
+              "raster:cloud_optimized": false
             }
           }
         },

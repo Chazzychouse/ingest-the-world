@@ -30,6 +30,8 @@ class NewItem:
     captured: Captured | None = None
     # Its original's bytes, for tests that read them; without them it has a checksum of its own.
     content: bytes | None = None
+    # What extraction found, as a reader reported it; in place of `bbox` and `captured`.
+    metadata: Metadata | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +61,7 @@ def catalog(db: psycopg.Connection, new: NewItem) -> Cataloged:
         url_expires_at=new.created_at + timedelta(hours=1),
     )
     status = "extracted" if new.bbox or new.captured else "unsupported"
-    metadata = Metadata(status, 0, bbox=new.bbox, captured=new.captured)
+    metadata = new.metadata or Metadata(status, 0, bbox=new.bbox, captured=new.captured)
     sha256 = uuid.uuid4().hex * 2 if content is None else hashlib.sha256(content).hexdigest()
     contents = items.Contents(new.kind, "application/octet-stream", sha256, size, metadata)
     items.insert_from_upload(db, upload_id, contents, created_at=new.created_at)

@@ -2,7 +2,8 @@
 
     derive request ──► item? ──for each recipe that applies──► job (item, role, version)
                          │                                     │
-                    none: nothing                render in scratch ──create──► derived/
+                    none: nothing        copy the original to scratch, render it in the
+                                         renderer's sandbox ──create──► derived/
                                                                └──► catalog.assets   derived
                                      too large, or the recipe can't render it        failed
 
@@ -11,16 +12,16 @@ name is fixed by its job, it is written with `create`, which never overwrites, a
 attempt wrote is recorded instead of rendered again, and the asset row is written only once its
 blob exists (ING-12). The stage reads items and writes only assets and its own jobs, so it never
 changes an item, and only cataloged files are items (ING-11). One item is derived at a time,
-under a lock on it.
+under a lock on it, and its original is copied to scratch at most once for all its recipes.
 """
 
 import hashlib
 import tempfile
-from collections.abc import Generator, Sequence
+from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import StrEnum
-from functools import partial
+from functools import cache, partial
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -32,7 +33,7 @@ from ingest_api.items import store as items
 from ingest_api.ports import BlobExists, BlobProps, BlobStore, Clock, Container, StorageError
 from ingest_api.worker import jobs
 from ingest_api.worker.pipeline import Busy
-from ingest_api.worker.recipe import CHUNK, Recipe, Source, Unrenderable
+from ingest_api.worker.recipe import CHUNK, Recipe, Renderer, Source, Unrenderable
 from ingest_api.worker.recipes import RECIPES
 
 DERIVED, RAW = Container.DERIVED, Container.RAW
@@ -44,6 +45,8 @@ SHA256, SOURCE_SHA256 = "sha256", "source_sha256"
 MAX_SOURCE_BYTES = 2 * 1024**3
 MAX_OUTPUT_BYTES = 2 * 1024**3
 MAX_RECIPES = 32
+# The original's copy in an item's scratch directory; each recipe renders in one beside it.
+ORIGINAL = "original"
 
 
 class Reason(StrEnum):
@@ -59,7 +62,8 @@ class Reason(StrEnum):
 class Deriver:
     store: BlobStore
     clock: Clock
-    scratch: Path  # each render gets an empty directory of its own under here, removed after
+    scratch: Path  # each item gets an empty directory of its own under here, removed after
+    renderer: Renderer
     recipes: Sequence[Recipe] = field(default_factory=lambda: RECIPES)
     max_source_bytes: int = MAX_SOURCE_BYTES
     max_output_bytes: int = MAX_OUTPUT_BYTES
@@ -75,11 +79,12 @@ def derive(conn: Connection[TupleRow], d: Deriver, item_id: UUID) -> dict[str, j
     """Brings every recipe that applies to the item to an outcome, or finds the one it has, by
     `role/vN`; empty if there is no such item. Raises Busy, StorageError or psycopg errors for the
     caller to retry; derivatives already made are kept."""
-    with _locked(conn, item_id):
+    with _locked(conn, item_id), tempfile.TemporaryDirectory(dir=d.scratch) as scratch:
         source = _source(conn, d, item_id)
         if source is None:
             return {}
-        return {_label(r): _run(conn, d, source, r) for r in _applying(d, source)}
+        original = cache(partial(_download, source, Path(scratch) / ORIGINAL))
+        return {_label(r): _run(conn, d, source, original, r) for r in _applying(d, source)}
 
 
 def give_up(
@@ -138,6 +143,9 @@ def _source(conn: Connection[TupleRow], d: Deriver, item_id: UUID) -> Source | N
         original.size_bytes,
         original.sha256,
         fetch,
+        original.extraction,
+        original.crs,
+        original.properties,
     )
 
 
@@ -154,7 +162,11 @@ def _begin(
 
 
 def _run(
-    conn: Connection[TupleRow], d: Deriver, source: Source, recipe: Recipe
+    conn: Connection[TupleRow],
+    d: Deriver,
+    source: Source,
+    original: Callable[[], Path],
+    recipe: Recipe,
 ) -> jobs.DeriveStage:
     job = _begin(conn, d, source, recipe)
     if job.stage != "received":
@@ -163,7 +175,7 @@ def _run(
         return _fail(conn, d, job, Reason.TOO_LARGE)
     name = blob_name(source.collection_id, source.item_id, recipe)
     try:
-        blob = d.store.head(DERIVED, name) or _render(d, source, recipe, name)
+        blob = d.store.head(DERIVED, name) or _render(d, source, recipe, original(), name)
     except Unrenderable:
         return _fail(conn, d, job, Reason.UNRENDERABLE)
     return _keep(conn, d, source, recipe, job, blob)
@@ -205,25 +217,42 @@ def _fail(
     return "failed"
 
 
-def _render(d: Deriver, source: Source, recipe: Recipe, name: str) -> BlobProps:
-    """Renders the derivative in scratch and writes it to `derived/name`; if an earlier attempt
-    got there first, its blob is the derivative."""
-    with tempfile.TemporaryDirectory(dir=d.scratch) as scratch:
-        path = recipe.render(source, Path(scratch))
-        size = path.stat().st_size
-        if size > d.max_output_bytes:
-            raise Unrenderable(f"{recipe.role} came to {size} bytes")
-        metadata = {SHA256: _sha256(path, size), SOURCE_SHA256: source.sha256}
-        try:
-            with path.open("rb") as data:
-                return d.store.create(
-                    DERIVED, name, data, content_type=recipe.media_type, metadata=metadata
-                )
-        except BlobExists:
-            existing = d.store.head(DERIVED, name)
-            if existing is None:
-                raise StorageError(f"{DERIVED}/{name} was taken, then vanished") from None
-            return existing
+def _download(source: Source, path: Path) -> Path:
+    """Copies the original to `path`, a chunk at a time, checking it is still what was
+    cataloged."""
+    digest = hashlib.sha256()
+    with path.open("wb") as out:
+        for chunk in source.chunks():
+            digest.update(chunk)
+            out.write(chunk)
+    if digest.hexdigest() != source.sha256:
+        raise StorageError(f"the original of {source.item_id} no longer matches its checksum")
+    return path
+
+
+def _render(d: Deriver, source: Source, recipe: Recipe, original: Path, name: str) -> BlobProps:
+    """Renders the derivative in a directory of its own beside the original's copy, and writes
+    it to `derived/name`; if an earlier attempt got there first, its blob is the derivative."""
+    prefix = f"{recipe.role}.v{recipe.version}."
+    scratch = Path(tempfile.mkdtemp(prefix=prefix, dir=original.parent))
+    path = d.renderer.render(recipe, original, scratch)
+    # What a sandboxed render names is untrusted: it must be a file it wrote in its scratch.
+    if not (path.resolve().is_relative_to(scratch.resolve()) and path.is_file()):
+        raise Unrenderable(f"{recipe.role} named {path}, not a file in its scratch directory")
+    size = path.stat().st_size
+    if size > d.max_output_bytes:
+        raise Unrenderable(f"{recipe.role} came to {size} bytes")
+    metadata = {SHA256: _sha256(path, size), SOURCE_SHA256: source.sha256}
+    try:
+        with path.open("rb") as data:
+            return d.store.create(
+                DERIVED, name, data, content_type=recipe.media_type, metadata=metadata
+            )
+    except BlobExists:
+        existing = d.store.head(DERIVED, name)
+        if existing is None:
+            raise StorageError(f"{DERIVED}/{name} was taken, then vanished") from None
+        return existing
 
 
 def _sha256(path: Path, size: int) -> str:

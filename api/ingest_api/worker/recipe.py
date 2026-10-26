@@ -1,17 +1,19 @@
 """What a recipe is: one way of making one kind of derivative (its role) from an item's original.
 
 The derive stage (`derive.py`) decides when a recipe runs and keeps its output; a recipe only
-says whether it applies to an original and renders one file from it into local scratch.
-Recipes live in `recipes/`, one per (kind, role).
+says whether it applies to an original and renders one file from a local copy of it into
+scratch. A `Renderer` runs it: in a child process with limits in production, since recipes
+decode untrusted bytes in native code (ING-8). Recipes live in `recipes/`, one per (kind, role).
 """
 
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from ingest_api.items.kinds import Kind
+from ingest_api.items.metadata import Status
 from ingest_api.ports import StorageError
 
 # Read size when a recipe streams its original; memory per render stays at one chunk.
@@ -26,7 +28,8 @@ class Unrenderable(Exception):
 
 @dataclass(frozen=True, slots=True)
 class Source:
-    """An item's original in `raw/`, read through the blob store."""
+    """An item's original in `raw/`, read through the blob store, and what cataloging found in
+    its header."""
 
     item_id: UUID
     collection_id: str
@@ -35,6 +38,9 @@ class Source:
     size: int
     sha256: str
     fetch: Fetch
+    extraction: Status  # how reading its header went: `extracted`, `unreadable`, ...
+    crs: str | None
+    properties: Mapping[str, Any]
 
     def chunks(self) -> Iterator[bytes]:
         """The whole original, one chunk at a time."""
@@ -77,7 +83,16 @@ class Recipe(Protocol):
 
     def applies(self, source: Source) -> bool: ...
 
-    def render(self, source: Source, scratch: Path) -> Path:
-        """Writes the derivative into `scratch`, an empty directory of its own, and returns its
-        path. Raises Unrenderable when the original can't make one."""
+    def render(self, original: Path, scratch: Path) -> Path:
+        """Writes the derivative of the file at `original` into `scratch`, an empty directory of
+        its own, and returns its path. Raises Unrenderable when the original can't make one."""
+        ...
+
+
+class Renderer(Protocol):
+    """Where recipes run: a child process in production, inline in tests."""
+
+    def render(self, recipe: Recipe, original: Path, scratch: Path) -> Path:
+        """The recipe's derivative, somewhere in `scratch`. Raises Unrenderable if the recipe
+        refuses the original, or crashes, hangs or runs out of memory on it."""
         ...

@@ -65,7 +65,7 @@ An internal platform that takes in any file a geospatial organization produces (
    - `file:*` holds size and checksum
    - per-Kind extension fields: `raster:`, `pointcloud:`, our own `mesh:` and `reading:`
 7. **Derive (async, per Kind).**
-   - raster → COG plus a thumbnail
+   - raster → COG (unless the original already is one) plus a thumbnail, each rendered in a child process like extraction (ING-8)
    - vector → GeoParquet; the footprint goes to Martin tiles
    - point cloud → COPC, and optionally 3D Tiles
    - mesh → **normalize** (D1: FBX/OBJ via Assimp or headless Blender, IFC via IfcOpenShell, USD via usd-core → glTF; glTF + external buffers passes through, with no 4 GiB limit), validate, gltfpack a proxy GLB, render a headless thumbnail, then run mago-3d-tiler to make 3D Tiles 1.1. Converters are plugins behind one `MeshNormalizer` interface.

@@ -14,11 +14,11 @@ from psycopg_pool import ConnectionPool
 
 from ingest_api import wiring
 from ingest_api.adapters.eicar_scanner import EicarScanner
-from ingest_api.adapters.process_sandbox import Limits, ProcessSandbox
+from ingest_api.adapters.process_sandbox import Limits, ProcessRenderer, ProcessSandbox
 from ingest_api.ports import QueueError, SystemClock
 from ingest_api.settings import Settings
 from ingest_api.worker import outbox, selfcheck
-from ingest_api.worker.derive import Deriver
+from ingest_api.worker.derive import MAX_OUTPUT_BYTES, Deriver
 from ingest_api.worker.pipeline import Pipeline
 from ingest_api.worker.runner import (
     Retry,
@@ -70,7 +70,13 @@ def ingest(settings: Settings) -> None:
 
 def derive(settings: Settings) -> None:
     settings.derive_scratch_dir.mkdir(parents=True, exist_ok=True)
-    deriver = Deriver(wiring.blob_store(settings), SystemClock(), settings.derive_scratch_dir)
+    limits = Limits(settings.derive_timeout_seconds, settings.derive_memory_mib * 1024 * 1024)
+    deriver = Deriver(
+        wiring.blob_store(settings),
+        SystemClock(),
+        settings.derive_scratch_dir,
+        ProcessRenderer(limits, max_file_bytes=MAX_OUTPUT_BYTES),
+    )
     clock, batch = deriver.clock, settings.worker_batch
     with (
         ConnectionPool(settings.database_url, min_size=1, max_size=POOL_MAX_SIZE) as pool,

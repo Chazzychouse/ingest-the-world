@@ -104,6 +104,9 @@ class Original:
     raw_blob: str
     size_bytes: int
     sha256: str
+    extraction: Status
+    crs: str | None
+    properties: dict[str, Any]
 
 
 def original_of(conn: Connection[TupleRow], item_id: UUID) -> Original | None:
@@ -111,8 +114,8 @@ def original_of(conn: Connection[TupleRow], item_id: UUID) -> Original | None:
     item, as for anything quarantined or rejected (ING-11)."""
     with conn.cursor(row_factory=class_row(Original)) as cur:
         return cur.execute(
-            "SELECT id, collection_id, kind, media_type, raw_blob, size_bytes, sha256 "
-            "FROM catalog.items WHERE id = %s",
+            "SELECT id, collection_id, kind, media_type, raw_blob, size_bytes, sha256, "
+            "extraction, crs, properties FROM catalog.items WHERE id = %s",
             (item_id,),
         ).fetchone()
 

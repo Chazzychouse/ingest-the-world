@@ -166,15 +166,18 @@ Every format reader goes through the blob store port, so GDAL and Arrow are boun
 budget. Checked against a byte-counting blob store with files several times the budget, by
 fuzzing every reader, and in the pipeline simulation on every cataloged item.
 
-### ING-8 Readers can't take the worker down
+### ING-8 Readers and recipes can't take the worker down
 
 Status: enforced
 
-Format readers parse untrusted bytes in native code, so each extraction runs in a child process
-with a deadline and a memory limit. A reader that crashes, hangs, runs out of memory or raises
-unexpectedly leaves its item cataloged with extraction `failed` and no metadata, and the
-worker goes on to the next message. The budget (ING-6) is enforced outside the child. A
-crashing child writes no core dump: its memory holds the file's contents, which may be CUI.
+Format readers and derive recipes parse untrusted bytes in native code, so each extraction and
+each render runs in a child process with a deadline and a memory limit. A reader that crashes,
+hangs, runs out of memory or raises unexpectedly leaves its item cataloged with extraction
+`failed` and no metadata; a recipe that does any of those, or writes a file larger than a
+derivative may be, fails that one derivative as `unrenderable`; either way the worker goes on
+to the next message. The budget (ING-6) is enforced outside the child, and so is the rule that a
+render's output is a file inside its own scratch directory. A crashing child writes no core
+dump: its memory holds the file's contents, which may be CUI.
 
 ### ING-9 One item per content per collection
 

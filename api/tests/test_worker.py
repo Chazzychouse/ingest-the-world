@@ -11,7 +11,7 @@ from ingest_api.ports import BlobProps, Container, TransientStorageError
 from ingest_api.uploads.models import Reason
 from ingest_api.worker import jobs
 from ingest_api.worker.pipeline import Pipeline
-from ingest_api.worker.runner import INVALID_EVENT, Retry, run_once, sweep_once
+from ingest_api.worker.runner import INVALID_MESSAGE, Retry, run_once, sweep_once
 from tests.fakes import Faults, MemoryBlobStore, SimClock, SimQueue, event_for
 from tests.invariants import check
 from tests.test_pipeline import TIFF
@@ -68,14 +68,14 @@ def test_a_message_that_is_not_a_blob_event_is_dead_lettered(queue, work, body):
     queue.send(body)
 
     work()
-    assert [d.reason for d in queue.dead_letters] == [INVALID_EVENT]
+    assert [d.reason for d in queue.dead_letters] == [INVALID_MESSAGE]
 
 
 def test_an_event_for_another_container_is_dead_lettered(memory, queue, work):
     _announce(queue, memory.put(Container.RAW, "c/1/f.bin", b"x"))
 
     work()
-    assert [d.reason for d in queue.dead_letters] == [INVALID_EVENT]
+    assert [d.reason for d in queue.dead_letters] == [INVALID_MESSAGE]
 
 
 def test_a_storage_failure_is_retried_and_noted_on_the_job(memory, queue, work, db):
@@ -163,7 +163,7 @@ def test_a_version_whose_message_dead_letters_is_rejected_by_the_sweep(
 def test_a_dead_letter_naming_no_version_is_swept_away(queue, connect, pipeline):
     queue.send({"not": "an event"})
     message = queue.receive()[0]
-    queue.dead_letter(message, reason=INVALID_EVENT)
+    queue.dead_letter(message, reason=INVALID_MESSAGE)
 
     sweep_once(queue, connect, pipeline, batch=10)
     assert queue.dead_letters == []

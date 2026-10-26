@@ -52,6 +52,7 @@ ITEM_ROUTES = "ingest_api/items/routes.py"
 ITEM_STORE = "ingest_api/items/store.py"
 SEARCH_SQL = "migrations/0008_item_search.sql"
 DERIVE = "ingest_api/worker/derive.py"
+SANDBOX = "ingest_api/adapters/process_sandbox.py"
 READ_GRANTED = (
     "      AND c.id IN (SELECT authz.granted_collections(subject, roles, groups, 'read'))"
 )
@@ -238,7 +239,7 @@ MUTANTS = [
     ),
     Mutant(
         "sandbox-writes-core-dumps",
-        "ingest_api/adapters/process_sandbox.py",
+        SANDBOX,
         "    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))\n",
         "",
         ("ING-8",),
@@ -247,7 +248,7 @@ MUTANTS = [
         # Slice 3-4 review: a reader that crashed natively took the worker down on every
         # delivery, and its version never reached an outcome.
         "reader-crash-escapes-sandbox",
-        "ingest_api/adapters/process_sandbox.py",
+        SANDBOX,
         "            return EXITED\n",
         '            raise RuntimeError("the extraction child died")\n',
         ("ING-8",),
@@ -399,11 +400,13 @@ MUTANTS = [
         # Looks the original up by upload, so a request naming a rejected upload is derived.
         "derive-reads-uploads-not-items",
         ITEM_STORE,
-        '            "SELECT id, collection_id, kind, media_type, raw_blob, size_bytes, sha256 "\n'
-        '            "FROM catalog.items WHERE id = %s",',
+        '            "SELECT id, collection_id, kind, media_type, raw_blob, size_bytes, sha256, "\n'
+        '            "extraction, crs, properties FROM catalog.items WHERE id = %s",',
         "            \"SELECT u.id, u.collection_id, coalesce(i.kind, 'generic') AS kind, \"\n"
         "            \"coalesce(i.media_type, '') AS media_type, u.blob_name AS raw_blob, \"\n"
-        "            \"u.size_bytes, coalesce(i.sha256, u.sha256, '') AS sha256 \"\n"
+        "            \"u.size_bytes, coalesce(i.sha256, u.sha256, '') AS sha256, \"\n"
+        "            \"coalesce(i.extraction, 'unsupported') AS extraction, i.crs, \"\n"
+        "            \"coalesce(i.properties, '{}') AS properties \"\n"
         '            "FROM ingest.uploads u LEFT JOIN catalog.items i ON i.id = u.id "\n'
         '            "WHERE u.id = %s",',
         ("ING-11",),
@@ -421,20 +424,42 @@ MUTANTS = [
         # Records the asset whether or not its blob was written.
         "asset-recorded-without-its-blob",
         DERIVE,
-        "        try:\n"
-        '            with path.open("rb") as data:\n'
-        "                return d.store.create(",
-        "        written = BlobProps(DERIVED, name, size, '', recipe.media_type, metadata)\n"
-        "        try:\n"
-        '            with path.open("rb") as data:\n'
-        "                d.store.create(DERIVED, name, data, metadata=metadata)\n"
-        "        except StorageError:\n"
-        "            pass\n"
-        "        return written\n"
-        "        try:\n"
-        '            with path.open("rb") as data:\n'
-        "                return d.store.create(",
+        '    try:\n        with path.open("rb") as data:\n            return d.store.create(',
+        "    written = BlobProps(DERIVED, name, size, '', recipe.media_type, metadata)\n"
+        "    try:\n"
+        '        with path.open("rb") as data:\n'
+        "            d.store.create(DERIVED, name, data, metadata=metadata)\n"
+        "    except StorageError:\n"
+        "        pass\n"
+        "    return written\n"
+        "    try:\n"
+        '        with path.open("rb") as data:\n'
+        "            return d.store.create(",
         ("ING-12",),
+    ),
+    Mutant(
+        # Takes a sandboxed render's word for where its output is, so a compromised one can
+        # publish any file the worker can read as a derivative.
+        "render-output-trusted",
+        DERIVE,
+        "    if not (path.resolve().is_relative_to(scratch.resolve()) and path.is_file()):\n",
+        "    if not path.is_file():\n",
+        ("ING-12",),
+    ),
+    Mutant(
+        "render-writes-without-limit",
+        SANDBOX,
+        "    resource.setrlimit(resource.RLIMIT_FSIZE, (max_file_bytes, max_file_bytes))\n",
+        "",
+        ("ING-8",),
+    ),
+    Mutant(
+        # Renders whatever is in raw/ now, while lineage names the checksum cataloged.
+        "derive-trusts-the-original-unchecked",
+        DERIVE,
+        "    if digest.hexdigest() != source.sha256:\n",
+        "    if False:\n",
+        ("ING-7",),
     ),
 ]
 
