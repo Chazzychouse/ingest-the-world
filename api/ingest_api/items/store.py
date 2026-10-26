@@ -328,13 +328,13 @@ _FOOTPRINT_TILE = (
     sql.SQL("""
     WITH tile AS (SELECT ST_TileEnvelope(%s, %s, %s) AS envelope)
     SELECT ST_AsMVT(f, %s, %s, 'geom') FROM (
-        SELECT id, collection, kind, marking, title, COALESCE(
+        SELECT id, collection, kind, marking, title, area, COALESCE(
                    ST_AsMVTGeom(shape, (SELECT envelope FROM tile), %s, %s, true),
                    ST_AsMVTGeom(ST_PointOnSurface(shape), (SELECT envelope FROM tile), %s, %s, true)
                ) AS geom
         FROM (
             SELECT i.id::text AS id, i.collection_id AS collection, i.kind, i.marking,
-                   i.filename AS title,
+                   i.filename AS title, ST_Area(ST_Envelope(i.footprint)) AS area,
                    ST_Transform(
                        ST_Intersection(i.footprint, ST_MakeEnvelope(-180, -%s, 180, %s, 4326)),
                        3857

@@ -1,4 +1,5 @@
-"""The running local stack (`make up`), driven from outside as a user and their browser would.
+"""The running local stack (`make up`), driven from outside as a user and their browser would:
+by the end-to-end suite (`tests/e2e/`) and the demo loader (`tools/demo.py`).
 
 Sign-in uses Keycloak's password grant on the SPA's client, with the realm file's users. Bytes
 go straight to Blob Storage through the signed URL, in blocks (Put Block, then Put Block List),
@@ -8,7 +9,8 @@ which is what the web upload engine does and what fires Event Grid's BlobCreated
 import base64
 import json
 import os
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
@@ -17,8 +19,8 @@ from urllib.parse import quote
 
 import httpx
 
-from tests.conftest import REALM
-
+# The users the stack signs in, with their passwords and roles; tests read them from here too.
+REALM = Path(__file__).resolve().parents[2] / "infra" / "keycloak" / "ingest-realm.json"
 API_URL = os.environ.get("INGEST_E2E_API", "http://localhost:8000")
 # The web app's origin, through nginx, as a browser reaches the API (`/api/...`).
 WEB_URL = os.environ.get("INGEST_E2E_WEB", "http://localhost:8081")
@@ -32,6 +34,11 @@ BLOCK_BYTES = 8 * 1024 * 1024
 # Put Block List takes at most 50,000 blocks: 390 GiB at this block size.
 MAX_BLOCKS = 50_000
 TIMEOUT = httpx.Timeout(60.0)
+# Polling for an upload's progress: a floor for small files, plus time for the worker to copy
+# and hash.
+POLL_SECONDS = 1.0
+BASE_WAIT_SECONDS = 60.0
+WAIT_BYTES_PER_SECOND = 20 * 1024 * 1024
 
 
 def password_of(username: str) -> str:
@@ -124,3 +131,25 @@ def upload_blocks(client: httpx.Client, signed_url: str, path: Path) -> None:
         headers={**headers, "Content-Type": "application/xml"},
     )
     committed.raise_for_status()
+
+
+def start_upload(api: Api, body: dict[str, Any], path: Path) -> str:
+    """Opens an upload session for `body`, sends the file's bytes through it, and returns its id."""
+    session = api.post("/uploads", body)
+    with httpx.Client(timeout=TIMEOUT) as storage:
+        upload_blocks(storage, session["upload_url"], path)
+    return session["upload"]["id"]
+
+
+def await_upload(
+    api: Api, upload_id: str, size: int, *, done: Callable[[dict[str, Any]], bool]
+) -> dict[str, Any]:
+    """The upload once `done` says so, polled for as long as a file of `size` may take."""
+    deadline = time.monotonic() + BASE_WAIT_SECONDS + size / WAIT_BYTES_PER_SECOND
+    polls = int((deadline - time.monotonic()) / POLL_SECONDS) + 1
+    for _ in range(polls):
+        upload = api.get(f"/uploads/{upload_id}")
+        if done(upload):
+            return upload
+        time.sleep(POLL_SECONDS)
+    raise TimeoutError(f"upload {upload_id} not done after {polls} polls")

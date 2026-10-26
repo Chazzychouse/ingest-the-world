@@ -1,10 +1,12 @@
 """Every sample in `samples/manifest.json`, uploaded through the running stack, ends as the
 manifest says: the right outcome, and for cataloged files the right kind and metadata.
 
-    make samples && make e2e       # INGEST_E2E_LARGE=1 adds the multi-GB samples
+    make samples && make e2e       # INGEST_E2E_LARGE=1 adds the multi-GB samples,
+                                   # INGEST_E2E_DEMO=1 the demo's
 
 Each run makes its own collections (as alice), so reruns never meet an earlier run's files,
-and uploads as carol, a Contributor granted write on them. The outcome is read through the API
+and uploads as `e2e`, a Contributor granted them by name and not by role, so the demo's
+non-admin users never see them. The outcome is read through the API
 as the web app will, and so is the item, which must also be found by searching for it (by its
 footprint, where the manifest gives one) and download, through the link the API signs, as the
 bytes uploaded. Once its derivatives settle it must have exactly those the manifest names, none
@@ -15,7 +17,6 @@ manifest.
 
 import hashlib
 import os
-import time
 import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -26,18 +27,20 @@ import pytest
 from rio_cogeo.cogeo import cog_validate
 
 from ingest_api.items.routes import SHA256_MULTIHASH
-from tests.e2e.stack import API_URL, TIMEOUT, Api, sign_in, upload_blocks
 from tests.geoparquet import valid_geoparquet
 from tests.invariants import check
 from tools import samples
+from tools.stack import API_URL, TIMEOUT, Api, await_upload, sign_in, start_upload
 
 pytestmark = pytest.mark.e2e
 
-CORPUS = samples.selected(samples.load(), large=bool(os.environ.get("INGEST_E2E_LARGE")))
-# Polling for an outcome: a floor for small files, plus time for the worker to copy and hash.
-POLL_SECONDS = 1.0
-BASE_WAIT_SECONDS = 60.0
-WAIT_BYTES_PER_SECOND = 20 * 1024 * 1024
+CORPUS = samples.selected(
+    samples.load(),
+    large=bool(os.environ.get("INGEST_E2E_LARGE")),
+    demo=bool(os.environ.get("INGEST_E2E_DEMO")),
+)
+# The suite's own user: its run collections are granted to it alone.
+USER = "e2e"
 WRONG_SHA256 = "0" * 64
 PARQUET = "application/vnd.apache.parquet"
 
@@ -50,8 +53,9 @@ def http() -> Iterator[httpx.Client]:
 
 @pytest.fixture(scope="module")
 def collection(http: httpx.Client) -> Callable[[str], str]:
-    """The run's collection for a label, made on first use, writable by Contributors."""
+    """The run's collection for a label, made on first use, writable by the suite's user."""
     admin = Api(http, sign_in("alice"))
+    subject = Api(http, sign_in(USER)).get("/me")["subject"]
     run = uuid.uuid4().hex[:8]
     made: dict[str, str] = {}
 
@@ -59,7 +63,7 @@ def collection(http: httpx.Client) -> Callable[[str], str]:
         if label not in made:
             collection_id = f"e2e-{run}-{label}"
             admin.post("/collections", {"id": collection_id, "title": f"E2E {run} {label}"})
-            admin.put(f"/collections/{collection_id}/grants/role/Contributor", {"access": "write"})
+            admin.put(f"/collections/{collection_id}/grants/user/{subject}", {"access": "write"})
             made[label] = collection_id
         return made[label]
 
@@ -74,20 +78,6 @@ def _declared(sample: samples.Sample, upload: samples.Upload) -> str | None:
             return WRONG_SHA256
         case "none":
             return None
-
-
-def _await(
-    api: Api, upload_id: str, size: int, *, done: Callable[[dict[str, Any]], bool]
-) -> dict[str, Any]:
-    """The upload once `done` says so, polled for as long as a file of `size` may take."""
-    deadline = time.monotonic() + BASE_WAIT_SECONDS + size / WAIT_BYTES_PER_SECOND
-    polls = int((deadline - time.monotonic()) / POLL_SECONDS) + 1
-    for _ in range(polls):
-        upload = api.get(f"/uploads/{upload_id}")
-        if done(upload):
-            return upload
-        time.sleep(POLL_SECONDS)
-    pytest.fail(f"upload {upload_id} not done after {polls} polls")
 
 
 def _item(api: Api, upload_id: str) -> dict[str, Any] | None:
@@ -175,7 +165,7 @@ def _check_derivatives(api: Api, label: str, upload_id: str, e: samples.Expect, 
 def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collection, tmp_path):
     if not sample.path.exists():
         pytest.fail(f"{sample.path} is missing: run `make samples`")
-    api = Api(http, sign_in("carol"))
+    api = Api(http, sign_in(USER))
     for index, upload in enumerate(sample.uploads):  # in order: a duplicate follows its original
         label = f"{sample.name}[{index}]"
         body: dict[str, Any] = {
@@ -185,12 +175,9 @@ def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collectio
         }
         if declared := _declared(sample, upload):
             body["sha256"] = declared
-        session = api.post("/uploads", body)
-        upload_id = session["upload"]["id"]
-        with httpx.Client(timeout=TIMEOUT) as storage:
-            upload_blocks(storage, session["upload_url"], sample.path)
+        upload_id = start_upload(api, body, sample.path)
 
-        outcome = _await(api, upload_id, sample.size, done=lambda u: u["status"] != "pending")
+        outcome = await_upload(api, upload_id, sample.size, done=lambda u: u["status"] != "pending")
         status, expect = outcome["status"], upload.expect
         reason = outcome["signature"] if status == "quarantined" else outcome["reason"]
         check("ING-2", status == expect.outcome, f"{label}: {status}, wanted {expect.outcome}")
@@ -203,9 +190,10 @@ def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collectio
             check("SRCH-1", _found(api, upload_id, expect), f"{label}: search didn't find it")
             downloaded = _downloaded_sha256(api, upload_id)
             check("ACC-9", downloaded == sample.sha256, f"{label}: downloaded {downloaded}")
-            stage = _await(api, upload_id, sample.size, done=lambda u: u["stage"] != "deriving")[
-                "stage"
-            ]
+            settled = await_upload(
+                api, upload_id, sample.size, done=lambda u: u["stage"] != "deriving"
+            )
+            stage = settled["stage"]
             check("ING-13", stage == "ready", f"{label}: derivatives ended {stage}")
             derivatives = api.get(f"/items/{upload_id}")["properties"]["ingest:derivatives"]
             check("ING-13", derivatives == "ready", f"{label}: the item says {derivatives}")

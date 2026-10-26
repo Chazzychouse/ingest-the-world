@@ -16,7 +16,9 @@ services:
     ports: ["5432:5432"]
     volumes: [db-data:/var/lib/postgresql/data]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ingest -d ingest"]
+      # Over TCP: on a fresh volume the entrypoint first runs a socket-only server to initialise,
+      # then restarts, and a socket check would pass while clients over TCP are still refused.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ingest -d ingest"]
       interval: 3s
       retries: 20
 
@@ -55,7 +57,7 @@ services:
   migrate:
     build: api
     image: ingest-api:dev
-    command: ["python", "-m", "ingest_api.migrate", "--demo"]
+    command: ["python", "-m", "ingest_api.migrate", "--seed"]
     environment: &api-env
       INGEST_DATABASE_URL: postgresql://ingest:ingest@db:5432/ingest
       INGEST_OIDC_ISSUER: http://localhost:8080/realms/ingest

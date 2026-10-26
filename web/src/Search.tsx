@@ -5,6 +5,7 @@ import { derivativeNotes } from './derivatives'
 import { bytes } from './format'
 import { MapUnavailable, MapView } from './MapView'
 import { itemMarking } from './markings'
+import { isCode, label, show } from './properties'
 import { KINDS, MAX_QUERY_LENGTH } from './schema'
 import { filterBody, NO_FILTERS, searchBody, type Bbox, type Day, type Filters } from './search'
 import { fromQuery, toQuery, type View } from './searchUrl'
@@ -26,24 +27,11 @@ function toggle<T>(values: T[], value: T): T[] {
   return values.includes(value) ? values.filter((v) => v !== value) : [...values, value]
 }
 
-function when(datetime: string): string {
-  return new Date(datetime).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-}
-
-const TIMES = new Set(['datetime', 'start_datetime', 'end_datetime', 'created'])
-
 /** When an item's data was captured, or when it was uploaded if the file doesn't say: its
  * `datetime`, or the start of its range. */
 function itemTime(item: StacItem): string {
   const { datetime, created, start_datetime: start } = item.properties
   return datetime ?? (typeof start === 'string' ? start : created)
-}
-
-function show(key: string, value: unknown): string {
-  if (key === 'file:size' && typeof value === 'number') return bytes(value)
-  if (TIMES.has(key) && typeof value === 'string') return when(value)
-  const text = typeof value === 'string' ? value : JSON.stringify(value)
-  return text.length > 160 ? `${text.slice(0, 160)}…` : text
 }
 
 /** How many filters besides the text and the map view narrow the search. */
@@ -273,19 +261,19 @@ function ItemDetails({ item, collections, preview, onPreview, onZoom, onBack }: 
           .filter((k) => props[k] !== undefined && props[k] !== null)
           .map((k) => (
             <div key={k} className="row">
-              <dt>{k}</dt>
-              <dd>{show(k, props[k])}</dd>
+              <dt title={k}>{label(k)}</dt>
+              <dd className={isCode(k) ? 'code' : undefined}>{show(k, props[k])}</dd>
             </div>
           ))}
         {bbox && (
           <div className="row">
-            <dt>bbox</dt>
-            <dd>{bbox.map((v) => v.toFixed(4)).join(', ')}</dd>
+            <dt title="bbox">{label('bbox')}</dt>
+            <dd className="code">{bbox.map((v) => v.toFixed(4)).join(', ')}</dd>
           </div>
         )}
         <div className="row">
-          <dt>id</dt>
-          <dd>{item.id}</dd>
+          <dt title="id">{label('id')}</dt>
+          <dd className="code">{item.id}</dd>
         </div>
       </dl>
     </section>

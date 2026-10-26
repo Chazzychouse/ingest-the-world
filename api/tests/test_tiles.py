@@ -91,6 +91,15 @@ def test_a_footprint_too_small_to_draw_is_marked_by_a_point(client, auth, db):
     assert close == {str(tiny.id): "Polygon"}
 
 
+def test_each_footprint_carries_the_area_of_its_bounding_box(client, auth, db):
+    small = _item(db)
+    world = _item(db, filename="world.tif", bbox=Bbox(-180.0, -90.0, 180.0, 90.0))
+    tile = _tile(client, auth, "carol", _open(client, auth, "carol"))
+    areas = {f["properties"]["id"]: f["properties"]["area"] for f in features(tile.content)}
+    assert areas[str(small.id)] == pytest.approx(0.25)
+    assert areas[str(world.id)] == pytest.approx(64800.0)
+
+
 def test_polar_footprints_are_clipped_to_the_map_not_refused(client, auth, db):
     tag = uuid.uuid4().hex
     arctic = _item(db, tags=(tag,), bbox=Bbox(-30.0, 60.0, 30.0, 90.0))

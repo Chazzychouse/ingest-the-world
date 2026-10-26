@@ -87,6 +87,16 @@
       "enabled": true,
       "credentials": [{ "type": "password", "value": "bob", "temporary": false }],
       "realmRoles": ["Reader"]
+    },
+    {
+      "username": "e2e",
+      "firstName": "End-to-end",
+      "lastName": "Suite",
+      "email": "e2e@ingest.local",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "e2e", "temporary": false }],
+      "realmRoles": ["Contributor", "Clearance.CUI"]
     }
   ]
 }

@@ -1,0 +1,65 @@
+{
+  "about": "The demo catalog `make demo` loads into the running stack: collections it makes (as alice) when they don't exist, and real files from the sample manifest uploaded through the pipeline (as carol) into them and into the dev seed's collections. A file already cataloged in its collection is skipped, so a rerun only fills gaps. Everything here is public data or generated; none of it is CUI, whatever its collection is marked.",
+  "collections": [
+    {
+      "id": "coastal-change",
+      "title": "Coastal Change",
+      "description": "Sentinel-2 scenes and terrain of barrier islands, deltas and bays.",
+      "grants": { "Reader": "read", "Contributor": "write" }
+    },
+    {
+      "id": "wildfire-response",
+      "title": "Wildfire Response",
+      "description": "Imagery and terrain for burn-scar mapping, starting with Lahaina, August 2023.",
+      "grants": { "Reader": "read", "Contributor": "write" }
+    },
+    {
+      "id": "pacific-terrain",
+      "title": "Pacific Terrain",
+      "description": "Island elevation either side of the antimeridian, from Fiji to the Aleutians, and the region's earthquakes.",
+      "grants": { "Reader": "read", "Contributor": "write" }
+    },
+    {
+      "id": "polar-terrain",
+      "title": "Polar Terrain",
+      "description": "Elevation from the high Arctic and the Ross Sea, where Web Mercator stretches the map.",
+      "grants": { "Reader": "read", "Contributor": "write" }
+    }
+  ],
+  "items": [
+    { "sample": "S2B_18SVE_20241028_0_L2A_TCI.tif", "collection": "coastal-change", "tags": ["outer-banks", "sentinel-2", "true-colour"] },
+    { "sample": "S2B_16RBT_20240206_0_L2A_TCI.tif", "collection": "coastal-change", "tags": ["mississippi-delta", "sentinel-2", "true-colour"] },
+    { "sample": "S2A_10SEG_20230618_0_L2A_TCI.tif", "collection": "coastal-change", "tags": ["san-francisco-bay", "sentinel-2", "true-colour"] },
+    { "sample": "Copernicus_DSM_COG_30_N35_00_W076_00_DEM.tif", "collection": "coastal-change", "tags": ["outer-banks", "elevation", "copernicus-dem"] },
+
+    { "sample": "S2A_4QGJ_20230813_0_L2A_TCI.tif", "collection": "wildfire-response", "tags": ["maui", "lahaina", "post-fire", "sentinel-2"] },
+    { "sample": "Copernicus_DSM_COG_30_N20_00_W157_00_DEM.tif", "collection": "wildfire-response", "tags": ["maui", "elevation", "copernicus-dem"] },
+
+    { "sample": "Copernicus_DSM_COG_30_S18_00_E178_00_DEM.tif", "collection": "pacific-terrain", "tags": ["fiji", "elevation", "copernicus-dem"] },
+    { "sample": "Copernicus_DSM_COG_30_S17_00_W180_00_DEM.tif", "collection": "pacific-terrain", "tags": ["fiji", "antimeridian", "elevation", "copernicus-dem"] },
+    { "sample": "Copernicus_DSM_COG_30_N51_00_E179_00_DEM.tif", "collection": "pacific-terrain", "tags": ["aleutians", "elevation", "copernicus-dem"] },
+    { "sample": "Copernicus_DSM_COG_30_N52_00_W177_00_DEM.tif", "collection": "pacific-terrain", "tags": ["aleutians", "elevation", "copernicus-dem"] },
+    { "sample": "usgs_quakes_m4.5_2020-01.csv", "collection": "pacific-terrain", "tags": ["earthquakes", "usgs"] },
+
+    { "sample": "Copernicus_DSM_COG_30_N77_00_E015_00_DEM.tif", "collection": "polar-terrain", "tags": ["svalbard", "arctic", "elevation", "copernicus-dem"] },
+    { "sample": "Copernicus_DSM_COG_30_N82_00_W063_00_DEM.tif", "collection": "polar-terrain", "tags": ["ellesmere", "arctic", "elevation", "copernicus-dem"] },
+    { "sample": "Copernicus_DSM_COG_30_S78_00_E166_00_DEM.tif", "collection": "polar-terrain", "tags": ["ross-island", "antarctic", "elevation", "copernicus-dem"] },
+
+    { "sample": "autzen-classified.copc.laz", "collection": "site-survey-alpha", "tags": ["lidar", "classified"] },
+    { "sample": "sites.geojson", "collection": "site-survey-alpha", "tags": ["survey-sites"] },
+    { "sample": "sites.shp", "collection": "site-survey-alpha", "tags": ["survey-sites", "no-projection"] },
+    { "sample": "example.parquet", "collection": "site-survey-alpha", "tags": ["countries", "geoparquet"] },
+    { "sample": "Box.glb", "collection": "site-survey-alpha", "tags": ["mesh"] },
+    { "sample": "ABeautifulGame.glb", "collection": "site-survey-alpha", "tags": ["mesh", "photogrammetry"] },
+    { "sample": "WaterBottle.glb", "collection": "site-survey-alpha", "tags": ["mesh"] },
+    { "sample": "WaterBottle_emissive.png", "collection": "site-survey-alpha", "tags": ["texture"] },
+
+    { "sample": "readings-kits.csv", "collection": "bio-lab-readings", "tags": ["field-kits", "daily"] },
+    { "sample": "readings-kits.jsonl", "collection": "bio-lab-readings", "tags": ["field-kits", "daily"] },
+    { "sample": "alltypes_plain.parquet", "collection": "bio-lab-readings", "tags": ["assays"] },
+
+    { "sample": "USGS_LPC_CO_DRCOG_2020_B20_w0476n4425.laz", "collection": "range-ops-cui", "tags": ["lidar", "range"] },
+    { "sample": "Fox.glb", "collection": "range-ops-cui", "tags": ["mesh", "range"] },
+    { "sample": "byte.tif", "collection": "range-ops-cui", "tags": ["terrain", "range"] }
+  ]
+}

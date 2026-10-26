@@ -1,8 +1,10 @@
--- Development and demo seed. Idempotent; never run against production.
+-- Development seed: the collections the tests and the demo (`make demo`) start from. Idempotent;
+-- never run against production.
 -- Users (Keycloak realm `ingest`):
 --   alice  Admin        + Clearance.CUI
 --   carol  Contributor  + Clearance.CUI
 --   bob    Reader       (UNCLASSIFIED only)
+--   e2e    Contributor  + Clearance.CUI, for `make e2e` alone: granted only its own collections
 
 INSERT INTO catalog.collections (id, title, description, marking, cui_categories, dissemination, retention, created_by)
 VALUES

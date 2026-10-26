@@ -1,5 +1,5 @@
 {
-  "about": "The sample corpus for `make samples` and `make e2e`. Each sample is downloaded from the cited primary source, generated, or derived from another sample, and kept only if its sha256 matches. `uploads` says how the e2e suite uploads it (filename, which of the run's collections, declared checksum) and what each upload must become; fields left out are not checked. Mesh extents are POSITION accessor bounds in model space; footprints are WGS84 west, south, east, north. `derivatives` maps each derivative a cataloged upload must end with, and no other, to its media type, by the spec's derive rules (01-spec.md §4, step 7), not by running them: a raster whose header reads gets a PNG thumbnail, and a COG too when it has a CRS and isn't one already; a GeoPackage, Shapefile or GeoJSON whose header reads, or was too big to read within the budget, gets a GeoParquet copy; other kinds get none yet. Every COG made is checked by rio-cogeo, and every GeoParquet against the GeoParquet project's schema, not by our recipes.",
+  "about": "The sample corpus for `make samples` and `make e2e`, and the files the demo (`make demo`, `samples/demo.json`) loads: the `demo` set is fetched and checked only for those, or with `make samples DEMO=1`. Each sample is downloaded from the cited primary source, generated, or derived from another sample, and kept only if its sha256 matches. `uploads` says how the e2e suite uploads it (filename, which of the run's collections, declared checksum) and what each upload must become; fields left out are not checked. Mesh extents are POSITION accessor bounds in model space; footprints are WGS84 west, south, east, north. `derivatives` maps each derivative a cataloged upload must end with, and no other, to its media type, by the spec's derive rules (01-spec.md §4, step 7), not by running them: a raster whose header reads gets a PNG thumbnail, and a COG too when it has a CRS and isn't one already; a GeoPackage, Shapefile or GeoJSON whose header reads, or was too big to read within the budget, gets a GeoParquet copy; other kinds get none yet. Every COG made is checked by rio-cogeo, and every GeoParquet against the GeoParquet project's schema, not by our recipes.",
   "samples": [
     {
       "name": "S2A_10SEG_20230618_0_L2A_TCI.tif",
@@ -757,6 +757,498 @@
             "media_type": "image/tiff",
             "extraction": "unreadable",
             "derivatives": {}
+          }
+        }
+      ]
+    },
+    {
+      "name": "S2B_18SVE_20241028_0_L2A_TCI.tif",
+      "set": "demo",
+      "sha256": "f151b665ae6af3d8e4582ed4892929bffc9cd52b7036794f0443d4402abd3aaf",
+      "size": 198561250,
+      "source": {
+        "url": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/18/S/VE/2024/10/S2B_18SVE_20241028_0_L2A/TCI.tif",
+        "page": "https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/S2B_18SVE_20241028_0_L2A",
+        "licence": "Copernicus Sentinel Data Terms (free, full and open; attribution required)",
+        "licence_url": "https://sentinel.esa.int/documents/247904/690755/Sentinel_Data_Legal_Notice"
+      },
+      "notes": "Sentinel-2 true colour of the Outer Banks, North Carolina; cloud cover 0.07%. crs (properties.proj:epsg), bbox (WGS84) and proj:shape from the Earth Search STAC item; the bbox also agrees within 0.002 degrees with the visual asset's proj:transform and proj:shape projected by pyproj. Cloud-optimized: Earth Search types the asset profile=cloud-optimized, as for the default set's TCI.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:32618",
+            "bbox": [
+              -76.11191385205836,
+              35.1499211736146,
+              -74.89152152018616,
+              36.14484027029347
+            ],
+            "properties": {
+              "raster:band_count": 3,
+              "proj:shape": [
+                10980,
+                10980
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "S2A_4QGJ_20230813_0_L2A_TCI.tif",
+      "set": "demo",
+      "sha256": "1435f2519f2a9197b207db64f164ae9fd98fb528e16926c119bb113bb1cb07ec",
+      "size": 333487856,
+      "source": {
+        "url": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/4/Q/GJ/2023/8/S2A_4QGJ_20230813_0_L2A/TCI.tif",
+        "page": "https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/S2A_4QGJ_20230813_0_L2A",
+        "licence": "Copernicus Sentinel Data Terms (free, full and open; attribution required)",
+        "licence_url": "https://sentinel.esa.int/documents/247904/690755/Sentinel_Data_Legal_Notice"
+      },
+      "notes": "Sentinel-2 true colour of west Maui five days after the Lahaina fire; cloud cover 6.7%. crs (properties.proj:epsg), bbox (WGS84) and proj:shape from the Earth Search STAC item; the bbox also agrees within 0.002 degrees with the visual asset's proj:transform and proj:shape projected by pyproj. Cloud-optimized: Earth Search types the asset profile=cloud-optimized, as for the default set's TCI.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:32604",
+            "bbox": [
+              -157.08005520095026,
+              20.685666438735453,
+              -156.0088349688483,
+              21.69214219474222
+            ],
+            "properties": {
+              "raster:band_count": 3,
+              "proj:shape": [
+                10980,
+                10980
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "S2B_16RBT_20240206_0_L2A_TCI.tif",
+      "set": "demo",
+      "sha256": "3cfbe8b4cf9e22fa9ab8cdc187b9a557f217164e2463e1022ec411f678ad32bd",
+      "size": 211320304,
+      "source": {
+        "url": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/16/R/BT/2024/2/S2B_16RBT_20240206_0_L2A/TCI.tif",
+        "page": "https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/S2B_16RBT_20240206_0_L2A",
+        "licence": "Copernicus Sentinel Data Terms (free, full and open; attribution required)",
+        "licence_url": "https://sentinel.esa.int/documents/247904/690755/Sentinel_Data_Legal_Notice"
+      },
+      "notes": "Sentinel-2 true colour of the Mississippi River delta; cloud cover 0.0%. crs (properties.proj:epsg), bbox (WGS84) and proj:shape from the Earth Search STAC item; the bbox also agrees within 0.002 degrees with the visual asset's proj:transform and proj:shape projected by pyproj. Cloud-optimized: Earth Search types the asset profile=cloud-optimized, as for the default set's TCI.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:32616",
+            "bbox": [
+              -90.10352614028547,
+              28.804454491507947,
+              -88.94951856297033,
+              29.815791988006527
+            ],
+            "properties": {
+              "raster:band_count": 3,
+              "proj:shape": [
+                10980,
+                10980
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Copernicus_DSM_COG_30_N20_00_W157_00_DEM.tif",
+      "set": "demo",
+      "sha256": "5145dc38670bb3f3fa99252fc3d419cfd67378fa2c44743284a28f9d26f88399",
+      "size": 1204079,
+      "source": {
+        "url": "https://copernicus-dem-90m.s3.amazonaws.com/Copernicus_DSM_COG_30_N20_00_W157_00_DEM/Copernicus_DSM_COG_30_N20_00_W157_00_DEM.tif",
+        "page": "https://registry.opendata.aws/copernicus-dem/",
+        "licence": "Copernicus DEM GLO-90 licence (free, worldwide; attribution required)",
+        "licence_url": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM"
+      },
+      "notes": "Copernicus GLO-90 elevation of west Maui. A tile is named for its south-west corner and covers one degree each way, which is the bbox; hand-parsing the TIFF with struct agrees: GeographicTypeGeoKey 4326, RasterPixelIsPoint, tiepoint on the tile's north-west corner, 1200x1200 pixels (wider spacing in longitude toward the poles), so the half-pixel offset is under 0.0025 degrees. Cloud-optimized: the file opens with GDAL's COG ghost header (LAYOUT=IFDS_BEFORE_DATA, BLOCK_ORDER=ROW_MAJOR, BLOCK_LEADER and BLOCK_TRAILER, read with Python from bytes 8 to 148), which only GDAL's COG driver writes, and it is tiled with two internal overviews; so the derive rules make no COG of it.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:4326",
+            "bbox": [
+              -157,
+              20,
+              -156,
+              21
+            ],
+            "properties": {
+              "raster:band_count": 1,
+              "proj:shape": [
+                1200,
+                1200
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Copernicus_DSM_COG_30_N35_00_W076_00_DEM.tif",
+      "set": "demo",
+      "sha256": "0f0801c6ab31a81fe8de7767675d287f6ee99ba1bb7766210837fa6a1d07f34c",
+      "size": 860787,
+      "source": {
+        "url": "https://copernicus-dem-90m.s3.amazonaws.com/Copernicus_DSM_COG_30_N35_00_W076_00_DEM/Copernicus_DSM_COG_30_N35_00_W076_00_DEM.tif",
+        "page": "https://registry.opendata.aws/copernicus-dem/",
+        "licence": "Copernicus DEM GLO-90 licence (free, worldwide; attribution required)",
+        "licence_url": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM"
+      },
+      "notes": "Copernicus GLO-90 elevation of the Outer Banks. A tile is named for its south-west corner and covers one degree each way, which is the bbox; hand-parsing the TIFF with struct agrees: GeographicTypeGeoKey 4326, RasterPixelIsPoint, tiepoint on the tile's north-west corner, 1200x1200 pixels (wider spacing in longitude toward the poles), so the half-pixel offset is under 0.0025 degrees. Cloud-optimized: the file opens with GDAL's COG ghost header (LAYOUT=IFDS_BEFORE_DATA, BLOCK_ORDER=ROW_MAJOR, BLOCK_LEADER and BLOCK_TRAILER, read with Python from bytes 8 to 148), which only GDAL's COG driver writes, and it is tiled with two internal overviews; so the derive rules make no COG of it.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:4326",
+            "bbox": [
+              -76,
+              35,
+              -75,
+              36
+            ],
+            "properties": {
+              "raster:band_count": 1,
+              "proj:shape": [
+                1200,
+                1200
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Copernicus_DSM_COG_30_S18_00_E178_00_DEM.tif",
+      "set": "demo",
+      "sha256": "fb744884107ceab4604fbac25342c1e95a27142c2511d65f867d8269d23737fa",
+      "size": 2076947,
+      "source": {
+        "url": "https://copernicus-dem-90m.s3.amazonaws.com/Copernicus_DSM_COG_30_S18_00_E178_00_DEM/Copernicus_DSM_COG_30_S18_00_E178_00_DEM.tif",
+        "page": "https://registry.opendata.aws/copernicus-dem/",
+        "licence": "Copernicus DEM GLO-90 licence (free, worldwide; attribution required)",
+        "licence_url": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM"
+      },
+      "notes": "Copernicus GLO-90 elevation of Viti Levu, Fiji, west of the antimeridian. A tile is named for its south-west corner and covers one degree each way, which is the bbox; hand-parsing the TIFF with struct agrees: GeographicTypeGeoKey 4326, RasterPixelIsPoint, tiepoint on the tile's north-west corner, 1200x1200 pixels (wider spacing in longitude toward the poles), so the half-pixel offset is under 0.0025 degrees. Cloud-optimized: the file opens with GDAL's COG ghost header (LAYOUT=IFDS_BEFORE_DATA, BLOCK_ORDER=ROW_MAJOR, BLOCK_LEADER and BLOCK_TRAILER, read with Python from bytes 8 to 148), which only GDAL's COG driver writes, and it is tiled with two internal overviews; so the derive rules make no COG of it.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:4326",
+            "bbox": [
+              178,
+              -18,
+              179,
+              -17
+            ],
+            "properties": {
+              "raster:band_count": 1,
+              "proj:shape": [
+                1200,
+                1200
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Copernicus_DSM_COG_30_S17_00_W180_00_DEM.tif",
+      "set": "demo",
+      "sha256": "2de8522ec3bf2a6914a359721299ecc9a492fe1a19e985d3c82de63bc0a47061",
+      "size": 303989,
+      "source": {
+        "url": "https://copernicus-dem-90m.s3.amazonaws.com/Copernicus_DSM_COG_30_S17_00_W180_00_DEM/Copernicus_DSM_COG_30_S17_00_W180_00_DEM.tif",
+        "page": "https://registry.opendata.aws/copernicus-dem/",
+        "licence": "Copernicus DEM GLO-90 licence (free, worldwide; attribution required)",
+        "licence_url": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM"
+      },
+      "notes": "Copernicus GLO-90 elevation of Taveuni, Fiji, east of the antimeridian, its west edge on it. A tile is named for its south-west corner and covers one degree each way, which is the bbox; hand-parsing the TIFF with struct agrees: GeographicTypeGeoKey 4326, RasterPixelIsPoint, tiepoint on the tile's north-west corner, 1200x1200 pixels (wider spacing in longitude toward the poles), so the half-pixel offset is under 0.0025 degrees. Cloud-optimized: the file opens with GDAL's COG ghost header (LAYOUT=IFDS_BEFORE_DATA, BLOCK_ORDER=ROW_MAJOR, BLOCK_LEADER and BLOCK_TRAILER, read with Python from bytes 8 to 148), which only GDAL's COG driver writes, and it is tiled with two internal overviews; so the derive rules make no COG of it.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:4326",
+            "bbox": [
+              -180,
+              -17,
+              -179,
+              -16
+            ],
+            "properties": {
+              "raster:band_count": 1,
+              "proj:shape": [
+                1200,
+                1200
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Copernicus_DSM_COG_30_N51_00_E179_00_DEM.tif",
+      "set": "demo",
+      "sha256": "3448761df652a2ab664a9c7a3baa602272b7c74a8014e2430efd3b87fd43eb1a",
+      "size": 265788,
+      "source": {
+        "url": "https://copernicus-dem-90m.s3.amazonaws.com/Copernicus_DSM_COG_30_N51_00_E179_00_DEM/Copernicus_DSM_COG_30_N51_00_E179_00_DEM.tif",
+        "page": "https://registry.opendata.aws/copernicus-dem/",
+        "licence": "Copernicus DEM GLO-90 licence (free, worldwide; attribution required)",
+        "licence_url": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM"
+      },
+      "notes": "Copernicus GLO-90 elevation of the Rat Islands, Aleutians, west of the antimeridian. A tile is named for its south-west corner and covers one degree each way, which is the bbox; hand-parsing the TIFF with struct agrees: GeographicTypeGeoKey 4326, RasterPixelIsPoint, tiepoint on the tile's north-west corner, 800x1200 pixels (wider spacing in longitude toward the poles), so the half-pixel offset is under 0.0025 degrees. Cloud-optimized: the file opens with GDAL's COG ghost header (LAYOUT=IFDS_BEFORE_DATA, BLOCK_ORDER=ROW_MAJOR, BLOCK_LEADER and BLOCK_TRAILER, read with Python from bytes 8 to 148), which only GDAL's COG driver writes, and it is tiled with two internal overviews; so the derive rules make no COG of it.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:4326",
+            "bbox": [
+              179,
+              51,
+              180,
+              52
+            ],
+            "properties": {
+              "raster:band_count": 1,
+              "proj:shape": [
+                1200,
+                800
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Copernicus_DSM_COG_30_N52_00_W177_00_DEM.tif",
+      "set": "demo",
+      "sha256": "4f484a1167fb186e559c0303f208da0378ae7701d209383aa16848e49f2965d2",
+      "size": 131558,
+      "source": {
+        "url": "https://copernicus-dem-90m.s3.amazonaws.com/Copernicus_DSM_COG_30_N52_00_W177_00_DEM/Copernicus_DSM_COG_30_N52_00_W177_00_DEM.tif",
+        "page": "https://registry.opendata.aws/copernicus-dem/",
+        "licence": "Copernicus DEM GLO-90 licence (free, worldwide; attribution required)",
+        "licence_url": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM"
+      },
+      "notes": "Copernicus GLO-90 elevation of Adak, Aleutians, east of the antimeridian. A tile is named for its south-west corner and covers one degree each way, which is the bbox; hand-parsing the TIFF with struct agrees: GeographicTypeGeoKey 4326, RasterPixelIsPoint, tiepoint on the tile's north-west corner, 800x1200 pixels (wider spacing in longitude toward the poles), so the half-pixel offset is under 0.0025 degrees. Cloud-optimized: the file opens with GDAL's COG ghost header (LAYOUT=IFDS_BEFORE_DATA, BLOCK_ORDER=ROW_MAJOR, BLOCK_LEADER and BLOCK_TRAILER, read with Python from bytes 8 to 148), which only GDAL's COG driver writes, and it is tiled with two internal overviews; so the derive rules make no COG of it.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:4326",
+            "bbox": [
+              -177,
+              52,
+              -176,
+              53
+            ],
+            "properties": {
+              "raster:band_count": 1,
+              "proj:shape": [
+                1200,
+                800
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Copernicus_DSM_COG_30_N77_00_E015_00_DEM.tif",
+      "set": "demo",
+      "sha256": "20b93ed077ab197da2835b1078d379672c3fb09e814dfee7909b8aa07aeb1e12",
+      "size": 1601249,
+      "source": {
+        "url": "https://copernicus-dem-90m.s3.amazonaws.com/Copernicus_DSM_COG_30_N77_00_E015_00_DEM/Copernicus_DSM_COG_30_N77_00_E015_00_DEM.tif",
+        "page": "https://registry.opendata.aws/copernicus-dem/",
+        "licence": "Copernicus DEM GLO-90 licence (free, worldwide; attribution required)",
+        "licence_url": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM"
+      },
+      "notes": "Copernicus GLO-90 elevation of Svalbard. A tile is named for its south-west corner and covers one degree each way, which is the bbox; hand-parsing the TIFF with struct agrees: GeographicTypeGeoKey 4326, RasterPixelIsPoint, tiepoint on the tile's north-west corner, 400x1200 pixels (wider spacing in longitude toward the poles), so the half-pixel offset is under 0.0025 degrees. Cloud-optimized: the file opens with GDAL's COG ghost header (LAYOUT=IFDS_BEFORE_DATA, BLOCK_ORDER=ROW_MAJOR, BLOCK_LEADER and BLOCK_TRAILER, read with Python from bytes 8 to 148), which only GDAL's COG driver writes, and it is tiled with two internal overviews; so the derive rules make no COG of it.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:4326",
+            "bbox": [
+              15,
+              77,
+              16,
+              78
+            ],
+            "properties": {
+              "raster:band_count": 1,
+              "proj:shape": [
+                1200,
+                400
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Copernicus_DSM_COG_30_N82_00_W063_00_DEM.tif",
+      "set": "demo",
+      "sha256": "58b597d46a90a3115b10f2f03a325434d03cfd1bec34dff9c842ad56b17ea507",
+      "size": 614208,
+      "source": {
+        "url": "https://copernicus-dem-90m.s3.amazonaws.com/Copernicus_DSM_COG_30_N82_00_W063_00_DEM/Copernicus_DSM_COG_30_N82_00_W063_00_DEM.tif",
+        "page": "https://registry.opendata.aws/copernicus-dem/",
+        "licence": "Copernicus DEM GLO-90 licence (free, worldwide; attribution required)",
+        "licence_url": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM"
+      },
+      "notes": "Copernicus GLO-90 elevation of northern Ellesmere Island, nearly past where Web Mercator draws. A tile is named for its south-west corner and covers one degree each way, which is the bbox; hand-parsing the TIFF with struct agrees: GeographicTypeGeoKey 4326, RasterPixelIsPoint, tiepoint on the tile's north-west corner, 240x1200 pixels (wider spacing in longitude toward the poles), so the half-pixel offset is under 0.0025 degrees. Cloud-optimized: the file opens with GDAL's COG ghost header (LAYOUT=IFDS_BEFORE_DATA, BLOCK_ORDER=ROW_MAJOR, BLOCK_LEADER and BLOCK_TRAILER, read with Python from bytes 8 to 148), which only GDAL's COG driver writes, and it is tiled with two internal overviews; so the derive rules make no COG of it.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:4326",
+            "bbox": [
+              -63,
+              82,
+              -62,
+              83
+            ],
+            "properties": {
+              "raster:band_count": 1,
+              "proj:shape": [
+                1200,
+                240
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Copernicus_DSM_COG_30_S78_00_E166_00_DEM.tif",
+      "set": "demo",
+      "sha256": "b7e1867f53df0f3324fe02754ebabcb6737c5c2909dfcfb99c92588c3a2044c5",
+      "size": 873279,
+      "source": {
+        "url": "https://copernicus-dem-90m.s3.amazonaws.com/Copernicus_DSM_COG_30_S78_00_E166_00_DEM/Copernicus_DSM_COG_30_S78_00_E166_00_DEM.tif",
+        "page": "https://registry.opendata.aws/copernicus-dem/",
+        "licence": "Copernicus DEM GLO-90 licence (free, worldwide; attribution required)",
+        "licence_url": "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM"
+      },
+      "notes": "Copernicus GLO-90 elevation of Ross Island, Antarctica. A tile is named for its south-west corner and covers one degree each way, which is the bbox; hand-parsing the TIFF with struct agrees: GeographicTypeGeoKey 4326, RasterPixelIsPoint, tiepoint on the tile's north-west corner, 400x1200 pixels (wider spacing in longitude toward the poles), so the half-pixel offset is under 0.0025 degrees. Cloud-optimized: the file opens with GDAL's COG ghost header (LAYOUT=IFDS_BEFORE_DATA, BLOCK_ORDER=ROW_MAJOR, BLOCK_LEADER and BLOCK_TRAILER, read with Python from bytes 8 to 148), which only GDAL's COG driver writes, and it is tiled with two internal overviews; so the derive rules make no COG of it.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "raster",
+            "media_type": "image/tiff",
+            "extraction": "extracted",
+            "crs": "EPSG:4326",
+            "bbox": [
+              166,
+              -78,
+              167,
+              -77
+            ],
+            "properties": {
+              "raster:band_count": 1,
+              "proj:shape": [
+                1200,
+                400
+              ],
+              "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
           }
         }
       ]

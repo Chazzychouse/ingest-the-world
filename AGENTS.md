@@ -35,8 +35,9 @@ Tests run across every core (pytest-xdist); `make services-down` discards the te
 | `make mutants` | After changing tests or checks: plants known bugs and verifies each is caught by the right invariant (runs only the tests declaring each mutant's invariants, several mutants at once; `--jobs=N` in `tools/mutants.py`). |
 | `make mutants-full` | The same against the whole suite per mutant (~40 min); nightly CI runs it. |
 | `make up` | Running the full local stack (http://localhost:8081). |
-| `make samples` | Fetching and verifying the sample corpus (`samples/manifest.json`); `LARGE=1` adds multi-GB files. |
+| `make samples` | Fetching and verifying the sample corpus (`samples/manifest.json`); `LARGE=1` adds multi-GB files, `DEMO=1` the demo's. |
 | `make e2e` | After `make up`, when a change touches the pipeline end to end: uploads every sample through the stack and checks its outcome and metadata. |
+| `make demo` | After `make up`: loads the demo catalog (`samples/demo.json`), real files through the pipeline. `make demo-reset` wipes the local data first. |
 | `make image-smoke` | After changing the API image or a native dependency: builds it and runs the worker's `--check`. |
 
 ## Application structure
@@ -229,6 +230,8 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
   upload and read URLs alike (ACC-8).
 - `api/tests/test_fuzz.py`, `test_robustness.py`: schema-driven and targeted fuzzing (ROB-1,
   ACC-1).
+- `api/tools/stack.py`: the running stack driven from outside (sign-in, uploads in blocks, waiting
+  on an upload), shared by the end-to-end suite and the demo loader (`api/tools/demo.py`).
 - `api/tests/e2e/` (`make e2e`, deselected from `make check`): the sample corpus through the
   running stack. Expectations live only in `samples/manifest.json`, taken from sources
   independent of our readers; a sample that fails there is a finding, not a manifest edit.

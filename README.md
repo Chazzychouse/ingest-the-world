@@ -15,6 +15,7 @@ Requires Docker. No Azure account needed.
 ```sh
 cp .env.example .env   # set ACCEPT_EULA=Y to add the queue (see below)
 make up
+make demo              # optional: load the demo catalog, real files (~1 GB, fetched once)
 open http://localhost:8081
 ```
 
@@ -29,8 +30,18 @@ emulator tests to `make check`. Without it everything else runs and the queue te
 | alice | alice | Admin | CUI | everything |
 | carol | carol | Contributor | CUI | all seeded collections |
 | bob   | bob   | Reader | UNCLASSIFIED | unclassified collections only |
+| e2e   | e2e   | Contributor | CUI | only the collections `make e2e` makes, granted to it by name |
 
 Development credentials only, defined in [`infra/keycloak/ingest-realm.json`](infra/keycloak/ingest-realm.json).
+Keycloak imports the realm only when it first starts, so a changed realm file needs `make reset`.
+
+The demo catalog ([`samples/demo.json`](samples/demo.json)) is public data uploaded through the
+pipeline: Sentinel-2 scenes of the Outer Banks, the Mississippi delta, San Francisco Bay and Maui
+after the Lahaina fire; Copernicus elevation tiles either side of the antimeridian and near both
+poles; and the sample corpus's point clouds, meshes, vectors and tables. `make demo` uploads only
+what isn't there yet; `make demo-reset` starts from empty. The end-to-end suite's collections are
+granted to the `e2e` user alone, so carol and bob never see them; alice, an Admin, sees every
+collection by design.
 
 | Service | URL |
 |---------|-----|

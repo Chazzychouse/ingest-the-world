@@ -34,6 +34,7 @@ FIELDS = {
     "kind": "what kind of file it is",
     "marking": "its marking's code",
     "title": "its filename",
+    "area": "its footprint's bounding box in square degrees, to draw and pick small over large",
 }
 
 Zoom = Annotated[int, Path(ge=0, le=MAX_ZOOM)]
