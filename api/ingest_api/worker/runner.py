@@ -32,7 +32,7 @@ log = logging.getLogger("ingest.worker")
 
 type Connect = Callable[[], AbstractContextManager[Connection[TupleRow]]]
 
-INVALID_EVENT = "InvalidEvent"
+INVALID_MESSAGE = "InvalidMessage"
 RETRYABLE = (Busy, StorageError, psycopg.OperationalError)
 
 
@@ -206,7 +206,7 @@ def settle(queue: Queue, message: Message, settlement: Settlement) -> None:
             case Settlement.ABANDON:
                 queue.abandon(message)
             case Settlement.DEAD_LETTER:
-                queue.dead_letter(message, reason=INVALID_EVENT)
+                queue.dead_letter(message, reason=INVALID_MESSAGE)
     except LockLost:
         # The work is done or will be redone on redelivery; either way it is idempotent (ING-1).
         log.info("lock on message %s expired before it was settled", message.id)
