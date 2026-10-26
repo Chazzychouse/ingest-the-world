@@ -11,8 +11,10 @@ Each job ends `derived` or `failed` once, and every step is safe to repeat: a de
 name is fixed by its job, it is written with `create`, which never overwrites, a blob an earlier
 attempt wrote is recorded instead of rendered again, and the asset row is written only once its
 blob exists (ING-12). The stage reads items and writes only assets and its own jobs, so it never
-changes an item, and only cataloged files are items (ING-11). One item is derived at a time,
-under a lock on it, and its original is copied to scratch at most once for all its recipes.
+changes an item, and only cataloged files are items (ING-11). An item is marked settled once every
+recipe that applies has an outcome, and unmarked before any job of it begins again (ING-13). One
+item is derived at a time, under a lock on it, and its original is copied to scratch at most once
+for all its recipes.
 """
 
 import hashlib
@@ -83,8 +85,13 @@ def derive(conn: Connection[TupleRow], d: Deriver, item_id: UUID) -> dict[str, j
         source = _source(conn, d, item_id)
         if source is None:
             return {}
+        _unsettle(conn, item_id)
         original = cache(partial(_download, source, Path(scratch) / ORIGINAL))
-        return {_label(r): _run(conn, d, source, original, r) for r in _applying(d, source)}
+        stages: dict[str, jobs.DeriveStage] = {
+            _label(r): _run(conn, d, source, original, r) for r in _applying(d, source)
+        }
+        _settle(conn, d, item_id)
+        return stages
 
 
 def give_up(
@@ -97,6 +104,7 @@ def give_up(
         source = _source(conn, d, item_id)
         if source is None:
             return {}
+        _unsettle(conn, item_id)
         stages: dict[str, jobs.DeriveStage] = {}
         for recipe in _applying(d, source):
             job = _begin(conn, d, source, recipe)
@@ -108,7 +116,19 @@ def give_up(
                 stages[_label(recipe)] = _fail(conn, d, job, reason)
                 continue
             stages[_label(recipe)] = _keep(conn, d, source, recipe, job, written)
+        _settle(conn, d, item_id)
         return stages
+
+
+def _unsettle(conn: Connection[TupleRow], item_id: UUID) -> None:
+    jobs.unsettle_derive(conn, item_id)
+    conn.commit()
+
+
+def _settle(conn: Connection[TupleRow], d: Deriver, item_id: UUID) -> None:
+    """Every recipe that applies has an outcome: the item's upload is ready (ING-13)."""
+    jobs.settle_derive(conn, item_id, now=d.clock.now())
+    conn.commit()
 
 
 def _label(recipe: Recipe) -> str:

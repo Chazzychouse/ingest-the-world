@@ -26,9 +26,11 @@ Tag = Annotated[str, Field(min_length=1, max_length=64, pattern=NO_NUL_PATTERN)]
 Outcome = Literal["cataloged", "quarantined", "rejected"]
 # `pending` until the pipeline decides; then the outcome of the version it acted on.
 UploadStatus = Literal["pending", Outcome, "abandoned"]
-# Where a pending upload is: its bytes not yet announced (still transferring, or never sent), or
-# a version of them in the pipeline.
-PendingStage = Literal["awaiting-bytes", "processing"]
+# Where an upload is, while it has somewhere to go. Pending: its bytes not yet announced (still
+# transferring, or never sent), or a version of them in the pipeline. Cataloged: its derivatives
+# being made, or every one that applies settled (ING-13). Quarantined, rejected and abandoned
+# uploads are done, and have none.
+UploadStage = Literal["awaiting-bytes", "processing", "deriving", "ready"]
 DEFAULT_LIST_PAGE = 50
 MAX_LIST_PAGE = 100
 
@@ -63,7 +65,7 @@ class Upload(UploadIn):
 
     id: UUID
     status: UploadStatus
-    stage: PendingStage | None  # null once the status isn't pending
+    stage: UploadStage | None  # null once it's quarantined, rejected or abandoned
     attempts: int  # deliveries so far of the version being processed; 0 when none is
     reason: Reason | None  # why it was rejected; null unless it was
     signature: str | None  # what the scanner found, if it was quarantined

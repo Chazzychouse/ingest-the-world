@@ -165,3 +165,19 @@ def record_derive_error(
         """,
         (error[:1000], now, item_id),
     )
+
+
+def unsettle_derive(conn: Connection[TupleRow], item_id: UUID) -> None:
+    """Marks the item's derivatives as in hand again, before any job of them begins (ING-13)."""
+    conn.execute("DELETE FROM ingest.derive_settled WHERE item_id = %s", (item_id,))
+
+
+def settle_derive(conn: Connection[TupleRow], item_id: UUID, *, now: datetime) -> None:
+    """Marks every derivative of the item as having an outcome (ING-13)."""
+    conn.execute(
+        """
+        INSERT INTO ingest.derive_settled (item_id, settled_at) VALUES (%s, %s)
+        ON CONFLICT (item_id) DO UPDATE SET settled_at = EXCLUDED.settled_at
+        """,
+        (item_id, now),
+    )

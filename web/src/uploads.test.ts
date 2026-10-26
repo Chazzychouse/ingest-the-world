@@ -117,6 +117,22 @@ describe('Uploads', () => {
     expect(log.rows.has(ID)).toBe(false) // the API remembers it from here
   })
 
+  it('follows a cataloged upload until its derivatives are made, from the event stream or polls', async () => {
+    const { api, set } = fakeApi([record({ id: ID, status: 'cataloged', stage: 'deriving' })])
+    const u = uploads(api, recording(), memoryLog())
+    await u.poll()
+    expect(u.entries[0]).toMatchObject({ phase: 'finished', outcome: 'cataloged', stage: 'deriving' })
+
+    set(ID, { stage: 'ready' })
+    await u.poll()
+    expect(u.entries[0]).toMatchObject({ phase: 'finished', stage: 'ready' })
+
+    const other = '7a2d2e1f-3b5c-4d4e-9f0a-1b2c3d4e5f60'
+    u.receive(record({ id: other, status: 'cataloged', stage: 'deriving', created_at: '2026-10-26T00:00:00Z' }))
+    u.receive(record({ id: other, status: 'cataloged', stage: 'ready', created_at: '2026-10-26T00:00:00Z' }))
+    expect(u.entries.find((e) => e.key === other)).toMatchObject({ phase: 'finished', stage: 'ready' })
+  })
+
   it('resumes after a reload once the same file is picked again, staging only what was missing', async () => {
     const { api } = fakeApi([record({ id: ID, size_bytes: 3 * BLOCK_BYTES })])
     const storage = recording()

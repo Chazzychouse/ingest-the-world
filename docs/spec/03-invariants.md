@@ -73,6 +73,10 @@ requests carry the signed token the API handed the opener, which names the one i
 request outside a live session is refused with 404 and no event: it names nothing but a session
 id or a token.
 
+A live status stream (`GET /uploads/events`) is one request, audited once when it opens, with the
+highest marking among the uploads it watches then. It shows only the caller's own uploads, each
+audited when the caller started it, and lasts minutes before the client opens another.
+
 The pipeline is audited the same way: every outcome it gives a blob version writes exactly one
 event, as the system actor `system:pipeline`, committed in the same transaction as the outcome.
 A cataloged version is `allowed`; a quarantined or rejected one is `denied`, with the reason.
@@ -235,6 +239,15 @@ However often a derive job is redelivered or interrupted, it reaches one outcome
 recipe_version)`; every asset row and its blob in `derived/` agree; and every blob there has an
 asset or an unfinished job (ING-1, ING-2 and ING-5, extended to derivatives). Holds after every
 step of the derive simulation, including those that fail midway.
+
+### ING-13 Ready means derived
+
+Status: enforced
+
+An item is marked settled, and its upload reports `ready`, only while every derivative that applies
+to it has an outcome: none is in flight, however often its request is redelivered or a derive
+stage dies midway. Once the derive queue drains, every item is settled, so no upload reports
+`deriving` for ever. Holds after every step of the derive simulation, and after it drains.
 
 ## Lifecycle
 

@@ -118,7 +118,7 @@ function Outcome({ entry, onOpen }: { entry: Entry; onOpen: (id: string) => void
   if (entry.outcome === 'cataloged') {
     return (
       <span className="outcome ok">
-        Cataloged
+        {entry.stage === 'deriving' ? 'Cataloged, making previews' : 'Cataloged'}
         <button className="link" onClick={() => onOpen(entry.key)}>
           Show in search
         </button>

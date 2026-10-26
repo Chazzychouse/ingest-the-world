@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -23,6 +23,11 @@ class Clock(Protocol):
     def monotonic(self) -> float: ...
 
     def sleep(self, seconds: float) -> None: ...
+
+
+# Waits a number of seconds in an async task, yielding to others meanwhile: `anyio.sleep` in
+# production, something quicker in tests.
+type Pause = Callable[[float], Awaitable[None]]
 
 
 class Ids(Protocol):

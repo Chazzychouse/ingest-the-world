@@ -133,6 +133,7 @@ def reset_catalog(conn: psycopg.Connection) -> None:
         conn.execute("DELETE FROM ingest.jobs")
         conn.execute("DELETE FROM ingest.outbox")
         conn.execute("DELETE FROM ingest.derive_jobs")
+        conn.execute("DELETE FROM ingest.derive_settled")
         conn.execute("DELETE FROM catalog.footprint_views")
         conn.execute("DELETE FROM catalog.assets")
         conn.execute("DELETE FROM catalog.items")
@@ -155,7 +156,8 @@ def idp() -> TestIdp:
 
 def app_settings(database_url: str) -> Settings:
     """Settings for an app under test: the test IdP, the tests' Azurite account for signing
-    upload URLs, the Service Bus emulator with short receive waits, and a preview key."""
+    upload URLs, the Service Bus emulator with short receive waits, a preview key, and short
+    upload event streams."""
     return Settings(
         database_url=database_url,
         oidc_issuer=ISSUER,
@@ -165,6 +167,9 @@ def app_settings(database_url: str) -> Settings:
         queue_connection=SecretStr(EMULATOR_CONNECTION),
         queue_max_wait_seconds=1.0,
         preview_key=SecretStr(PREVIEW_KEY),
+        # Upload event streams of a few quick polls, so a request for one returns at once.
+        events_poll_seconds=0.01,
+        events_stream_seconds=0.05,
     )
 
 
