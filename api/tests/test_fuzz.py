@@ -6,6 +6,8 @@ The app runs on its own database, so the collections and grants fuzzing creates 
 other tests.
 """
 
+import json
+
 import psycopg
 import pytest
 import schemathesis
@@ -35,6 +37,18 @@ def _markings(body) -> list[str]:
     if isinstance(body, list):
         return [m for value in body for m in _markings(value)]
     return []
+
+
+def _body(response):
+    """The response's JSON: for an event stream, each event's data in turn."""
+    if not response.content:
+        return None
+    kind = response.headers.get("content-type", [""])  # Schemathesis lists each header's values
+    if (kind[0] if isinstance(kind, list) else kind).startswith("text/event-stream"):
+        # Events end lines at "\n" alone; JSON may hold other line breaks (U+2028) unescaped.
+        data = [line for line in response.text.split("\n") if line.startswith("data: ")]
+        return [json.loads(line.removeprefix("data: ")) for line in data]
+    return response.json()
 
 
 def _cui_ids(database_url: str) -> set[str]:
@@ -68,7 +82,7 @@ def _check_response(case, user, response, fuzz_database):
     )
     if "Clearance.CUI" in USERS[user] or response.status_code == 422:
         return  # 422 bodies echo the caller's own input back
-    body = response.json() if response.content else None
+    body = _body(response)
     # Only marking codes disclose a marking: TileJSON, say, describes a `marking` attribute.
     disclosed = set(_markings(body)) & _marking_codes(fuzz_database)
     check(

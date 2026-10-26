@@ -3,6 +3,7 @@
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
+import anyio
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,7 +14,7 @@ from ingest_api.auth import AuthError, OidcVerifier, verifier_from_settings
 from ingest_api.collections import routes as collections
 from ingest_api.deps import Runtime
 from ingest_api.items import routes as items
-from ingest_api.ports import BlobSigner, Clock, Ids, StorageError, SystemClock, UuidIds
+from ingest_api.ports import BlobSigner, Clock, Ids, Pause, StorageError, SystemClock, UuidIds
 from ingest_api.settings import Settings, get_settings
 from ingest_api.tiles import routes as tiles
 from ingest_api.uploads import routes as uploads
@@ -29,6 +30,7 @@ def create_app(
     *,
     clock: Clock | None = None,
     signer: BlobSigner | None = None,
+    pause: Pause | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     clock = clock or SystemClock()
@@ -39,6 +41,7 @@ def create_app(
         clock=clock,
         signer=signer or wiring.blob_signer(settings, clock),
         pool=ConnectionPool(settings.database_url, min_size=1, max_size=POOL_MAX_SIZE, open=False),
+        pause=pause or anyio.sleep,
     )
 
     @asynccontextmanager

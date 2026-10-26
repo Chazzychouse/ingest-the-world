@@ -293,6 +293,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/uploads/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Upload Events
+         * @description The caller's own uploads as they change, as server-sent `upload` events (each an
+         *     `Upload`): every upload being watched when the stream opens, then each again when it
+         *     changes. The stream ends after a few minutes; open another to carry on.
+         */
+        get: operations["upload_events_uploads_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/uploads/{upload_id}": {
         parameters: {
             query?: never;
@@ -862,7 +884,7 @@ export interface components {
             /** Size Bytes */
             size_bytes: number;
             /** Stage */
-            stage: ("awaiting-bytes" | "processing") | null;
+            stage: ("awaiting-bytes" | "processing" | "deriving" | "ready") | null;
             /**
              * Status
              * @enum {string}
@@ -1508,6 +1530,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_events_uploads_events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Upload events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
                 };
             };
         };

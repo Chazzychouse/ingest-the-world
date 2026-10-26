@@ -1479,7 +1479,9 @@
               {
                 "enum": [
                   "awaiting-bytes",
-                  "processing"
+                  "processing",
+                  "deriving",
+                  "ready"
                 ],
                 "type": "string"
               },
@@ -2638,6 +2640,29 @@
           }
         ],
         "summary": "Create Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    },
+    "/uploads/events": {
+      "get": {
+        "description": "The caller's own uploads as they change, as server-sent `upload` events (each an\n`Upload`): every upload being watched when the stream opens, then each again when it\nchanges. The stream ends after a few minutes; open another to carry on.",
+        "operationId": "upload_events_uploads_events_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Upload events"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upload Events",
         "tags": [
           "uploads"
         ]

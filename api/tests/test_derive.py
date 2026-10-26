@@ -27,7 +27,7 @@ from tests.conftest import TEST_LIMITS
 from tests.fakes import INLINE_RENDERER, CrashAfter, MemoryBlobStore, SimClock, SimQueue
 from tests.invariants import check
 from tests.items import Cataloged, NewItem, catalog
-from tests.recipes import Digest, Picky, Stamp
+from tests.recipes import Digest, DigestV2, Picky, Stamp
 from tests.test_raster_recipes import metadata, rgb, write_raster
 
 DERIVED, RAW = Container.DERIVED, Container.RAW
@@ -310,6 +310,30 @@ def test_giving_up_keeps_a_derivative_written_before_the_attempts_ran_out(
     assert stages == {"digest/v1": "derived"}
     assert _jobs(db, raster.id) == [("digest", "derived", None)]
     assert [a[3] for a in _assets(db, raster.id)] == store.names(DERIVED)
+
+
+def _settled(db, item_id: UUID) -> bool:
+    row = db.execute("SELECT 1 FROM ingest.derive_settled WHERE item_id = %s", (item_id,))
+    return row.fetchone() is not None
+
+
+@pytest.mark.invariant("ING-13")
+def test_an_item_is_not_ready_while_a_new_recipe_derives_it(db, item, database_url, tmp_path):
+    store = MemoryBlobStore()
+    raster = item(store)
+    shipped = [Digest(), DigestV2()]  # a new version, deployed after the item was derived
+    first = Deriver(store, SimClock(NOW), tmp_path, INLINE_RENDERER, [Digest()])
+    crashing = Deriver(CrashAfter(store, 1), SimClock(NOW), tmp_path, INLINE_RENDERER, shipped)
+    after = Deriver(store, SimClock(NOW), tmp_path, INLINE_RENDERER, shipped)
+    with psycopg.connect(database_url) as conn:
+        derive.derive(conn, first, raster.id)
+        check("ING-13", _settled(db, raster.id), "an item derived in full is not ready")
+        with pytest.raises(TransientStorageError):
+            derive.derive(conn, crashing, raster.id)
+        check("ING-13", not _settled(db, raster.id), "ready while digest/v2 is in flight")
+        derive.derive(conn, after, raster.id)
+
+    check("ING-13", _settled(db, raster.id), "not ready once every recipe has an outcome")
 
 
 # -- the outbox ---------------------------------------------------------------------------------

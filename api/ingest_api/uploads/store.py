@@ -14,7 +14,7 @@ from psycopg.rows import TupleRow, class_row
 from ingest_api import authz
 from ingest_api.auth import Principal
 from ingest_api.paging import Position
-from ingest_api.uploads.models import Outcome, PendingStage, UploadIn, UploadStatus
+from ingest_api.uploads.models import Outcome, UploadIn, UploadStage, UploadStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +28,7 @@ class UploadRow:
     tags: list[str]
     blob_name: str
     status: UploadStatus
-    stage: PendingStage | None
+    stage: UploadStage | None
     attempts: int
     reason: str | None
     signature: str | None
@@ -48,9 +48,10 @@ def blob_name(collection_id: str, upload_id: UUID, filename: str) -> str:
 _SELECT_READABLE = f"""
     SELECT u.id, u.collection_id, u.filename, u.size_bytes, u.content_type, u.sha256, u.tags,
            u.blob_name, u.status,
-           CASE WHEN u.status <> 'pending' THEN NULL
-                WHEN running.attempts IS NULL THEN 'awaiting-bytes'
-                ELSE 'processing' END AS stage,
+           CASE WHEN u.status = 'pending' AND running.attempts IS NULL THEN 'awaiting-bytes'
+                WHEN u.status = 'pending' THEN 'processing'
+                WHEN u.status = 'cataloged' AND settled.item_id IS NULL THEN 'deriving'
+                WHEN u.status = 'cataloged' THEN 'ready' END AS stage,
            coalesce(running.attempts, 0) AS attempts,
            CASE WHEN u.status = 'rejected' THEN decided.reason END AS reason,
            CASE WHEN u.status = 'quarantined' THEN decided.reason END AS signature,
@@ -68,6 +69,8 @@ _SELECT_READABLE = f"""
         WHERE upload_id = u.id AND stage = u.status
         ORDER BY updated_at DESC LIMIT 1
     ) decided ON true
+    -- A cataloged upload's item has the upload's id; it is ready once its derivatives settle.
+    LEFT JOIN ingest.derive_settled settled ON settled.item_id = u.id
     JOIN catalog.collections c ON c.id = u.collection_id
     JOIN authz.markings m ON m.code = c.marking
     WHERE u.collection_id IN ({authz.READABLE_IDS})

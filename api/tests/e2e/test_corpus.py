@@ -69,15 +69,18 @@ def _declared(sample: samples.Sample, upload: samples.Upload) -> str | None:
             return None
 
 
-def _await_outcome(api: Api, upload_id: str, size: int) -> dict[str, Any]:
+def _await(
+    api: Api, upload_id: str, size: int, *, done: Callable[[dict[str, Any]], bool]
+) -> dict[str, Any]:
+    """The upload once `done` says so, polled for as long as a file of `size` may take."""
     deadline = time.monotonic() + BASE_WAIT_SECONDS + size / WAIT_BYTES_PER_SECOND
     polls = int((deadline - time.monotonic()) / POLL_SECONDS) + 1
     for _ in range(polls):
         upload = api.get(f"/uploads/{upload_id}")
-        if upload["status"] != "pending":
+        if done(upload):
             return upload
         time.sleep(POLL_SECONDS)
-    pytest.fail(f"upload {upload_id} still pending after {polls} polls")
+    pytest.fail(f"upload {upload_id} not done after {polls} polls")
 
 
 def _item(api: Api, upload_id: str) -> dict[str, Any] | None:
@@ -133,7 +136,7 @@ def _downloaded_sha256(api: Api, upload_id: str) -> str:
     return digest.hexdigest()
 
 
-@pytest.mark.invariant("ING-2", "ING-4", "ING-5", "ING-6", "SRCH-1", "ACC-9")
+@pytest.mark.invariant("ING-2", "ING-4", "ING-5", "ING-6", "ING-13", "SRCH-1", "ACC-9")
 @pytest.mark.parametrize("sample", CORPUS, ids=[s.name for s in CORPUS])
 def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collection):
     if not sample.path.exists():
@@ -153,7 +156,7 @@ def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collectio
         with httpx.Client(timeout=TIMEOUT) as storage:
             upload_blocks(storage, session["upload_url"], sample.path)
 
-        outcome = _await_outcome(api, upload_id, sample.size)
+        outcome = _await(api, upload_id, sample.size, done=lambda u: u["status"] != "pending")
         status, expect = outcome["status"], upload.expect
         reason = outcome["signature"] if status == "quarantined" else outcome["reason"]
         check("ING-2", status == expect.outcome, f"{label}: {status}, wanted {expect.outcome}")
@@ -166,3 +169,7 @@ def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collectio
             check("SRCH-1", _found(api, upload_id, expect), f"{label}: search didn't find it")
             downloaded = _downloaded_sha256(api, upload_id)
             check("ACC-9", downloaded == sample.sha256, f"{label}: downloaded {downloaded}")
+            stage = _await(api, upload_id, sample.size, done=lambda u: u["stage"] != "deriving")[
+                "stage"
+            ]
+            check("ING-13", stage == "ready", f"{label}: derivatives ended {stage}")

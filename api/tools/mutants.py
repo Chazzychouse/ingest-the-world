@@ -589,6 +589,43 @@ MUTANTS = [
         "dt.timedelta(minutes=60)",
         ("ACC-5",),
     ),
+    Mutant(
+        "upload-watch-unaudited",
+        UPLOAD_ROUTES,
+        "Auditor(conn, ctx, Actor.of(principal)).allowed(",
+        "(lambda *_, **__: None)(",
+        ("ACC-5",),
+    ),
+    Mutant(
+        # Audits a stream by its newest upload's marking, not the highest it shows.
+        "upload-watch-audited-low",
+        UPLOAD_ROUTES,
+        "marking=_highest(watched),",
+        "marking=watched[0].marking if watched else None,",
+        ("ACC-5",),
+    ),
+    Mutant(
+        "settled-before-derived",
+        DERIVE,
+        "        _unsettle(conn, item_id)\n        original = cache(",
+        "        _settle(conn, d, item_id)\n        original = cache(",
+        ("ING-13",),
+    ),
+    Mutant(
+        # A redelivered request derives an item that still says it is ready.
+        "settled-never-cleared",
+        DERIVE,
+        "        _unsettle(conn, item_id)\n        original = cache(",
+        "        original = cache(",
+        ("ING-13",),
+    ),
+    Mutant(
+        "cataloged-is-always-ready",
+        UPLOAD_STORE,
+        "WHEN u.status = 'cataloged' AND settled.item_id IS NULL THEN 'deriving'",
+        "WHEN false THEN 'deriving'",
+        ("ING-13",),
+    ),
 ]
 
 

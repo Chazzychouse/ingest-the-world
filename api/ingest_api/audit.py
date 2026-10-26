@@ -29,6 +29,7 @@ class AuditAction(StrEnum):
     UPLOAD_LIST = "upload.list"
     UPLOAD_READ = "upload.read"
     UPLOAD_RENEW = "upload.renew"
+    UPLOAD_WATCH = "upload.watch"
     ITEM_READ = "item.read"
     ITEM_SEARCH = "item.search"
     ASSET_READ = "asset.read"

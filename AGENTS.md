@@ -60,7 +60,8 @@ api/ingest_api/
   meta.py        /healthz, /config
   identity.py    /me
   collections/   collections and their grants: models.py, store.py, routes.py
-  uploads/       upload sessions and their signed URLs: models.py, store.py, routes.py
+  uploads/       upload sessions and their signed URLs: models.py, store.py, routes.py; and
+                 their live status (events.py: the bounded stream behind /uploads/events)
   items/         cataloged files: kinds.py (what a file is), metadata.py (what its header
                  says), models.py (STAC Items and searches), store.py (only the pipeline
                  writes; reads and keyset search), routes.py (/items/{id}, /search,
@@ -207,7 +208,7 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
   `test_pipeline_sim.py` runs the worker over a faulty queue and blob store, then drains and
   replays every event (ING-1 to ING-5); `test_derive_sim.py` relays derive requests to a
   faulty queue and runs the derive stage over a faulty store, then replays every request and
-  rebuilds every derivative (ING-7, ING-11, ING-12); `test_search_sim.py` pages through random
+  rebuilds every derivative, shipping a new recipe version midway (ING-7, ING-11 to ING-13); `test_search_sim.py` pages through random
   searches while items arrive, against its own model of the filters, and draws random footprint
   views (SRCH-1, SRCH-2, ACC-9).
 - `api/tests/strategies.py`: the shared Hypothesis strategies (actors, grantees, names).

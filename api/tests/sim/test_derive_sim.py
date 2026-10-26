@@ -1,7 +1,8 @@
 """Stateful simulation of the derive stage under storage and queue faults.
 
 Hypothesis catalogs items (raster or not, some whose originals a recipe refuses) and asks for
-their derivatives in the same transaction, as the pipeline does; asks again for some; sends
+their derivatives in the same transaction, as the pipeline does; asks again for some; ships a new
+recipe version midway; sends
 requests for things that aren't items, and messages that aren't requests at all. It relays the
 outbox to a faulty queue (duplicates, reordering, lost completions) and runs the derive stage
 against a faulty blob store (transient errors, writes whose acknowledgement is lost), with
@@ -9,8 +10,9 @@ recipes that are deterministic, random, or refuse some originals.
 
 After every step it checks that each asset row and its blob in `derived/` agree, that no blob
 there lacks an asset or an unfinished job, and that no derive job's outcome changes (ING-12);
-and that items and their originals never change and only items are derived (ING-11). At the end
-it turns faults off, drains and sweeps the queue, checks every derivative reached an outcome,
+that items and their originals never change and only items are derived (ING-11); and that no item
+is marked settled beside an in-flight job (ING-13). At the end it turns faults off, drains and
+sweeps the queue, checks every derivative reached an outcome and every item is settled,
 delivers every request again and checks nothing moved (ING-12); then deletes every derivative,
 asks again for all of them, and checks the rebuild matches (ING-7).
 """
@@ -106,8 +108,13 @@ class DeriveMachine(RuleBasedStateMachine):
         self.queue = SimQueue(
             clock=self.clock, rng=rng, faults=faults, lock_seconds=60, max_delivery_count=3
         )
-        self.recipes: list[Recipe] = [Digest(), DigestV2(), Stamp(random.Random(seed)), Picky()]
-        self.deriver = Deriver(self.store, self.clock, self.scratch, INLINE_RENDERER, self.recipes)
+        self.recipes: list[Recipe] = [Digest(), Stamp(random.Random(seed)), Picky()]
+        self.unshipped: list[Recipe] = [DigestV2()]  # deployed by `ship`, if at all
+        self._make_deriver()
+
+    def _make_deriver(self) -> None:
+        recipes = list(self.recipes)
+        self.deriver = Deriver(self.store, self.clock, self.scratch, INLINE_RENDERER, recipes)
 
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self.url)
@@ -176,6 +183,14 @@ class DeriveMachine(RuleBasedStateMachine):
         self.interrupted = False
 
     @rule()
+    def ship(self) -> None:
+        """A new version of a recipe is deployed beside the old: items derived already have
+        something to derive again, the next time they are asked."""
+        if self.unshipped:
+            self.recipes.append(self.unshipped.pop())
+            self._make_deriver()
+
+    @rule()
     def locks_expire(self) -> None:
         self.clock.advance(61)
 
@@ -234,6 +249,17 @@ class DeriveMachine(RuleBasedStateMachine):
                 first = self.outcomes.setdefault(key, stage)
                 check("ING-12", first == stage, f"{key} went from {first} to {stage}")
 
+    def _settled(self) -> set[str]:
+        rows = self.db.execute("SELECT item_id::text FROM ingest.derive_settled").fetchall()
+        return {item_id for (item_id,) in rows}
+
+    @invariant()
+    def settled_items_have_nothing_in_flight(self) -> None:
+        settled = self._settled()
+        for (item_id, role, version), (stage, _) in self._jobs().items():
+            if stage == "received":
+                check("ING-13", item_id not in settled, f"{item_id} settled with {role}/v{version}")
+
     @invariant()
     def items_and_originals_never_change(self) -> None:
         if not hasattr(self, "store"):
@@ -289,8 +315,9 @@ class DeriveMachine(RuleBasedStateMachine):
         check("ING-12", self.queue.dead_letters == [], "dead letters left after the sweep")
 
     def _check_every_derivative_settled(self) -> None:
-        jobs = self._jobs()
+        jobs, settled = self._jobs(), self._settled()
         for item in self.cataloged.values():
+            check("ING-13", str(item.id) in settled, f"{item.id} is still deriving after a drain")
             for recipe in self.recipes:
                 if recipe.role == "stamp" and item.kind != Kind.RASTER:
                     continue
@@ -341,7 +368,7 @@ class DeriveMachine(RuleBasedStateMachine):
             check("ING-7", after[key] == was, f"{key} rebuilt as {after[key]}, was {was}")
 
 
-@pytest.mark.invariant("ING-7", "ING-11", "ING-12")
+@pytest.mark.invariant("ING-7", "ING-11", "ING-12", "ING-13")
 def test_derive_simulation(fresh_database, tmp_path):
     url = fresh_database()
     with psycopg.connect(url, autocommit=True) as db:

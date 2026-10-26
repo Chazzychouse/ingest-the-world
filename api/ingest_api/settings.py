@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # The key preview tokens are signed with: the API mints them, the tiler checks them, and
     # nothing else holds it. Without one the API offers no previews and the tiler won't start.
     preview_key: SecretStr | None = Field(default=None, min_length=MIN_KEY_LENGTH)
+    # Live upload status (`GET /uploads/events`): how often a stream asks the database, and how
+    # long it lasts before the client reopens it.
+    events_poll_seconds: float = Field(default=2.0, gt=0, le=60)
+    events_stream_seconds: float = Field(default=300.0, gt=0, le=3600)
     # Where browsers reach the tiler, which serves `/tiles/items/...`: empty for the web app's own
     # origin, where nginx routes `/tiles/` to it.
     tiler_url: str = ""

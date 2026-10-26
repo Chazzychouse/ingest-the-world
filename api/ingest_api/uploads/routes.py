@@ -1,8 +1,9 @@
 """HTTP for upload sessions: parse, check access, sign, audit, map to status codes.
 
 Every handler ends in exactly one `auditor.allowed(...)` or `raise auditor.refuse(...)`
-(ACC-5). A collection or upload the caller can't read answers 404, as if missing (ACC-2);
-one they can read but not write answers 403 (ACC-7).
+(ACC-5); a live status stream is audited once, when it opens. A collection or upload the caller
+can't read answers 404, as if missing (ACC-2); one they can read but not write answers 403
+(ACC-7).
 """
 
 from dataclasses import replace
@@ -11,14 +12,15 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 
 from ingest_api import authz, paging
-from ingest_api.audit import AuditAction, Auditor, Target
+from ingest_api.audit import Actor, AuditAction, Auditor, Target
 from ingest_api.auth import Principal
 from ingest_api.collections.routes import collection_target, readable_or_404
-from ingest_api.deps import Audit, Conn, CurrentPrincipal, Rt, Runtime
+from ingest_api.deps import Audit, Conn, Ctx, CurrentPrincipal, Rt, Runtime
 from ingest_api.ports import Container
-from ingest_api.uploads import store
+from ingest_api.uploads import events, store
 from ingest_api.uploads.models import Upload, UploadIn, UploadListIn, UploadPage, UploadSession
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
@@ -121,16 +123,60 @@ def list_uploads(
     rows = store.list_mine(conn, principal, limit=params.limit, after=after)
     page = rows[: params.limit]
     last = page[-1] if len(rows) > params.limit else None
-    highest = max(page, key=lambda row: row.marking_rank, default=None)
     auditor.allowed(
         AuditAction.UPLOAD_LIST,
-        marking=highest.marking if highest else None,
+        marking=_highest(page),
         detail={"ids": [str(row.id) for row in page]},
     )
     return UploadPage(
         uploads=[Upload.model_validate(row) for row in page],
         next=paging.token(paging.Position(last.created_at, last.id)) if last else None,
     )
+
+
+def _highest(rows: list[store.UploadRow]) -> str | None:
+    highest = max(rows, key=lambda row: row.marking_rank, default=None)
+    return highest.marking if highest else None
+
+
+def _watched(runtime: Runtime, principal: Principal) -> list[store.UploadRow]:
+    """The caller's newest uploads a stream follows, on a connection held for this query only."""
+    with runtime.pool.connection() as conn:
+        return store.list_mine(conn, principal, limit=events.MAX_WATCHED, after=None)[
+            : events.MAX_WATCHED
+        ]
+
+
+# Registered before `/{upload_id}`, which would otherwise take `events` for an id.
+@router.get(
+    "/events",
+    response_class=StreamingResponse,
+    responses={200: {"content": {events.EVENT_STREAM: {}}, "description": "Upload events"}},
+)
+def upload_events(principal: CurrentPrincipal, ctx: Ctx, runtime: Rt) -> StreamingResponse:
+    """The caller's own uploads as they change, as server-sent `upload` events (each an
+    `Upload`): every upload being watched when the stream opens, then each again when it
+    changes. The stream ends after a few minutes; open another to carry on."""
+    watched = _watched(runtime, principal)
+    with runtime.pool.connection() as conn:
+        # Not the request's connection: that one would be held for as long as the stream.
+        Auditor(conn, ctx, Actor.of(principal)).allowed(
+            AuditAction.UPLOAD_WATCH,
+            marking=_highest(watched),
+            detail={"ids": [str(row.id) for row in watched]},
+        )
+
+    def watch() -> list[Upload]:
+        return [Upload.model_validate(row) for row in _watched(runtime, principal)]
+
+    settings = runtime.settings
+    polls = max(1, int(settings.events_stream_seconds / settings.events_poll_seconds))
+    body = events.stream(
+        watch, polls=polls, interval=settings.events_poll_seconds, pause=runtime.pause
+    )
+    # No caching, and no buffering by a proxy (nginx honours `X-Accel-Buffering`).
+    headers = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
+    return StreamingResponse(body, media_type=events.EVENT_STREAM, headers=headers)
 
 
 @router.get("/{upload_id}")

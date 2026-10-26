@@ -21,12 +21,13 @@ from ingest_api.events import parse_blob_created
 from ingest_api.ports import BlobProps, BlobStore, Container, TransientStorageError
 from ingest_api.uploads.models import Outcome, Reason
 from ingest_api.worker.classify import Media
+from ingest_api.worker.derive import Deriver, derive
 from ingest_api.worker.extract import MAX_EXTRACT_BYTES
 from ingest_api.worker.formats import READERS
 from ingest_api.worker.pipeline import SOURCE_ETAG, Pipeline, process
 from tests.conftest import Landed
 from tests.contracts.azurite import azurite
-from tests.fakes import CrashAfter, MemoryBlobStore, SimClock, event_for
+from tests.fakes import INLINE_RENDERER, CrashAfter, MemoryBlobStore, SimClock, event_for
 from tests.invariants import check
 from tests.test_extract import DENVER, UTM_13N, geotiff
 from tests.test_sandbox import segfaults
@@ -353,7 +354,8 @@ def test_a_job_interrupted_after_any_step_finishes_the_same(start, payload, work
     assert interrupted >= 4, "the job should take several storage calls"
 
 
-def test_an_upload_says_where_the_pipeline_is(start, work, served):
+@pytest.mark.invariant("ING-13")
+def test_an_upload_says_where_the_pipeline_is(start, work, served, database_url, tmp_path):
     landed = start(len(TIFF))
     assert served.progress(landed.upload_id) == ("pending", "awaiting-bytes", 0)
 
@@ -364,7 +366,14 @@ def test_an_upload_says_where_the_pipeline_is(start, work, served):
     assert served.progress(landed.upload_id) == ("pending", "processing", 1)
 
     work(memory, props)
-    assert served.progress(landed.upload_id) == ("cataloged", None, 0)
+    progress = served.progress(landed.upload_id)
+    check("ING-13", progress == ("cataloged", "deriving", 0), f"before deriving: {progress}")
+
+    # No recipe applies, so the derive stage settles the item as soon as it takes it.
+    deriver = Deriver(memory, SimClock(), tmp_path, INLINE_RENDERER, recipes=())
+    with psycopg.connect(database_url) as conn:
+        derive(conn, deriver, landed.upload_id)
+    assert served.progress(landed.upload_id) == ("cataloged", "ready", 0)
 
 
 # (payload, bytes declared beyond the real size, the audit event expected)

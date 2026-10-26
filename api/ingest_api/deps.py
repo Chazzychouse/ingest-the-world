@@ -13,7 +13,7 @@ from psycopg_pool import ConnectionPool
 
 from ingest_api.audit import Actor, AuditAction, Auditor, RequestContext
 from ingest_api.auth import AuthError, OidcVerifier, Principal, Role
-from ingest_api.ports import BlobSigner, Clock, Ids
+from ingest_api.ports import BlobSigner, Clock, Ids, Pause
 from ingest_api.settings import Settings
 
 _bearer = HTTPBearer(auto_error=False)
@@ -29,6 +29,7 @@ class Runtime:
     clock: Clock
     signer: BlobSigner
     pool: ConnectionPool[Connection[TupleRow]]
+    pause: Pause  # waits between a stream's polls without holding a thread
 
 
 def get_runtime(request: Request) -> Runtime:

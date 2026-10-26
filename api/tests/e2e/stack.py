@@ -20,6 +20,8 @@ import httpx
 from tests.conftest import REALM
 
 API_URL = os.environ.get("INGEST_E2E_API", "http://localhost:8000")
+# The web app's origin, through nginx, as a browser reaches the API (`/api/...`).
+WEB_URL = os.environ.get("INGEST_E2E_WEB", "http://localhost:8081")
 TOKEN_URL = os.environ.get(
     "INGEST_E2E_TOKEN_URL", "http://localhost:8080/realms/ingest/protocol/openid-connect/token"
 )

@@ -25,7 +25,7 @@ export type Entry = {
   stagedBlocks: number
   blocks: number
   problem?: string | undefined // why it's invalid or failed
-  stage?: Upload['stage'] // the API's word on a processing upload
+  stage?: Upload['stage'] // the API's word on a processing upload, or a cataloged one's derivatives
   attempts?: number
   outcome?: Upload['status']
   reason?: Upload['reason']
@@ -92,6 +92,11 @@ function fromApi(known: Upload): Pick<Entry, 'phase' | 'stage' | 'attempts' | 'o
     return { phase: 'finished', stage, attempts, outcome: known.status, reason: known.reason, signature: known.signature }
   }
   return { phase: stage === 'processing' ? 'processing' : 'needs-file', stage, attempts }
+}
+
+/** Whether the API has more to say about an upload: the pipeline's outcome, or its derivatives. */
+function unsettled(entry: Entry): boolean {
+  return entry.phase === 'processing' || (entry.phase === 'finished' && entry.stage === 'deriving')
 }
 
 type Live = {
@@ -209,7 +214,7 @@ export class Uploads {
    * processing, it asks only every `IDLE_LIST_MS`.
    */
   async poll(): Promise<void> {
-    const waiting = [...this.live.values()].filter((l) => l.entry.phase === 'processing' && !l.entry.stale)
+    const waiting = [...this.live.values()].filter((l) => unsettled(l.entry) && !l.entry.stale)
     for (const live of waiting) {
       live.polls += 1
       if (live.polls > MAX_POLLS) this.update(live, { stale: true })
@@ -217,8 +222,13 @@ export class Uploads {
     const asking = waiting.filter((l) => !l.entry.stale)
     if (asking.length === 0 && this.deps.now() - this.listedAt < IDLE_LIST_MS) return
     const listed = await this.refresh()
-    const missed = asking.filter((l) => !listed.has(l.entry.key) && l.entry.phase === 'processing')
+    const missed = asking.filter((l) => !listed.has(l.entry.key) && unsettled(l.entry))
     await Promise.all(missed.map((live) => this.check(live)))
+  }
+
+  /** Takes in an upload the API sent unasked, from its live event stream. */
+  receive(known: Upload): void {
+    this.merge(known)
   }
 
   /** Lists the next page of older uploads. */
@@ -255,7 +265,8 @@ export class Uploads {
     const { phase } = live.entry
     const now = fromApi(known)
     if (now.phase === 'finished') {
-      if (phase === 'finished') return
+      // Done, but a cataloged file's derivatives may still be on their way.
+      if (phase === 'finished') return live.entry.stage === known.stage ? undefined : this.update(live, { stage: known.stage })
       live.abort?.abort()
       void this.deps.log.remove(known.id)
       return this.update(live, { ...now, stagedBlocks: live.entry.blocks, problem: undefined, stale: false })
