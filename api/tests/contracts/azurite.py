@@ -20,5 +20,5 @@ def azurite(*containers: str) -> BlobServiceClient:
     except StorageError as exc:
         if os.environ.get("INGEST_REQUIRE_AZURITE"):
             raise
-        pytest.skip(f"Azurite not reachable ({exc}); run `docker compose up azurite`")
+        pytest.skip(f"Azurite not reachable ({exc}); run `make services`")
     return service

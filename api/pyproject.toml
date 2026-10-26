@@ -26,6 +26,7 @@ dev = [
     "mapbox-vector-tile>=2.2.0",
     "pyright[nodejs]>=1.1.414",
     "pytest>=9.1.1",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.17.2",
     "schemathesis>=4.32.4",
 ]

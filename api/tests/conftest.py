@@ -21,7 +21,7 @@ from ingest_api.migrate import DEV_SEED, migrate, sql_file
 from ingest_api.settings import Settings
 from tests.tokens import AUDIENCE, ISSUER, TestIdp
 
-pytest_plugins = ["tests.invariants"]
+pytest_plugins = ["tests.invariants", "pytester"]
 
 # Hypothesis profiles: `dev` explores new random inputs each run, `ci` is derandomized so a
 # red build reproduces exactly, `soak` runs long, `mutants` only needs to detect a failure.
@@ -45,16 +45,17 @@ settings.register_profile(
 settings.register_profile("soak", _base, max_examples=2000, stateful_step_count=100)
 settings.load_profile(os.environ.get("INGEST_HYPOTHESIS_PROFILE", "dev"))
 
+# The test services (compose.test.yaml, `make services`), apart from the local stack's.
 ADMIN_URL = os.environ.get(
-    "INGEST_TEST_DATABASE_URL", "postgresql://ingest:ingest@localhost:5432/ingest"
+    "INGEST_TEST_DATABASE_URL", "postgresql://ingest:ingest@localhost:5433/ingest"
 )
 REALM = Path(__file__).resolve().parents[2] / "infra" / "keycloak" / "ingest-realm.json"
-# Tests use their own Azurite account, so the local stack's worker never touches their blobs
-# (and theirs never reach its queue). Compose registers it alongside the default account; the
-# key is a test-only value, checked against compose.yaml by tests/test_infra_parity.py.
+# Tests use their own Azurite, with an account of their own, so the local stack's worker never
+# touches their blobs. The key is a test-only value, checked against compose.test.yaml by
+# tests/test_infra_parity.py.
 TEST_ACCOUNT = "ingesttest"
 TEST_ACCOUNT_KEY = "aW5nZXN0LXRoZS13b3JsZC10ZXN0LWFjY291bnQta2V5LTMyYg=="
-TEST_ACCOUNT_URL = f"http://127.0.0.1:10000/{TEST_ACCOUNT}"
+TEST_ACCOUNT_URL = f"http://127.0.0.1:10010/{TEST_ACCOUNT}"
 # What the API signs preview tokens with in tests, and the tiler checks them with.
 PREVIEW_KEY = "test-preview-key-0123456789abcdef"
 # The Service Bus emulator's fixed connection string, as seen from the host:
@@ -90,7 +91,7 @@ def _admin_connection() -> psycopg.Connection:
     except psycopg.OperationalError as exc:
         if os.environ.get("INGEST_REQUIRE_DB"):
             raise
-        pytest.skip(f"Postgres not reachable at {ADMIN_URL} ({exc}); run `docker compose up db`")
+        pytest.skip(f"Postgres not reachable at {ADMIN_URL} ({exc}); run `make services`")
 
 
 @pytest.fixture(scope="session")

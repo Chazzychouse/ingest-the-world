@@ -20,6 +20,7 @@ import re
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -123,14 +124,30 @@ def _first_error_line(text: str) -> str:
     return ""
 
 
+# What a pytest-xdist worker hands its controller: the tests it found citing each invariant.
+WORKER_CITATIONS = "invariant_tests"
+
+
 class InvariantPlugin:
-    """Tracks which tests cite which invariants, and what happened to them."""
+    """Tracks which tests cite which invariants, and what happened to them.
+
+    Under pytest-xdist the workers collect and the controller reports: each worker sends the
+    citations it collected when it finishes, and failures are matched to invariants only once
+    every worker has, at the end.
+    """
 
     def __init__(self, config: pytest.Config, registry: dict[str, Invariant]):
         self.config = config
         self.registry = registry
         self.failures: list[Failure] = []
+        self.failed_reports: list[tuple[str, str]] = []  # (test, its failure), until settled
         self.passed: set[str] = set()
+        self.settled = False
+
+    def _worker_output(self) -> dict[str, object] | None:
+        """Where a pytest-xdist worker sends its controller results; None outside a worker."""
+        output: dict[str, object] | None = getattr(self.config, "workeroutput", None)
+        return output
 
     def _cite(self, where: str, invariant: str, unknown: list[str]) -> None:
         if invariant in self.registry:
@@ -171,26 +188,40 @@ class InvariantPlugin:
             self.config.hook.pytest_deselected(items=dropped)
         items[:] = kept
 
+    @pytest.hookimpl(optionalhook=True)
+    def pytest_testnodedown(self, node: Any) -> None:
+        """A pytest-xdist worker finished: adds the citations it collected."""
+        output: dict[str, dict[str, list[str]]] = getattr(node, "workeroutput", {})
+        for invariant, tests in output.get(WORKER_CITATIONS, {}).items():
+            known = self.registry[invariant].tests
+            known.extend(t for t in tests if t not in known)
+
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.when == "call" and report.passed:
             self.passed.add(report.nodeid)
-        if not report.failed or report.when == "teardown":
+        if report.failed and report.when != "teardown":
+            self.failed_reports.append((report.nodeid, str(report.longrepr)))
+
+    def _settle(self) -> None:
+        """Matches each failure to the invariants it broke, once every citation is known."""
+        if self.settled:
             return
-        text = str(report.longrepr)
-        cited = [i for i in dict.fromkeys(_CITED.findall(text)) if i in self.registry]
-        declared = [i.id for i in self.registry.values() if report.nodeid in i.tests]
-        broken = cited or declared
-        for invariant in broken:
-            self.registry[invariant].failed.append(report.nodeid)
-        self.failures.append(
-            Failure(
-                test=report.nodeid,
-                invariants=broken,
-                error=_first_error_line(text),
-                repro=_repro(report.nodeid, text),
-                detail=text[-4000:],
+        self.settled = True
+        for test, text in self.failed_reports:
+            cited = [i for i in dict.fromkeys(_CITED.findall(text)) if i in self.registry]
+            declared = [i.id for i in self.registry.values() if test in i.tests]
+            broken = cited or declared
+            for invariant in broken:
+                self.registry[invariant].failed.append(test)
+            self.failures.append(
+                Failure(
+                    test=test,
+                    invariants=broken,
+                    error=_first_error_line(text),
+                    repro=_repro(test, text),
+                    detail=text[-4000:],
+                )
             )
-        )
 
     def _state(self, inv: Invariant) -> str:
         if not inv.tests:
@@ -201,6 +232,7 @@ class InvariantPlugin:
         return "ok" if any(t in self.passed for t in inv.tests) else "elsewhere"
 
     def pytest_terminal_summary(self, terminalreporter: pytest.TerminalReporter) -> None:
+        self._settle()
         if not any(i.tests for i in self.registry.values()):
             return
         terminalreporter.section("invariants")
@@ -211,6 +243,10 @@ class InvariantPlugin:
             terminalreporter.write_line(f"\n{ids}: {failure.error}\n  repro: {failure.repro}")
 
     def pytest_sessionfinish(self, exitstatus: int) -> None:
+        if (output := self._worker_output()) is not None:
+            output[WORKER_CITATIONS] = {i.id: i.tests for i in self.registry.values()}
+            return  # the controller reports
+        self._settle()
         path = self.config.getoption("invariants_report")
         if not path:
             return

@@ -1,0 +1,46 @@
+# The services the test suite runs against (`make services`), apart from the local stack's:
+# their own Compose project, ports and memory-backed storage, so a test run never contends with
+# the stack's data or waits on its disk, and `make reset` never pulls a database out from under
+# a run. Every run makes its own databases in this Postgres (tests/conftest.py), so worktrees,
+# `make check`, `make mutants` and `make soak` can share it at once.
+#
+# Durability is off (fsync, synchronous commits, full-page writes): the data lives in tmpfs and
+# is thrown away, and a crash loses only a test run. Never copy these settings to the stack.
+#
+# The Service Bus emulator stays in compose.yaml: it needs SQL Server and several GB of memory,
+# and the tests use a queue of their own on it (`contract`).
+name: ingest-the-world-test
+
+services:
+  db:
+    build: infra/docker/postgres
+    image: ingest-postgres:dev
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
+      # Concurrent runs each hold a pool per app under test.
+      - -c
+      - max_connections=400
+    environment:
+      POSTGRES_USER: ingest
+      POSTGRES_PASSWORD: ingest
+      POSTGRES_DB: ingest
+    ports: ["5433:5432"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ingest -d ingest"]
+      interval: 2s
+      retries: 30
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0
+    command: azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck --inMemoryPersistence
+    environment:
+      # The test suite's account alone; its key is a test-only value (tests/conftest.py).
+      AZURITE_ACCOUNTS: ingesttest:aW5nZXN0LXRoZS13b3JsZC10ZXN0LWFjY291bnQta2V5LTMyYg==
+    ports: ["10010:10000"]

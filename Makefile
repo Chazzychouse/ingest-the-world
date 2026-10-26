@@ -1,4 +1,4 @@
-.PHONY: up down reset logs services test check explore sim soak mutants lint typecheck api-types api-types-check tf-validate token samples e2e image-smoke
+.PHONY: up down reset logs services services-down test check explore sim soak mutants lint typecheck api-types api-types-check tf-validate token samples e2e image-smoke
 
 # ACCEPT_EULA=Y in .env accepts the Service Bus emulator's and SQL Server's licences, which
 # adds the queue to the stack and to the tests (see .env.example). Without it both skip.
@@ -29,14 +29,23 @@ reset:  ## Stop and delete local data volumes
 logs:
 	docker compose logs -f api $(if $(QUEUE),event-shim worker)
 
+# The tests' own Postgres and Azurite (compose.test.yaml): memory-backed, apart from the stack's.
+TEST_SERVICES = docker compose -f compose.test.yaml up -d --wait
+
 services:  # the backing services the tests run against
-	docker compose up -d --wait db azurite $(QUEUE)
+	$(TEST_SERVICES) db azurite
+	$(if $(QUEUE),docker compose up -d --wait $(QUEUE))
 	$(wait_for_queue)
 
-PYTEST = cd api && INGEST_REQUIRE_DB=1 uv run pytest -q
+services-down:  ## Stop the tests' services (their data is in memory, so this discards it)
+	docker compose -f compose.test.yaml down
 
-test: services  ## API tests against the Compose Postgres, Azurite and Service Bus emulator
-	$(PYTEST)
+PYTEST = cd api && INGEST_REQUIRE_DB=1 uv run pytest -q
+# Spread over every core (pytest-xdist): each worker makes its own databases.
+PARALLEL = -n auto
+
+test: services  ## API tests against the test services and the Service Bus emulator
+	$(PYTEST) $(PARALLEL)
 
 # Hypothesis profile per target (see api/tests/conftest.py). `check` is derandomized so a
 # local pass predicts CI; `explore` and `soak` look for new failures.
@@ -45,21 +54,21 @@ explore sim: export INGEST_HYPOTHESIS_PROFILE = dev
 soak: export INGEST_HYPOTHESIS_PROFILE = soak
 
 check: lint typecheck api-types-check services  ## The gate: lint, types, every test, traceability, JSON report
-	$(PYTEST) --check-invariants --invariants-report=reports/invariants.json
+	$(PYTEST) $(PARALLEL) --check-invariants --invariants-report=reports/invariants.json
 	cd web && pnpm test
 
 explore:  ## Property tests and simulation with fresh random inputs
-	docker compose up -d --wait db
-	$(PYTEST) tests/sim tests/test_access_model.py
+	$(TEST_SERVICES) db
+	$(PYTEST) $(PARALLEL) tests/sim tests/test_access_model.py
 
 SEED ?= 0
 sim:  ## Replay the simulation from a seed: make sim SEED=123
-	docker compose up -d --wait db
+	$(TEST_SERVICES) db
 	$(PYTEST) tests/sim --hypothesis-seed=$(SEED)
 
 soak:  ## Long simulation run (minutes)
-	docker compose up -d --wait db
-	$(PYTEST) tests/sim tests/test_access_model.py
+	$(TEST_SERVICES) db
+	$(PYTEST) $(PARALLEL) tests/sim tests/test_access_model.py
 
 mutants: services  ## Plant known bugs and check each is caught by its invariants' tests
 	cd api && INGEST_REQUIRE_DB=1 uv run python tools/mutants.py

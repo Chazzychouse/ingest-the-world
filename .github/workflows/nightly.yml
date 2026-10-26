@@ -22,17 +22,11 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Start Postgres and Azurite
         working-directory: .
-        run: |
-          docker build -t ingest-postgres:ci infra/docker/postgres
-          docker run -d --name db -p 5432:5432 \
-            -e POSTGRES_USER=ingest -e POSTGRES_PASSWORD=ingest -e POSTGRES_DB=ingest \
-            --health-cmd "pg_isready -U ingest" --health-interval 2s ingest-postgres:ci
-          docker compose up -d --wait azurite
-          until [ "$(docker inspect -f '{{.State.Health.Status}}' db)" = healthy ]; do sleep 1; done
+        run: docker compose -f compose.test.yaml up -d --wait db azurite
       - run: uv sync --frozen
       - name: Simulation soak
         run: >-
-          uv run pytest -q tests/sim tests/test_access_model.py
+          uv run pytest -q -n auto tests/sim tests/test_access_model.py
           --invariants-report=reports/soak.json
         env:
           INGEST_REQUIRE_DB: "1"

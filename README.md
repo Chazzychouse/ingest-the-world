@@ -39,6 +39,7 @@ Development credentials only, defined in [`infra/keycloak/ingest-realm.json`](in
 | Keycloak (admin / admin) | http://localhost:8080 |
 | Postgres + PostGIS + pgvector | `postgresql://ingest:ingest@localhost:5432/ingest` |
 | Azurite (Blob emulator) | http://localhost:10000 |
+| Test Postgres and Azurite (`make services`, in memory, `compose.test.yaml`) | `localhost:5433`, http://localhost:10010 |
 | Service Bus emulator (with `ACCEPT_EULA=Y`) | `amqp://localhost:5672`, health at http://localhost:5300/health |
 
 For hot reload, run `cd web && pnpm dev` (http://localhost:5173, proxies `/api` to :8000).

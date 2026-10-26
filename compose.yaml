@@ -24,8 +24,8 @@ services:
     image: mcr.microsoft.com/azure-storage/azurite:3.37.0
     command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --skipApiVersionCheck --location /data
     environment:
-      # The default account for the stack, and a separate one for the test suite.
-      AZURITE_ACCOUNTS: devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;ingesttest:aW5nZXN0LXRoZS13b3JsZC10ZXN0LWFjY291bnQta2V5LTMyYg==
+      # The stack's account; the test suite has an Azurite of its own (compose.test.yaml).
+      AZURITE_ACCOUNTS: devstoreaccount1:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==
     ports: ["10000:10000", "10001:10001", "10002:10002"]
     volumes: [azurite-data:/data]
 

@@ -16,6 +16,7 @@ from tests.contracts.servicebus import duration_seconds, queue_config
 ROOT = Path(__file__).resolve().parents[2]
 MESSAGING = ROOT / "infra" / "terraform" / "messaging.tf"
 COMPOSE = ROOT / "compose.yaml"
+TEST_COMPOSE = ROOT / "compose.test.yaml"
 
 
 def _block(kind: str, name: str) -> str:
@@ -48,14 +49,18 @@ def test_the_parser_accepts_exactly_the_apis_event_grid_forwards():
     assert sorted(re.findall(r'"([^"]+)"', values[1])) == sorted(COMMIT_APIS)
 
 
+def _accounts(compose: str) -> dict[str, str]:
+    line = re.search(r"AZURITE_ACCOUNTS:\s*(\S+)", compose)
+    assert line, "AZURITE_ACCOUNTS not set"
+    return dict(entry.split(":", 1) for entry in line[1].split(";"))
+
+
 def test_compose_registers_the_accounts_the_stack_and_tests_use():
     compose = COMPOSE.read_text()
-    accounts_line = re.search(r"AZURITE_ACCOUNTS:\s*(\S+)", compose)
     stack_key = re.search(r"INGEST_BLOB_ACCOUNT_KEY:\s*(\S+)", compose)
     stack_url = re.search(r"INGEST_BLOB_ACCOUNT_URL:\s*\S+/(\w+)\s", compose)
 
-    assert accounts_line and stack_key and stack_url
-    accounts = dict(entry.split(":", 1) for entry in accounts_line[1].split(";"))
-    assert accounts[stack_url[1]] == stack_key[1]
-    assert accounts[TEST_ACCOUNT] == TEST_ACCOUNT_KEY
+    assert stack_key and stack_url
+    assert _accounts(compose)[stack_url[1]] == stack_key[1]
+    assert _accounts(TEST_COMPOSE.read_text()) == {TEST_ACCOUNT: TEST_ACCOUNT_KEY}
     assert stack_url[1] != TEST_ACCOUNT

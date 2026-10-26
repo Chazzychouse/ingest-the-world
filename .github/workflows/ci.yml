@@ -17,17 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
-      - name: Start Postgres (PostGIS + pgvector, same image as Compose)
+      - name: Start the test services (Postgres and Azurite, as `make services` runs them)
         working-directory: .
-        run: |
-          docker build -t ingest-postgres:ci infra/docker/postgres
-          docker run -d --name db -p 5432:5432 \
-            -e POSTGRES_USER=ingest -e POSTGRES_PASSWORD=ingest -e POSTGRES_DB=ingest \
-            --health-cmd "pg_isready -U ingest" --health-interval 2s ingest-postgres:ci
-          until [ "$(docker inspect -f '{{.State.Health.Status}}' db)" = healthy ]; do sleep 1; done
-      - name: Start Azurite (blob store contract tests; same accounts as Compose)
-        working-directory: .
-        run: docker compose up -d --wait azurite
+        run: docker compose -f compose.test.yaml up -d --wait db azurite
       # The emulator's and SQL Server's licences are accepted per repository, by setting the
       # repository variable ACCEPT_EULA=Y (see .env.example). Without it the queue tests skip.
       - name: Start the Service Bus emulator (queue contract tests)
@@ -48,7 +40,7 @@ jobs:
           PYTHONPATH=. uv run python tools/export_openapi.py ../web/src/generated/openapi.json
           git diff --exit-code -- ../web/src/generated/openapi.json
       - name: Tests, simulation, fuzzing and invariant traceability
-        run: uv run pytest -q --check-invariants --invariants-report=reports/invariants.json
+        run: uv run pytest -q -n auto --check-invariants --invariants-report=reports/invariants.json
         env:
           INGEST_REQUIRE_DB: "1"
           INGEST_REQUIRE_AZURITE: "1"
