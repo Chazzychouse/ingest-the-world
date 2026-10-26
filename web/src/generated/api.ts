@@ -208,6 +208,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tiles/footprints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open Footprint View
+         * @description Opens a view of the footprints of every readable item matching `body`, for a map to
+         *     draw as vector tiles, and returns its TileJSON.
+         */
+        post: operations["open_footprint_view_tiles_footprints_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tiles/footprints/{view_id}/{z}/{x}/{y}.mvt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Footprint Tile
+         * @description One tile of a footprint view the caller opened: their readable items matching its
+         *     filters, drawn in layer `footprints`. Not audited; opening the view was.
+         */
+        get: operations["footprint_tile_tiles_footprints__view_id___z___x___y__mvt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/uploads": {
         parameters: {
             query?: never;
@@ -364,6 +406,60 @@ export interface components {
             retention?: components["schemas"]["Retention-Input"];
             /** Title */
             title: string;
+        };
+        /**
+         * Filters
+         * @description What a search or a footprint map asks for. Every filter given must hold for every item
+         *     shown (SRCH-1); a list filter that is empty matches nothing.
+         */
+        Filters: {
+            /** Bbox */
+            bbox?: [
+                number,
+                number,
+                number,
+                number
+            ] | null;
+            /** Collections */
+            collections?: string[] | null;
+            /** Created */
+            created?: string | null;
+            /** Datetime */
+            datetime?: string | null;
+            /** Ids */
+            ids?: string[] | null;
+            /** Intersects */
+            intersects?: (components["schemas"]["Point"] | components["schemas"]["Polygon"] | components["schemas"]["MultiPolygon"]) | null;
+            /** Kinds */
+            kinds?: components["schemas"]["Kind"][] | null;
+            /** Q */
+            q?: string | null;
+        };
+        /**
+         * FootprintView
+         * @description TileJSON for a footprint view: its tile URL (relative to the API), and when it stops
+         *     serving. A map past that opens a new view.
+         */
+        FootprintView: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Maxzoom */
+            maxzoom: number;
+            /** Minzoom */
+            minzoom: number;
+            /**
+             * Tilejson
+             * @default 3.0.0
+             * @constant
+             */
+            tilejson: "3.0.0";
+            /** Tiles */
+            tiles: string[];
+            /** Vector Layers */
+            vector_layers: components["schemas"]["VectorLayer"][];
         };
         /** GrantIn */
         GrantIn: {
@@ -611,8 +707,7 @@ export interface components {
         };
         /**
          * SearchIn
-         * @description Every filter given must hold for every result (SRCH-1); a list filter that is empty
-         *     matches nothing.
+         * @description One page of a search: its filters, and where the page starts.
          */
         SearchIn: {
             /** Bbox */
@@ -790,6 +885,15 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** VectorLayer */
+        VectorLayer: {
+            /** Fields */
+            fields: {
+                [key: string]: string;
+            };
+            /** Id */
+            id: string;
         };
         /** WebConfig */
         WebConfig: {
@@ -1175,6 +1279,80 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ItemCollection"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_footprint_view_tiles_footprints_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Filters"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FootprintView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    footprint_tile_tiles_footprints__view_id___z___x___y__mvt_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                view_id: string;
+                z: number;
+                x: number;
+                y: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A Mapbox Vector Tile */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.mapbox-vector-tile": unknown;
+                };
+            };
+            /** @description No live view of the caller's by this id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

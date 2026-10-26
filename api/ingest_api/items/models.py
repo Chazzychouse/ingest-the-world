@@ -116,9 +116,9 @@ def parse_interval(text: str) -> tuple[dt.datetime | None, dt.datetime | None]:
     return start, end
 
 
-class SearchIn(ApiModel):
-    """Every filter given must hold for every result (SRCH-1); a list filter that is empty
-    matches nothing."""
+class Filters(ApiModel):
+    """What a search or a footprint map asks for. Every filter given must hold for every item
+    shown (SRCH-1); a list filter that is empty matches nothing."""
 
     bbox: BboxQuery | None = None
     intersects: Geometry | None = None
@@ -130,8 +130,6 @@ class SearchIn(ApiModel):
     collections: list[CollectionId] | None = Field(default=None, max_length=MAX_FILTER_VALUES)
     kinds: list[Kind] | None = Field(default=None, max_length=MAX_FILTER_VALUES)
     ids: list[UUID] | None = Field(default=None, max_length=MAX_FILTER_VALUES)
-    limit: int = Field(default=DEFAULT_PAGE, ge=1, le=MAX_PAGE)
-    token: str | None = Field(default=None, max_length=MAX_TOKEN_LENGTH)
 
     @field_validator("bbox")
     @classmethod
@@ -154,18 +152,25 @@ class SearchIn(ApiModel):
             raise ValueError(f"at most {MAX_TERMS} search terms")
         return q
 
+    @model_validator(mode="after")
+    def _one_geometry(self) -> Self:
+        if self.bbox is not None and self.intersects is not None:
+            raise ValueError("give bbox or intersects, not both")
+        return self
+
+
+class SearchIn(Filters):
+    """One page of a search: its filters, and where the page starts."""
+
+    limit: int = Field(default=DEFAULT_PAGE, ge=1, le=MAX_PAGE)
+    token: str | None = Field(default=None, max_length=MAX_TOKEN_LENGTH)
+
     @field_validator("token")
     @classmethod
     def _token(cls, token: str | None) -> str | None:
         if token is not None:
             position(token)
         return token
-
-    @model_validator(mode="after")
-    def _one_geometry(self) -> Self:
-        if self.bbox is not None and self.intersects is not None:
-            raise ValueError("give bbox or intersects, not both")
-        return self
 
 
 class Link(ApiModel):

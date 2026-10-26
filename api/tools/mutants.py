@@ -54,6 +54,8 @@ SEARCH_SQL = "migrations/0008_item_search.sql"
 DERIVE = "ingest_api/worker/derive.py"
 SANDBOX = "ingest_api/adapters/process_sandbox.py"
 BLOB_ADAPTER = "ingest_api/adapters/azure_blob.py"
+TILE_ROUTES = "ingest_api/tiles/routes.py"
+TILE_STORE = "ingest_api/tiles/store.py"
 READ_GRANTED = (
     "      AND c.id IN (SELECT authz.granted_collections(subject, roles, groups, 'read'))"
 )
@@ -502,6 +504,43 @@ MUTANTS = [
         "return self._sign((container, name), READ_PERMISSION, expires_at, served_as)",
         "return self._sign((container, name), READ_PERMISSION, expires_at)",
         ("ACC-8",),
+    ),
+    Mutant(
+        # Draws everything in the tile: an OR where the tile's clause joins the search's.
+        "footprint-tile-ors-its-area",
+        ITEM_STORE,
+        "        AND i.footprint && (SELECT ST_Transform(envelope, 4326) FROM tile)",
+        "        OR i.footprint && (SELECT ST_Transform(envelope, 4326) FROM tile)",
+        ("ACC-9", "SRCH-1"),
+    ),
+    Mutant(
+        "footprint-view-serves-anyone",
+        TILE_STORE,
+        "WHERE id = %s AND subject = %s AND expires_at > %s",
+        "WHERE id = %s AND (subject = %s OR true) AND expires_at > %s",
+        ("ACC-9",),
+    ),
+    Mutant(
+        "footprint-view-never-expires",
+        TILE_STORE,
+        "WHERE id = %s AND subject = %s AND expires_at > %s",
+        "WHERE id = %s AND subject = %s AND (expires_at > %s OR true)",
+        ("ACC-9",),
+    ),
+    Mutant(
+        "footprint-view-unaudited",
+        TILE_ROUTES,
+        "    auditor.allowed(\n        AuditAction.FOOTPRINTS_VIEW,",
+        "    (lambda *_, **__: None)(\n        AuditAction.FOOTPRINTS_VIEW,",
+        ("ACC-5",),
+    ),
+    Mutant(
+        # Audits a view by the lowest marking it can show, not the highest.
+        "footprint-view-audited-low",
+        ITEM_STORE,
+        '" ORDER BY m.rank DESC LIMIT 1"',
+        '" ORDER BY m.rank LIMIT 1"',
+        ("ACC-5",),
     ),
 ]
 

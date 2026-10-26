@@ -65,6 +65,9 @@ api/ingest_api/
                  says), models.py (STAC Items and searches), store.py (only the pipeline
                  writes; reads and keyset search), routes.py (/items/{id}, /search, and
                  /items/{id}/assets/{role}: an audited read URL for one file)
+  tiles/         map tiles: footprint views (store.py: the audited sessions a map's tiles
+                 are served under) and their vector tiles, drawn by the items store's own
+                 search query (routes.py: /tiles/footprints)
   worker/        the pipeline: pipeline.py (one blob version's step machine), classify.py,
                  extract.py (budgeted header reads), formats/ (one reader per format family),
                  outbox.py (derive requests, written with the outcome and relayed to the
@@ -196,7 +199,8 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
   replays every event (ING-1 to ING-5); `test_derive_sim.py` relays derive requests to a
   faulty queue and runs the derive stage over a faulty store, then replays every request and
   rebuilds every derivative (ING-7, ING-11, ING-12); `test_search_sim.py` pages through random
-  searches while items arrive, against its own model of the filters (SRCH-1, SRCH-2).
+  searches while items arrive, against its own model of the filters, and draws random footprint
+  views (SRCH-1, SRCH-2, ACC-9).
 - `api/tests/strategies.py`: the shared Hypothesis strategies (actors, grantees, names).
 - `api/tests/items.py`: catalogs items straight through the pipeline's stores, for read and
   search tests that don't need bytes (or, given `content`, derive tests that do).

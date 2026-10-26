@@ -32,6 +32,7 @@ class AuditAction(StrEnum):
     ITEM_READ = "item.read"
     ITEM_SEARCH = "item.search"
     ASSET_READ = "asset.read"
+    FOOTPRINTS_VIEW = "footprints.view"
     ROLE_CHECK = "authz.role"
     # The pipeline's outcomes for a landed blob version.
     ITEM_CATALOG = "item.catalog"

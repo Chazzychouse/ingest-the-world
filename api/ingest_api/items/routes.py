@@ -31,6 +31,7 @@ from ingest_api.items.models import (
     PROJECTION_EXTENSION,
     Asset,
     AssetUrl,
+    Filters,
     ItemCollection,
     ItemProperties,
     Link,
@@ -280,11 +281,12 @@ def get_asset_url(
     return _signed((item_id, role), principal, conn, auditor, runtime)
 
 
-def _query(body: SearchIn) -> store.Query:
+def query(body: Filters, *, limit: int, after: paging.Position | None = None) -> store.Query:
+    """The store's query for `body`'s filters: for a search page, or a map's footprints."""
     start, end = parse_interval(body.datetime) if body.datetime else (None, None)
     created_start, created_end = parse_interval(body.created) if body.created else (None, None)
     return store.Query(
-        limit=body.limit,
+        limit=limit,
         bbox=body.bbox,
         geometry=body.intersects.model_dump_json() if body.intersects else None,
         start=start,
@@ -295,7 +297,7 @@ def _query(body: SearchIn) -> store.Query:
         collections=body.collections,
         kinds=body.kinds,
         ids=body.ids,
-        after=paging.position(body.token) if body.token else None,
+        after=after,
     )
 
 
@@ -305,7 +307,8 @@ def search(
 ) -> ItemCollection:
     """One page of readable items matching every filter, newest first. Follow the `next` link,
     merging its body into this request, for the following page."""
-    rows = store.search(conn, principal, _query(body))
+    after = paging.position(body.token) if body.token else None
+    rows = store.search(conn, principal, query(body, limit=body.limit, after=after))
     page = rows[: body.limit]
     links: list[NextLink] = []
     if len(rows) > body.limit:

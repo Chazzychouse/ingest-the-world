@@ -1,7 +1,8 @@
 import type { FeatureCollection, Point, Polygon } from 'geojson'
-import maplibregl, { type GeoJSONSource, type LngLatBoundsLike } from 'maplibre-gl'
+import maplibregl, { type GeoJSONSource, type LngLatBoundsLike, type VectorTileSource } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState } from 'react'
+import { useAuth } from 'react-oidc-context'
 import type { StacItem } from './api'
 import { viewportBbox, type Bbox } from './search'
 import type { View } from './searchUrl'
@@ -14,10 +15,16 @@ const DOTS = 'centres'
 // Below this zoom a footprint can be too small to see or click, so its centre is marked too.
 const DOTS_UNTIL = 6
 const [BLUE, AMBER] = ['#1f5f8b', '#e0a100']
-const LAYERS = ['fill', 'dots'] // the layers a pointer picks items from
+const LAYERS = ['fill', 'dots', 'others-fill'] // the layers a pointer picks items from
+// Every match's footprint, from the API's vector tiles (layer `footprints`), under the results.
+const OTHERS = 'others'
+const GREY = '#5d6662'
+// Past this zoom the tiles are stretched rather than fetched again.
+const OTHERS_MAX_ZOOM = 14
 
 type Props = {
   items: StacItem[]
+  footprintTiles: string | undefined // every match's footprints, as vector tiles
   selected: string | undefined
   hovered: string | undefined
   onSelect: (id: string) => void
@@ -87,7 +94,13 @@ function bounds([west, south, east, north]: Bbox): LngLatBoundsLike {
 }
 
 /** The search map: footprints of the results, kept in step with the viewport. */
-export function MapView({ items, selected, hovered, onSelect, onHover, onViewport, initialView, fit }: Props) {
+export function MapView({ items, footprintTiles, selected, hovered, onSelect, onHover, onViewport, initialView, fit }: Props) {
+  const token = useAuth().user?.access_token
+  // Tile requests go out long after a render; each carries whichever token is current.
+  const tokenRef = useRef(token)
+  useEffect(() => {
+    tokenRef.current = token
+  }, [token])
   const container = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | undefined>(undefined)
   const [ready, setReady] = useState(false)
@@ -100,7 +113,16 @@ export function MapView({ items, selected, hovered, onSelect, onHover, onViewpor
   useEffect(() => {
     if (!container.current) return
     const { lon, lat, zoom } = handlers.current.initialView ?? WORLD_VIEW
-    const m = new maplibregl.Map({ container: container.current, style: STYLE, center: [lon, lat], zoom })
+    const m = new maplibregl.Map({
+      container: container.current,
+      style: STYLE,
+      center: [lon, lat],
+      zoom,
+      transformRequest: (url) =>
+        new URL(url, window.location.href).origin === window.location.origin && url.includes('/api/tiles/')
+          ? { url, headers: { Authorization: `Bearer ${tokenRef.current ?? ''}` } }
+          : { url },
+    })
     map.current = m
     const report = () => {
       const b = m.getBounds()
@@ -112,6 +134,21 @@ export function MapView({ items, selected, hovered, onSelect, onHover, onViewpor
       })
     }
     m.on('load', () => {
+      m.addSource(OTHERS, { type: 'vector', tiles: [], maxzoom: OTHERS_MAX_ZOOM })
+      m.addLayer({
+        id: 'others-fill',
+        type: 'fill',
+        source: OTHERS,
+        'source-layer': 'footprints',
+        paint: { 'fill-color': GREY, 'fill-opacity': 0.04 },
+      })
+      m.addLayer({
+        id: 'others-line',
+        type: 'line',
+        source: OTHERS,
+        'source-layer': 'footprints',
+        paint: { 'line-color': GREY, 'line-width': 0.75, 'line-opacity': 0.6 },
+      })
       m.addSource(SOURCE, { type: 'geojson', data: footprints([]) })
       m.addSource(DOTS, { type: 'geojson', data: centres([]) })
       m.addLayer({ id: 'fill', type: 'fill', source: SOURCE, paint: { 'fill-color': BLUE, 'fill-opacity': 0.12 } })
@@ -168,6 +205,11 @@ export function MapView({ items, selected, hovered, onSelect, onHover, onViewpor
     map.current?.getSource<GeoJSONSource>(SOURCE)?.setData(footprints(items))
     map.current?.getSource<GeoJSONSource>(DOTS)?.setData(centres(items))
   }, [ready, items])
+
+  useEffect(() => {
+    if (!ready) return
+    map.current?.getSource<VectorTileSource>(OTHERS)?.setTiles(footprintTiles ? [new URL(footprintTiles, window.location.href).href] : [])
+  }, [ready, footprintTiles])
 
   useEffect(() => {
     if (!ready) return
