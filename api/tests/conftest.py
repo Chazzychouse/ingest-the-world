@@ -55,6 +55,8 @@ REALM = Path(__file__).resolve().parents[2] / "infra" / "keycloak" / "ingest-rea
 TEST_ACCOUNT = "ingesttest"
 TEST_ACCOUNT_KEY = "aW5nZXN0LXRoZS13b3JsZC10ZXN0LWFjY291bnQta2V5LTMyYg=="
 TEST_ACCOUNT_URL = f"http://127.0.0.1:10000/{TEST_ACCOUNT}"
+# What the API signs preview tokens with in tests, and the tiler checks them with.
+PREVIEW_KEY = "test-preview-key-0123456789abcdef"
 # The Service Bus emulator's fixed connection string, as seen from the host:
 # https://github.com/Azure/azure-service-bus-emulator-installer#choosing-the-right-connection-string
 EMULATOR_CONNECTION = (
@@ -153,7 +155,7 @@ def idp() -> TestIdp:
 
 def app_settings(database_url: str) -> Settings:
     """Settings for an app under test: the test IdP, the tests' Azurite account for signing
-    upload URLs, and the Service Bus emulator with short receive waits."""
+    upload URLs, the Service Bus emulator with short receive waits, and a preview key."""
     return Settings(
         database_url=database_url,
         oidc_issuer=ISSUER,
@@ -162,6 +164,7 @@ def app_settings(database_url: str) -> Settings:
         blob_account_key=SecretStr(TEST_ACCOUNT_KEY),
         queue_connection=SecretStr(EMULATOR_CONNECTION),
         queue_max_wait_seconds=1.0,
+        preview_key=SecretStr(PREVIEW_KEY),
     )
 
 

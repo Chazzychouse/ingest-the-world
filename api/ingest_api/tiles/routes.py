@@ -67,7 +67,8 @@ def open_footprint_view(
     )
 
 
-def _tile(z: Zoom, x: Index, y: Index) -> items.Tile:
+def tile_at(z: Zoom, x: Index, y: Index) -> items.Tile:
+    """The tile a path names; 422 for one off the map."""
     if x >= 2**z or y >= 2**z:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"no tile {x}, {y} at zoom {z}")
     return items.Tile(z, x, y)
@@ -83,7 +84,7 @@ def _tile(z: Zoom, x: Index, y: Index) -> items.Tile:
 )
 def footprint_tile(
     view_id: UUID,
-    tile: Annotated[items.Tile, Depends(_tile)],
+    tile: Annotated[items.Tile, Depends(tile_at)],
     principal: CurrentPrincipal,
     conn: Conn,
     runtime: Rt,

@@ -8,6 +8,7 @@ import { KINDS, MAX_QUERY_LENGTH } from './schema'
 import { filterBody, NO_FILTERS, searchBody, type Bbox, type Day, type Filters } from './search'
 import { fromQuery, toQuery, type View } from './searchUrl'
 import { useFootprints } from './useFootprints'
+import { previewable, usePreview } from './usePreview'
 import { MAX_RESULTS, useSearch } from './useSearch'
 
 // Shown first in an item's details; the rest follow alphabetically.
@@ -160,11 +161,14 @@ function FilterPanel({ collections, filters, onChange }: FilterProps) {
 type DetailsProps = {
   item: StacItem
   collections: Collection[]
+  previewing: boolean
+  previewError: string | undefined
+  onPreview: (on: boolean) => void
   onZoom: (bbox: Bbox) => void
   onBack: () => void
 }
 
-function ItemDetails({ item, collections, onZoom, onBack }: DetailsProps) {
+function ItemDetails({ item, collections, previewing, previewError, onPreview, onZoom, onBack }: DetailsProps) {
   const [copied, setCopied] = useState(false)
   const marking = itemMarking(item, collections)
   const bbox = item.bbox
@@ -212,6 +216,17 @@ function ItemDetails({ item, collections, onZoom, onBack }: DetailsProps) {
           {copied ? 'Link copied' : 'Copy link'}
         </button>
       </div>
+      {previewable(item) && (
+        <label className="check">
+          <input type="checkbox" checked={previewing} onChange={(e) => onPreview(e.target.checked)} />
+          Show the raster on the map
+        </label>
+      )}
+      {previewing && previewError && (
+        <p className="error" role="alert">
+          {previewError}
+        </p>
+      )}
       <Files item={item} />
       <dl>
         {[...CORE, ...rest]
@@ -319,6 +334,8 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
   const [view, setView] = useState<View | undefined>(initial.view)
   const [selected, setSelected] = useState<string | undefined>(initial.item)
   const [hovered, setHovered] = useState<string | undefined>(undefined)
+  // The item whose raster is drawn on the map; one at a time, and only while it's selected.
+  const [previewing, setPreviewing] = useState<string | undefined>(undefined)
   const [fit, setFit] = useState<{ bbox: Bbox } | undefined>(undefined)
   const [filtersOpen, setFiltersOpen] = useState(narrowing(initial.filters) > 0)
   // A link to an item without a map view shows the item once it loads.
@@ -332,6 +349,7 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
   // Every match's footprint, beyond the pages loaded, drawn faintly beneath the results.
   const footprintTiles = useFootprints(useMemo(() => filterBody(filters), [filters]))
   const item = selection.item
+  const preview = usePreview(previewing !== undefined && previewing === selected ? previewing : undefined)
 
   // An item opened from a link may be outside the results; it's on screen all the same.
   const shown = useMemo(
@@ -400,6 +418,9 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
             key={item.id}
             item={item}
             collections={collections}
+            previewing={previewing === item.id}
+            previewError={preview.error}
+            onPreview={(on) => setPreviewing(on ? item.id : undefined)}
             onZoom={(bbox) => setFit({ bbox })}
             onBack={() => setSelected(undefined)}
           />
@@ -450,6 +471,7 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
       <MapView
         items={shown}
         footprintTiles={footprintTiles}
+        preview={preview.preview}
         selected={selected}
         hovered={hovered}
         onSelect={select}

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import type { StacItem } from './api'
 import { viewportBbox, type Bbox } from './search'
+import type { Preview } from './usePreview'
 import type { View } from './searchUrl'
 
 // Any MapLibre style: Azure Maps (atlas.azure.us in Government), self-hosted tiles, or this
@@ -21,10 +22,14 @@ const OTHERS = 'others'
 const GREY = '#5d6662'
 // Past this zoom the tiles are stretched rather than fetched again.
 const OTHERS_MAX_ZOOM = 14
+// The selected raster, drawn by the tiler, beneath every footprint.
+const PREVIEW = 'preview'
+const PREVIEW_TILES = '/tiles/items/'
 
 type Props = {
   items: StacItem[]
   footprintTiles: string | undefined // every match's footprints, as vector tiles
+  preview: Preview | undefined // a raster to draw, from the tiler
   selected: string | undefined
   hovered: string | undefined
   onSelect: (id: string) => void
@@ -94,13 +99,18 @@ function bounds([west, south, east, north]: Bbox): LngLatBoundsLike {
 }
 
 /** The search map: footprints of the results, kept in step with the viewport. */
-export function MapView({ items, footprintTiles, selected, hovered, onSelect, onHover, onViewport, initialView, fit }: Props) {
+export function MapView({ items, footprintTiles, preview, selected, hovered, onSelect, onHover, onViewport, initialView, fit }: Props) {
   const token = useAuth().user?.access_token
   // Tile requests go out long after a render; each carries whichever token is current.
   const tokenRef = useRef(token)
   useEffect(() => {
     tokenRef.current = token
   }, [token])
+  // Likewise the preview's token, renewed under the same TileJSON.
+  const previewTokenRef = useRef(preview?.token)
+  useEffect(() => {
+    previewTokenRef.current = preview?.token
+  }, [preview?.token])
   const container = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | undefined>(undefined)
   const [ready, setReady] = useState(false)
@@ -118,10 +128,13 @@ export function MapView({ items, footprintTiles, selected, hovered, onSelect, on
       style: STYLE,
       center: [lon, lat],
       zoom,
-      transformRequest: (url) =>
-        new URL(url, window.location.href).origin === window.location.origin && url.includes('/api/tiles/')
-          ? { url, headers: { Authorization: `Bearer ${tokenRef.current ?? ''}` } }
-          : { url },
+      transformRequest: (url) => {
+        const target = new URL(url, window.location.href)
+        if (target.origin !== window.location.origin) return { url }
+        if (target.pathname.startsWith('/api/tiles/')) return { url, headers: { Authorization: `Bearer ${tokenRef.current ?? ''}` } }
+        if (target.pathname.startsWith(PREVIEW_TILES)) return { url, headers: { Authorization: `Bearer ${previewTokenRef.current ?? ''}` } }
+        return { url }
+      },
     })
     map.current = m
     const report = () => {
@@ -210,6 +223,18 @@ export function MapView({ items, footprintTiles, selected, hovered, onSelect, on
     if (!ready) return
     map.current?.getSource<VectorTileSource>(OTHERS)?.setTiles(footprintTiles ? [new URL(footprintTiles, window.location.href).href] : [])
   }, [ready, footprintTiles])
+
+  const tilejson = preview?.tilejson
+  useEffect(() => {
+    const m = map.current
+    if (!ready || !m || !tilejson) return
+    m.addSource(PREVIEW, { type: 'raster', url: tilejson, tileSize: 256 })
+    m.addLayer({ id: PREVIEW, type: 'raster', source: PREVIEW }, 'others-fill')
+    return () => {
+      if (m.getLayer(PREVIEW)) m.removeLayer(PREVIEW)
+      if (m.getSource(PREVIEW)) m.removeSource(PREVIEW)
+    }
+  }, [ready, tilejson])
 
   useEffect(() => {
     if (!ready) return

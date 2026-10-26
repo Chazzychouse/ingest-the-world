@@ -5,6 +5,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ingest_api.auth import DEFAULT_CLAIMS
+from ingest_api.previews import MIN_KEY_LENGTH
 
 # The longest a signed URL may live (ACC-8). Large uploads renew theirs instead; a download
 # starts at once, and only needs its URL to outlive the start.
@@ -60,6 +61,13 @@ class Settings(BaseSettings):
     map_session_minutes: int = Field(
         default=MAX_MAP_SESSION_MINUTES, gt=0, le=MAX_MAP_SESSION_MINUTES
     )
+
+    # The key preview tokens are signed with: the API mints them, the tiler checks them, and
+    # nothing else holds it. Without one the API offers no previews and the tiler won't start.
+    preview_key: SecretStr | None = Field(default=None, min_length=MIN_KEY_LENGTH)
+    # Where browsers reach the tiler, which serves `/tiles/items/...`: empty for the web app's own
+    # origin, where nginx routes `/tiles/` to it.
+    tiler_url: str = ""
 
     # Service Bus. Locally a connection string for the emulator; in the cloud the namespace's
     # host name (`sb-x.servicebus.usgovcloudapi.net`) and the process's managed identity, since

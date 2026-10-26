@@ -216,6 +216,15 @@ class AssetUrl(ApiModel):
     expires_at: dt.datetime
 
 
+class PreviewSession(ApiModel):
+    """A preview of one raster item: the tiler's TileJSON for it, the token its requests carry
+    (as `Authorization: Bearer`), and when that token stops working. A map past that asks again."""
+
+    tilejson: str
+    token: str
+    expires_at: dt.datetime
+
+
 class ItemProperties(ApiModel):
     """Core fields plus whatever the header said (`proj:shape`, `raster:bands`, `pc:count`,
     `mesh:triangles`, ...), which is why other keys are allowed."""

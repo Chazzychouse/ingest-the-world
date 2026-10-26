@@ -82,13 +82,18 @@ class _OneBlob(FileContainer):
         return self._source.size
 
 
+def open_blob(source: BlobSource) -> rasterio.DatasetReader:
+    """`source` as a dataset GDAL reads through it, and only it. Raises RasterioError if it
+    doesn't open; the tiler opens COGs this way too."""
+    with warnings.catch_warnings():
+        # An image without georeferencing is normal here (a PNG): it just has no footprint.
+        warnings.simplefilter("ignore", NotGeoreferencedWarning)
+        return rasterio.open(PATH, opener=_OneBlob(source))
+
+
 def read(source: BlobSource) -> Found:
     try:
-        with warnings.catch_warnings():
-            # An image without georeferencing is normal here (a PNG): it just has no footprint.
-            warnings.simplefilter("ignore", NotGeoreferencedWarning)
-            dataset = rasterio.open(PATH, opener=_OneBlob(source))
-        with dataset:
+        with open_blob(source) as dataset:
             _check_complete(dataset, source.size)
             return _found(dataset)
     except RasterioError as exc:

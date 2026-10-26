@@ -170,6 +170,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/items/{item_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open Preview
+         * @description Opens a preview of a raster item: a token for the tiler to serve its map tiles under, for
+         *     at most 15 minutes, and the tiler's TileJSON for it.
+         */
+        post: operations["open_preview_items__item_id__preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -674,6 +695,22 @@ export interface components {
              * @enum {string}
              */
             type: "Polygon";
+        };
+        /**
+         * PreviewSession
+         * @description A preview of one raster item: the tiler's TileJSON for it, the token its requests carry
+         *     (as `Authorization: Bearer`), and when that token stops working. A map past that asks again.
+         */
+        PreviewSession: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Tilejson */
+            tilejson: string;
+            /** Token */
+            token: string;
         };
         /**
          * Reason
@@ -1235,6 +1272,51 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    open_preview_items__item_id__preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewSession"];
+                };
+            };
+            /** @description No such item, or no COG to preview it from */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Previews are not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
