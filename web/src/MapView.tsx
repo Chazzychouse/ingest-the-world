@@ -4,18 +4,21 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import type { StacItem } from './api'
+import { area, dotOpacity, pickId, sizeFade } from './footprintSize'
 import { viewportBbox, type Bbox } from './search'
 import type { Preview } from './usePreview'
 import type { View } from './searchUrl'
 
 // Any MapLibre style: Azure Maps (atlas.azure.us in Government), self-hosted tiles, or this
-// default demo style, which needs no key.
-const STYLE: string = import.meta.env.VITE_BASEMAP_STYLE ?? 'https://demotiles.maplibre.org/style.json'
+// default, OpenFreeMap's Positron: keyless, detailed to street level, and quiet enough that the
+// footprints and previews drawn over it read first.
+const STYLE: string = import.meta.env.VITE_BASEMAP_STYLE ?? 'https://tiles.openfreemap.org/styles/positron'
 const SOURCE = 'footprints'
 const DOTS = 'centres'
-// Below this zoom a footprint can be too small to see or click, so its centre is marked too.
-const DOTS_UNTIL = 6
 const [BLUE, AMBER] = ['#1f5f8b', '#e0a100']
+// Fills' opacity for a footprint small beside the view; larger ones fade (`sizeFade`).
+const FILL_OPACITY = 0.12
+const OTHERS_FILL_OPACITY = 0.05
 const LAYERS = ['fill', 'dots', 'others-fill', 'others-dots'] // the layers a pointer picks items from
 // Every match's footprint, from the API's vector tiles (layer `footprints`), under the results. A
 // footprint too small for its tile comes as a point, so every match shows at low zoom.
@@ -45,11 +48,6 @@ type Props = {
 
 const WORLD_VIEW: View = { lon: 0, lat: 20, zoom: 1.4 }
 
-/** A bbox's area in square degrees, across the antimeridian too. */
-function area([west, south, east, north]: Bbox): number {
-  return ((east - west + 360) % 360 || 360) * (north - south)
-}
-
 /** The results' footprints, largest first so smaller ones draw, and are clicked, on top. */
 function footprints(items: StacItem[]): FeatureCollection {
   const drawn = items.flatMap((item) => (item.geometry && item.bbox ? [{ item, size: area(item.bbox) }] : []))
@@ -57,7 +55,7 @@ function footprints(items: StacItem[]): FeatureCollection {
     type: 'FeatureCollection',
     features: drawn
       .toSorted((a, b) => b.size - a.size)
-      .map(({ item }) => ({ type: 'Feature', geometry: item.geometry as Polygon, properties: { id: item.id } })),
+      .map(({ item, size }) => ({ type: 'Feature', geometry: item.geometry as Polygon, properties: { id: item.id, area: size } })),
   }
 }
 
@@ -70,7 +68,7 @@ function centres(items: StacItem[]): FeatureCollection {
       const [west, south, east, north] = item.bbox
       const lon = (west + (east < west ? east + 360 : east)) / 2
       const point: Point = { type: 'Point', coordinates: [lon > 180 ? lon - 360 : lon, (south + north) / 2] }
-      return [{ type: 'Feature', geometry: point, properties: { id: item.id } }]
+      return [{ type: 'Feature', geometry: point, properties: { id: item.id, area: area(item.bbox) } }]
     }),
   }
 }
@@ -80,7 +78,7 @@ function centres(items: StacItem[]): FeatureCollection {
 function addOthers(m: maplibregl.Map, tiles: string) {
   m.addSource(OTHERS, { type: 'vector', tiles: [tiles], maxzoom: OTHERS_MAX_ZOOM })
   const others: maplibregl.LayerSpecification[] = [
-    { id: 'others-fill', type: 'fill', source: OTHERS, 'source-layer': 'footprints', paint: { 'fill-color': GREY, 'fill-opacity': 0.04 } },
+    { id: 'others-fill', type: 'fill', source: OTHERS, 'source-layer': 'footprints', paint: { 'fill-color': GREY, 'fill-opacity': 0 } },
     { id: 'others-line', type: 'line', source: OTHERS, 'source-layer': 'footprints', paint: { 'line-color': GREY, 'line-width': 0.75, 'line-opacity': 0.6 } },
     {
       id: 'others-dots',
@@ -99,16 +97,27 @@ function dotLayer(id: string, color: string, radius: number): maplibregl.CircleL
     id,
     type: 'circle',
     source: DOTS,
-    maxzoom: DOTS_UNTIL,
     paint: { 'circle-color': color, 'circle-radius': radius, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 },
     ...(id !== 'dots' && { filter: byId(undefined) }),
   }
 }
 
-/** The id of the topmost footprint under the pointer. */
-function idAt(event: maplibregl.MapLayerMouseEvent): string | undefined {
-  const id: unknown = event.features?.[0]?.properties['id']
-  return typeof id === 'string' ? id : undefined
+/** The view's area in square degrees, which footprints are sized against. */
+function viewArea(m: maplibregl.Map): number {
+  const b = m.getBounds()
+  return area(viewportBbox(b.getWest(), b.getSouth(), b.getEast(), b.getNorth()))
+}
+
+/** Fades each fill by its footprints' size against the view, as it is now, and shows a dot only
+ * for footprints too small in it to see. */
+function fadeFills(m: maplibregl.Map) {
+  const view = viewArea(m)
+  for (const dots of ['dots', 'dots-hovered', 'dots-selected']) {
+    m.setPaintProperty(dots, 'circle-opacity', dotOpacity(view))
+    m.setPaintProperty(dots, 'circle-stroke-opacity', dotOpacity(view))
+  }
+  m.setPaintProperty('fill', 'fill-opacity', sizeFade(view, FILL_OPACITY))
+  if (m.getLayer('others-fill')) m.setPaintProperty('others-fill', 'fill-opacity', sizeFade(view, OTHERS_FILL_OPACITY))
 }
 
 const byId = (id: string | undefined) => ['==', ['get', 'id'], id ?? ''] as maplibregl.FilterSpecification
@@ -119,6 +128,36 @@ function bounds([west, south, east, north]: Bbox): LngLatBoundsLike {
     [west, south],
     [east < west ? east + 360 : east, north],
   ]
+}
+
+/** What the map's colours and marks mean. */
+function Legend() {
+  // Open where there's room beside it; a tap away on a phone.
+  const [wide] = useState(() => window.matchMedia('(min-width: 761px)').matches)
+  return (
+    <details className="legend" open={wide}>
+      <summary>Key</summary>
+      <ul>
+        <li>
+          <span className="swatch listed" aria-hidden="true" />
+          Results listed
+        </li>
+        <li>
+          <span className="swatch chosen" aria-hidden="true" />
+          Selected
+        </li>
+        <li>
+          <span className="swatch other" aria-hidden="true" />
+          More matches, not listed
+        </li>
+        <li>
+          <span className="swatch dot" aria-hidden="true" />
+          Too small to see at this zoom
+        </li>
+      </ul>
+      <p>Footprints larger than the view are outlined, not filled.</p>
+    </details>
+  )
 }
 
 /** In the map's place when it can't be drawn: the rest of the page works without it. */
@@ -163,6 +202,7 @@ export function MapView({ items, footprintTiles, preview, previewOpacity, select
       style: STYLE,
       center: [lon, lat],
       zoom,
+      attributionControl: { compact: true },
       transformRequest: (url) => {
         const target = new URL(url, window.location.href)
         if (target.origin !== window.location.origin) return { url }
@@ -172,6 +212,8 @@ export function MapView({ items, footprintTiles, preview, previewOpacity, select
       },
     })
     map.current = m
+    m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
+    m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left')
     const report = () => {
       const b = m.getBounds()
       const centre = m.getCenter().wrap()
@@ -184,7 +226,7 @@ export function MapView({ items, footprintTiles, preview, previewOpacity, select
     m.on('load', () => {
       m.addSource(SOURCE, { type: 'geojson', data: footprints([]) })
       m.addSource(DOTS, { type: 'geojson', data: centres([]) })
-      m.addLayer({ id: 'fill', type: 'fill', source: SOURCE, paint: { 'fill-color': BLUE, 'fill-opacity': 0.12 } })
+      m.addLayer({ id: 'fill', type: 'fill', source: SOURCE, paint: { 'fill-color': BLUE, 'fill-opacity': FILL_OPACITY } })
       m.addLayer({ id: 'line', type: 'line', source: SOURCE, paint: { 'line-color': BLUE, 'line-width': 1.25 } })
       m.addLayer({
         id: 'hovered',
@@ -210,19 +252,25 @@ export function MapView({ items, footprintTiles, preview, previewOpacity, select
       m.addLayer(dotLayer('dots', BLUE, 4.5))
       m.addLayer(dotLayer('dots-hovered', BLUE, 7))
       m.addLayer(dotLayer('dots-selected', AMBER, 7))
+      const idAt = (event: maplibregl.MapLayerMouseEvent) => pickId(event.features ?? [], viewArea(m))
       m.on('click', LAYERS, (event) => {
         const id = idAt(event)
         if (id) handlers.current.onSelect(id)
       })
       m.on('mousemove', LAYERS, (event) => {
-        m.getCanvas().style.cursor = 'pointer'
-        handlers.current.onHover(idAt(event))
+        const id = idAt(event)
+        m.getCanvas().style.cursor = id ? 'pointer' : ''
+        handlers.current.onHover(id)
       })
       m.on('mouseleave', LAYERS, () => {
         m.getCanvas().style.cursor = ''
         handlers.current.onHover(undefined)
       })
-      m.on('moveend', report)
+      m.on('moveend', () => {
+        fadeFills(m)
+        report()
+      })
+      fadeFills(m)
       setReady(true)
       report()
     })
@@ -245,7 +293,10 @@ export function MapView({ items, footprintTiles, preview, previewOpacity, select
     if (!m || !footprintTiles) return // the last view's tiles stay until the next opens
     const source = m.getSource<VectorTileSource>(OTHERS)
     if (source) source.setTiles([footprintTiles])
-    else addOthers(m, footprintTiles)
+    else {
+      addOthers(m, footprintTiles)
+      fadeFills(m)
+    }
   }, [ready, footprintTiles])
 
   const tilejson = preview?.tilejson
@@ -288,5 +339,10 @@ export function MapView({ items, footprintTiles, preview, previewOpacity, select
     if (ready && fit) map.current?.fitBounds(bounds(fit.bbox), { padding: 80, maxZoom: 14, duration: 600 })
   }, [ready, fit])
 
-  return <div ref={container} className="map" />
+  return (
+    <div className="map-frame">
+      <div ref={container} className="map" />
+      <Legend />
+    </div>
+  )
 }

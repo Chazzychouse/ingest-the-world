@@ -3,7 +3,6 @@ import os
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
@@ -20,6 +19,7 @@ from ingest_api.app import create_app
 from ingest_api.migrate import DEV_SEED, migrate, sql_file
 from ingest_api.settings import Settings
 from tests.tokens import AUDIENCE, ISSUER, TestIdp
+from tools.stack import REALM
 
 pytest_plugins = ["tests.invariants", "pytester"]
 
@@ -49,7 +49,6 @@ settings.load_profile(os.environ.get("INGEST_HYPOTHESIS_PROFILE", "dev"))
 ADMIN_URL = os.environ.get(
     "INGEST_TEST_DATABASE_URL", "postgresql://ingest:ingest@localhost:5433/ingest"
 )
-REALM = Path(__file__).resolve().parents[2] / "infra" / "keycloak" / "ingest-realm.json"
 # Tests use their own Azurite, with an account of their own, so the local stack's worker never
 # touches their blobs. The key is a test-only value, checked against compose.test.yaml by
 # tests/test_infra_parity.py.

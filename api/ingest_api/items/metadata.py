@@ -19,6 +19,17 @@ CLOUD_OPTIMIZED = "raster:cloud_optimized"
 COG_ROLE = "cog"
 
 
+# A grid registered at its cells' centres (pixel-is-point) reaches half a cell past an edge it
+# lies on: a tile whose west edge is the antimeridian starts at -180.0004. A bound this close
+# past the world's edge is held at it; further out, the box isn't a real place.
+EDGE_SLACK_DEGREES = 1.0
+
+
+def _at_edge(value: float, edge: float) -> float:
+    """`value`, held at `edge` when it is past it by no more than the slack."""
+    return edge if abs(value) > abs(edge) and abs(value - edge) <= EDGE_SLACK_DEGREES else value
+
+
 @dataclass(frozen=True, slots=True)
 class Bbox:
     """A WGS84 footprint, `west, south, east, north` in degrees, as STAC writes it."""
@@ -35,6 +46,8 @@ class Bbox:
         values = (west, south, east, north)
         if not all(math.isfinite(v) for v in values):
             return None
+        west, east = _at_edge(west, -180), _at_edge(east, 180)
+        south, north = _at_edge(south, -90), _at_edge(north, 90)
         if not (-180 <= west <= east <= 180 and -90 <= south <= north <= 90):
             return None
         return cls(west, south, east, north)

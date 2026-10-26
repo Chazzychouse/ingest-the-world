@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { ApiError, getApi, useApi, type Asset, type AssetUrl, type Marking, type StacItem } from './api'
 import { bytes } from './format'
+import { KindIcon } from './KindIcon'
 
 // The asset key of an item's original; every other asset is a derivative, keyed by its role.
 const ORIGINAL = 'original'
@@ -12,15 +13,15 @@ function linkPath(asset: Asset): string {
 }
 
 /**
- * An item's thumbnail, through a link the API signs for it; an empty tile while there is none,
- * or if it doesn't load.
+ * An item's thumbnail, through a link the API signs for it; its kind's drawing while there is
+ * none, or if it doesn't load.
  */
 export function Thumbnail({ item, className, alt }: { item: StacItem; className: string; alt: string }) {
   const asset = item.assets.thumbnail
   const signed = useApi<AssetUrl>(asset && linkPath(asset))
   const [failed, setFailed] = useState<string>()
   const url = signed.data?.url
-  if (!url || failed === url) return <span className={`${className} none`} aria-hidden="true" />
+  if (!url || failed === url) return <KindIcon kind={item.properties['ingest:kind']} className={`${className} none`} />
   return <img className={className} src={url} alt={alt} loading="lazy" onError={() => setFailed(url)} />
 }
 

@@ -9,7 +9,7 @@ from collections.abc import Iterator
 import httpx
 import pytest
 
-from tests.e2e.stack import WEB_URL, sign_in
+from tools.stack import WEB_URL, sign_in
 
 pytestmark = pytest.mark.e2e
 

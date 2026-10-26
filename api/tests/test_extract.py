@@ -224,6 +224,40 @@ def test_a_geotiff_yields_crs_footprint_and_bands_from_its_header(tmp_path):
     assert metadata.properties["raster:bands"] == [{"data_type": "uint8", "nodata": None}]
 
 
+def _wgs84_tile(tmp_path, west: float, north: float) -> bytes:
+    """A 1-degree, 1200-cell WGS84 tile from `west, north`, as Copernicus DEM tiles are."""
+    path = tmp_path / "tile.tif"
+    cell = 1 / 1200
+    with rasterio.open(
+        str(path),
+        "w",
+        driver="GTiff",
+        width=1200,
+        height=1200,
+        count=1,
+        dtype="uint8",
+        crs="EPSG:4326",
+        transform=from_origin(west, north, cell, cell),
+    ) as dataset:
+        dataset.write(np.zeros((1, 1200, 1200), dtype="uint8"))
+    return path.read_bytes()
+
+
+@pytest.mark.invariant("ING-6")
+def test_a_tile_reaching_half_a_cell_past_the_antimeridian_keeps_its_footprint(tmp_path):
+    # Registered at cell centres, a tile whose west edge is 180 W starts half a cell past it.
+    tile = _wgs84_tile(tmp_path, west=-180 - 1 / 2400, north=-16 + 1 / 2400)
+    result = _extract(MemoryBlobStore(), Media.TIFF, tile)
+
+    assert _near(result.metadata.bbox, (-180.0, -17.0, -179.0, -16.0))
+
+
+def test_a_footprint_well_past_the_edge_of_the_world_is_refused(tmp_path):
+    result = _extract(MemoryBlobStore(), Media.TIFF, _wgs84_tile(tmp_path, west=-183, north=0))
+
+    assert result.metadata.crs is not None and result.metadata.bbox is None
+
+
 def test_a_raster_without_a_crs_has_no_footprint(tmp_path):
     result = _extract(MemoryBlobStore(), Media.TIFF, geotiff(tmp_path, crs=None))
 

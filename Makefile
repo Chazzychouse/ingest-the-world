@@ -1,4 +1,4 @@
-.PHONY: up down reset logs services services-down test check explore sim soak mutants lint typecheck api-types api-types-check tf-validate token samples e2e image-smoke
+.PHONY: up down reset logs services services-down test check explore sim soak mutants lint typecheck api-types api-types-check tf-validate token samples e2e demo demo-reset image-smoke
 
 # ACCEPT_EULA=Y in .env accepts the Service Bus emulator's and SQL Server's licences, which
 # adds the queue to the stack and to the tests (see .env.example). Without it both skip.
@@ -77,11 +77,17 @@ mutants-full: services  ## Same, running the whole suite per mutant (what nightl
 	cd api && INGEST_REQUIRE_DB=1 uv run python tools/mutants.py --full
 
 LARGE ?=
-samples:  ## Fetch, make and verify the sample corpus (samples/manifest.json): LARGE=1 for multi-GB
-	cd api && PYTHONPATH=. uv run python tools/samples.py $(if $(LARGE),--large)
+DEMO ?=
+samples:  ## Fetch, make and verify the sample corpus (samples/manifest.json): LARGE=1, DEMO=1 add sets
+	cd api && PYTHONPATH=. uv run python tools/samples.py $(if $(LARGE),--large) $(if $(DEMO),--demo)
 
 e2e: samples  ## Upload the corpus through the running stack (make up) and check every outcome
-	cd api && $(if $(LARGE),INGEST_E2E_LARGE=1) uv run pytest -q -m e2e tests/e2e
+	cd api && $(if $(LARGE),INGEST_E2E_LARGE=1) $(if $(DEMO),INGEST_E2E_DEMO=1) uv run pytest -q -m e2e tests/e2e
+
+demo:  ## Load the demo catalog (samples/demo.json) into the running stack: real files, ~1 GB
+	cd api && PYTHONPATH=. uv run python tools/demo.py
+
+demo-reset: reset up demo  ## Wipe the local stack's data, then start it and load the demo
 
 IMAGE ?= ingest-api:smoke
 image-smoke:  ## Build the API image and check its native readers load and run (as CI does)

@@ -649,6 +649,15 @@ MUTANTS = [
         "ST_AsMVTGeom(NULL::geometry,",
         ("SRCH-1",),
     ),
+    Mutant(
+        # A tile on the antimeridian, half a cell past it, loses its footprint and its place on
+        # the map: found by the demo's Copernicus tile of Taveuni.
+        "edge-overshoot-refused",
+        "ingest_api/items/metadata.py",
+        "        west, east = _at_edge(west, -180), _at_edge(east, 180)\n",
+        "",
+        ("ING-6",),
+    ),
 ]
 
 
