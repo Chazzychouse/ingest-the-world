@@ -9,9 +9,12 @@ import psycopg
 import pytest
 
 from ingest_api.items import metadata
+from ingest_api.items import store as items
 from ingest_api.items.kinds import Kind
+from ingest_api.items.models import ORIGINAL
 from ingest_api.uploads.models import UploadStatus
 from ingest_api.worker.jobs import Stage
+from tests.items import NewItem, catalog
 
 
 def test_the_database_knows_exactly_the_kinds_the_code_does(db):
@@ -117,3 +120,13 @@ def test_no_new_item_can_claim_the_dedup_exemption(db):
 
     with pytest.raises(psycopg.errors.CheckViolation):
         _insert_item(db, _upload(db, "site-survey-alpha"), sha256=sha256, exempt=True)
+
+
+def test_no_derivative_can_take_the_originals_name(db):
+    made = catalog(db, NewItem("site-survey-alpha", "f.tif", datetime.now(UTC)))
+    asset = items.NewAsset(
+        made.id, ORIGINAL, 1, "image/png", f"x/{made.id.hex}.png", 1, "0" * 64, {}, "t", ("data",)
+    )
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        items.record_asset(db, asset, created_at=datetime.now(UTC))

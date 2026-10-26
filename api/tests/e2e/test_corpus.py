@@ -6,9 +6,11 @@ manifest says: the right outcome, and for cataloged files the right kind and met
 Each run makes its own collections (as alice), so reruns never meet an earlier run's files,
 and uploads as carol, a Contributor granted write on them. The outcome is read through the API
 as the web app will, and so is the item, which must also be found by searching for it (by its
-footprint, where the manifest gives one). Expectations live only in the manifest.
+footprint, where the manifest gives one) and download, through the link the API signs, as the
+bytes uploaded. Expectations live only in the manifest.
 """
 
+import hashlib
 import os
 import time
 import uuid
@@ -120,7 +122,18 @@ def _check_item(label: str, item: dict[str, Any], sample: samples.Sample, e: sam
         )
 
 
-@pytest.mark.invariant("ING-2", "ING-4", "ING-5", "ING-6", "SRCH-1")
+def _downloaded_sha256(api: Api, upload_id: str) -> str:
+    """The SHA-256 of the item's original, streamed from storage through its signed link."""
+    url = api.get(f"/items/{upload_id}/assets/original/url")["url"]
+    digest = hashlib.sha256()
+    with httpx.stream("GET", url, timeout=TIMEOUT) as response:
+        response.raise_for_status()
+        for chunk in response.iter_bytes():
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@pytest.mark.invariant("ING-2", "ING-4", "ING-5", "ING-6", "SRCH-1", "ACC-9")
 @pytest.mark.parametrize("sample", CORPUS, ids=[s.name for s in CORPUS])
 def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collection):
     if not sample.path.exists():
@@ -151,3 +164,5 @@ def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collectio
         if item is not None:
             _check_item(label, item, sample, expect)
             check("SRCH-1", _found(api, upload_id, expect), f"{label}: search didn't find it")
+            downloaded = _downloaded_sha256(api, upload_id)
+            check("ACC-9", downloaded == sample.sha256, f"{label}: downloaded {downloaded}")

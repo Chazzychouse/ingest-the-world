@@ -89,19 +89,22 @@ write, 403.
 
 Status: enforced
 
-Every signed URL the API hands out covers exactly one blob, carries only the permissions
-its purpose needs (an upload URL may create and write, never read, list or delete), and
-expires within one hour. Checked on every issued URL, and against Azurite to prove the
-storage service enforces what the URL says.
+Every signed URL the API hands out covers exactly one blob and carries only the permissions
+its purpose needs. An upload URL may create and write, never read, list or delete, and expires
+within one hour. A read URL may only read, expires within 15 minutes, and makes storage serve
+the blob as a download of the type the pipeline found, whatever headers the uploader set.
+Checked on every issued URL, and against Azurite to prove the storage service enforces what the
+URL says.
 
 ### ACC-9 Every byte path asks the same question
 
-Status: planned (M2)
+Status: enforced (downloads and thumbnails; previews and tiles arrive in M2 slice 6)
 
 Downloads, thumbnails, preview tokens, raster tiles and footprint tiles serve only items the
 caller may read under `authz.readable_scopes`, and an unreadable item answers exactly like a
 missing one (ACC-1 and ACC-2, extended from rows to bytes). A preview token serves only the item
-it was minted for.
+it was minted for. A file is served by a read URL for its own blob and no other: an item's
+original, or its newest derivative in the role asked for.
 
 ## Ingest integrity
 

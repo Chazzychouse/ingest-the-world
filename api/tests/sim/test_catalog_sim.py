@@ -1,11 +1,11 @@
 """Stateful simulation of the catalog and upload API against the reference model.
 
 Hypothesis generates sequences of actors and operations (list, read, create, grant, revoke,
-start an upload, read it, renew its URL, list one's own), runs each against the real app and a fresh
-Postgres database, and after every step checks:
+start an upload, read it, renew its URL, list one's own, download an item's file), runs each
+against the real app and a fresh Postgres database, and after every step checks:
 
 - the response matches what the model says the actor may see or do (ACC-1, ACC-2, ACC-4,
-  ACC-7), and every signed URL is scoped to its upload's blob (ACC-8);
+  ACC-7, ACC-9), and every signed URL is scoped to its upload's or asset's blob (ACC-8);
 - exactly one audit event was written, with the right outcome and marking (ACC-5);
 - the database holds the same collections, grants and uploads as the model.
 
@@ -13,6 +13,7 @@ Failures shrink to a minimal sequence of steps and print how to replay them. Run
 seeded: `make sim SEED=123`. The pipeline has its own machine, `test_pipeline_sim.py`.
 """
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import psycopg
@@ -30,13 +31,17 @@ from hypothesis.stateful import (
 
 from ingest_api.audit import AuditAction
 from ingest_api.collections.routes import NOT_FOUND
+from ingest_api.items import store as items
+from ingest_api.items.routes import ASSET_NOT_FOUND
+from ingest_api.items.routes import NOT_FOUND as ITEM_NOT_FOUND
 from ingest_api.ports import Container
 from ingest_api.uploads.routes import NOT_FOUND as UPLOAD_NOT_FOUND
 from tests.audit_log import AuditLog
 from tests.conftest import make_app, reset_catalog
 from tests.invariants import InvariantViolation, check
+from tests.items import NewItem, catalog
 from tests.model import Actor, World
-from tests.signed_urls import check_upload_url
+from tests.signed_urls import check_read_url, check_upload_url
 from tests.strategies import actors as actor_strategy
 from tests.strategies import grant_keys
 from tests.tokens import TestIdp
@@ -46,6 +51,16 @@ GHOST_UPLOAD = "00000000-0000-4000-8000-000000000000"
 collection_ids = st.from_regex(r"c-[a-z]{2}", fullmatch=True)
 MAX_PAGES = 50  # far above the uploads one example makes; a runaway token fails, not loops
 filenames = st.sampled_from(["scan.laz", "site model.glb", "100%.tif", "ünï.csv"])
+GHOST_ITEM = "00000000-0000-4000-8000-000000000001"
+THUMBNAIL = "thumbnail"
+OCTETS = "application/octet-stream"  # what `tests.items` catalogs every original as
+
+
+@dataclass(frozen=True, slots=True)
+class Item:
+    collection: str
+    marking: str
+    blobs: dict[str, tuple[Container, str, str]]  # asset key -> (container, blob, media type)
 
 
 class CatalogMachine(RuleBasedStateMachine):
@@ -60,6 +75,7 @@ class CatalogMachine(RuleBasedStateMachine):
         reset_catalog(db)
         self.world = World.from_db(db)
         self.uploads: dict[str, tuple[str, str]] = {}  # id -> (collection, creator's subject)
+        self.items: dict[str, Item] = {}  # cataloged by the pipeline, not through the API
 
     # -- plumbing ---------------------------------------------------------------------
 
@@ -332,6 +348,70 @@ class CatalogMachine(RuleBasedStateMachine):
     def _highest_upload(self, upload_ids) -> str | None:
         return self._highest(self.uploads[u][0] for u in upload_ids)
 
+    # -- items and their files --------------------------------------------------------
+
+    @rule(data=st.data(), item_id=st.uuids(version=4), thumbnail=st.booleans())
+    def catalog_item(self, data, item_id, thumbnail):
+        """The pipeline catalogs a file, perhaps marked above its collection, and the derive stage
+        perhaps thumbnails it."""
+        if str(item_id) in self.items:  # Hypothesis likes to repeat itself
+            return
+        cid = data.draw(st.sampled_from(sorted(self.world.collections)))
+        floor = self.world.markings[self.world.collections[cid]]
+        above = sorted(m for m, rank in self.world.markings.items() if rank > floor)
+        raise_to = data.draw(st.sampled_from([None, *above]))
+        made = catalog(
+            self.db,
+            NewItem(cid, "ortho.tif", datetime.now(UTC), id=item_id, raise_to=raise_to),
+        )
+        blobs = {"original": (Container.RAW, made.raw_blob, OCTETS)}
+        if thumbnail:
+            blob = f"{cid}/{item_id.hex}/{THUMBNAIL}/v1.png"
+            asset = items.NewAsset(
+                item_id, THUMBNAIL, 1, "image/png", blob, 1, "0" * 64, {}, "Thumbnail", (THUMBNAIL,)
+            )
+            items.record_asset(self.db, asset, created_at=datetime.now(UTC))
+            blobs[THUMBNAIL] = (Container.DERIVED, blob, "image/png")
+        self.items[str(item_id)] = Item(cid, made.marking, blobs)
+
+    @rule(
+        actor=actors,
+        data=st.data(),
+        role=st.sampled_from(["original", THUMBNAIL]),
+        suffix=st.sampled_from(["", "/url"]),
+    )
+    def download(self, actor, data, role, suffix):
+        """Asks for one of an item's files: a read URL for exactly its blob if the model says the
+        actor may read the item, and a missing item's 404 otherwise (ACC-9)."""
+        item_id = data.draw(st.sampled_from([*self.items, GHOST_ITEM]))
+        path = f"/items/{item_id}/assets/{role}{suffix}"
+        response = self._call(actor, "GET", path, follow_redirects=False)
+        item = self.items.get(item_id)
+        action = AuditAction.ASSET_READ
+        if item is None or not self.world.can_read_item(actor, item.collection, item.marking):
+            check(
+                "ACC-9",
+                (response.status_code, response.json()) == (404, {"detail": ITEM_NOT_FOUND}),
+                f"{actor} on {path}: {response.status_code} {response.text}",
+            )
+            self._expect_audit(action, "denied", item and item.marking, item_id)
+            return
+        if role not in item.blobs:
+            check("ACC-9", response.json() == {"detail": ASSET_NOT_FOUND}, response.text)
+            self._expect_audit(action, "denied", item.marking, item_id)
+            return
+        check("ACC-9", response.status_code in (200, 307), f"{actor} refused {path}")
+        url = response.json()["url"] if suffix else response.headers["location"]
+        container, blob, media_type = item.blobs[role]
+        check_read_url(
+            url,
+            container=container,
+            blob_name=blob,
+            media_type=media_type,
+            issued_by=datetime.now(UTC),
+        )
+        self._expect_audit(action, "allowed", item.marking, item_id)
+
     # -- global checks ----------------------------------------------------------------
 
     @invariant()
@@ -348,10 +428,12 @@ class CatalogMachine(RuleBasedStateMachine):
                 "SELECT id, collection_id, created_by FROM ingest.uploads"
             )
         }
+        for item_id in self.items:  # each cataloged from an upload of its own
+            uploads.pop(item_id, None)
         check("ACC-7", uploads == self.uploads, "database and model disagree about uploads")
 
 
-@pytest.mark.invariant("ACC-1", "ACC-2", "ACC-3", "ACC-4", "ACC-5", "ACC-7", "ACC-8")
+@pytest.mark.invariant("ACC-1", "ACC-2", "ACC-3", "ACC-4", "ACC-5", "ACC-7", "ACC-8", "ACC-9")
 def test_catalog_simulation(fresh_database, idp):
     # One database and app for the whole run; each example starts from a reset catalog.
     url = fresh_database()

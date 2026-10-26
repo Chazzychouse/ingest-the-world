@@ -44,11 +44,20 @@ COPY_POLL_SECONDS = 1.0
 
 # Put Blob, Put Block and Put Block List need create and write; nothing else is granted (ACC-8).
 UPLOAD_PERMISSION = BlobSasPermissions(create=True, write=True)
+# Get Blob, and its properties; nothing else.
+READ_PERMISSION = BlobSasPermissions(read=True)
 # User-delegation keys are fetched with this lifetime and reused until they no longer outlive
 # the URL being signed, so signing costs one key request per few hours, not one per upload.
 DELEGATION_KEY_LIFETIME = timedelta(hours=6)
 # Backdates key validity so a storage clock slightly behind ours still accepts new URLs.
 CLOCK_SKEW = timedelta(minutes=5)
+
+
+def attachment(filename: str) -> str:
+    """A Content-Disposition saving the file as `filename` (RFC 6266): exactly, for clients that
+    read `filename*`, and with anything outside printable ASCII replaced for those that don't."""
+    fallback = "".join(c if " " <= c <= "~" and c not in '"\\' else "_" for c in filename)
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
 def account_name(account_url: str) -> str:
@@ -295,14 +304,35 @@ class AzureBlobSigner:
         self._delegation_expiry: datetime | None = None
 
     def upload_url(self, container: str, name: str, *, expires_at: datetime) -> str:
+        return self._sign((container, name), UPLOAD_PERMISSION, expires_at)
+
+    def read_url(
+        self, container: str, name: str, *, expires_at: datetime, media_type: str, filename: str
+    ) -> str:
+        # Served as the type the pipeline found, not one an uploader claimed, and as a download:
+        # never rendered by a browser on storage's origin.
+        served_as = (media_type, attachment(filename))
+        return self._sign((container, name), READ_PERMISSION, expires_at, served_as)
+
+    def _sign(
+        self,
+        blob: tuple[str, str],
+        permission: BlobSasPermissions,
+        expires_at: datetime,
+        served_as: tuple[str, str] | None = None,  # Content-Type and Content-Disposition
+    ) -> str:
+        container, name = blob
+        content_type, disposition = served_as or (None, None)
         token = generate_blob_sas(
             account_name=self._account_name,
             container_name=container,
             blob_name=name,
             account_key=self._account_key,
             user_delegation_key=None if self._account_key else self._delegation_key(expires_at),
-            permission=UPLOAD_PERMISSION,
+            permission=permission,
             expiry=expires_at,
+            content_type=content_type,
+            content_disposition=disposition,
         )
         return f"{self._public_url}/{quote(container)}/{quote(name)}?{token}"
 

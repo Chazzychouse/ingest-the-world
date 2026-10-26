@@ -63,7 +63,8 @@ api/ingest_api/
   uploads/       upload sessions and their signed URLs: models.py, store.py, routes.py
   items/         cataloged files: kinds.py (what a file is), metadata.py (what its header
                  says), models.py (STAC Items and searches), store.py (only the pipeline
-                 writes; reads and keyset search), routes.py (/items/{id}, /search)
+                 writes; reads and keyset search), routes.py (/items/{id}, /search, and
+                 /items/{id}/assets/{role}: an audited read URL for one file)
   worker/        the pipeline: pipeline.py (one blob version's step machine), classify.py,
                  extract.py (budgeted header reads), formats/ (one reader per format family),
                  outbox.py (derive requests, written with the outcome and relayed to the
@@ -190,7 +191,7 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
 - `api/tests/model.py`: the independent reference model of who may read what.
 - `api/tests/sim/`: Hypothesis state machines that drive the real API and Postgres with
   random actors and operations, checking invariants after every step.
-  `test_catalog_sim.py` covers catalog changes and upload sessions (ACC-*);
+  `test_catalog_sim.py` covers catalog changes, upload sessions and downloads (ACC-*);
   `test_pipeline_sim.py` runs the worker over a faulty queue and blob store, then drains and
   replays every event (ING-1 to ING-5); `test_derive_sim.py` relays derive requests to a
   faulty queue and runs the derive stage over a faulty store, then replays every request and
@@ -205,7 +206,8 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
   `CrashAfter`, which interrupts a job after its N-th storage call (`test_pipeline.py`).
 - `api/tests/contracts/`: one behavioural suite per port, run against the fake *and* the real
   thing (Azurite, the Service Bus emulator), so fakes can't drift from reality.
-  `test_signed_urls.py` also proves Azurite enforces the limits a signed URL claims (ACC-8).
+  `test_signed_urls.py` also proves Azurite enforces the limits a signed URL claims, for
+  upload and read URLs alike (ACC-8).
 - `api/tests/test_fuzz.py`, `test_robustness.py`: schema-driven and targeted fuzzing (ROB-1,
   ACC-1).
 - `api/tests/e2e/` (`make e2e`, deselected from `make check`): the sample corpus through the

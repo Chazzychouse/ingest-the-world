@@ -31,6 +31,7 @@ class AuditAction(StrEnum):
     UPLOAD_RENEW = "upload.renew"
     ITEM_READ = "item.read"
     ITEM_SEARCH = "item.search"
+    ASSET_READ = "asset.read"
     ROLE_CHECK = "authz.role"
     # The pipeline's outcomes for a landed blob version.
     ITEM_CATALOG = "item.catalog"

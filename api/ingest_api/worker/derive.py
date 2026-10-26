@@ -202,6 +202,8 @@ def _keep(
         blob.size,
         sha256,
         _lineage(source, recipe),
+        recipe.title,
+        recipe.stac_roles,
     )
     items.record_asset(conn, asset, created_at=d.clock.now())
     jobs.finish_derive(conn, job, "derived", reason=None, now=d.clock.now())

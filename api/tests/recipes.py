@@ -16,6 +16,7 @@ class Digest:
     """Every original's SHA-256, as text: deterministic."""
 
     role, version, media_type, suffix = "digest", 1, "text/plain", ".txt"
+    title, stac_roles = "SHA-256", ("metadata",)
     deterministic, software = True, SOFTWARE
 
     def applies(self, source: Source) -> bool:
@@ -42,6 +43,7 @@ class Stamp:
     """A raster's first bytes after a random stamp: different on every render."""
 
     role, version, media_type, suffix = "stamp", 1, "application/octet-stream", ".bin"
+    title, stac_roles = "Stamp", ("data",)
     deterministic, software = False, SOFTWARE
 
     def __init__(self, rng: random.Random):
@@ -60,6 +62,7 @@ class Picky:
     """The original's size, unless it starts with `bad`, which it refuses."""
 
     role, version, media_type, suffix = "picky", 2, "text/plain", ".txt"
+    title, stac_roles = "Size", ("metadata",)
     deterministic, software = True, SOFTWARE
 
     def applies(self, source: Source) -> bool:

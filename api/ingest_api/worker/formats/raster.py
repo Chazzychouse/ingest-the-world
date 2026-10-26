@@ -24,14 +24,13 @@ import rasterio
 from rasterio.abc import FileContainer
 from rasterio.errors import NotGeoreferencedWarning, RasterioError
 
-from ingest_api.items.metadata import Captured, Json
+from ingest_api.items.metadata import CLOUD_OPTIMIZED, Captured, Json
 from ingest_api.worker.extract import BlobSource, Found, SourceFile, Unreadable
 from ingest_api.worker.formats import crs
 
 # The single path GDAL is given; the container below serves it.
 PATH = "blob://source"
 MAX_BANDS = 64
-CLOUD_OPTIMIZED = "raster:cloud_optimized"
 # Where each driver keeps a capture time, most specific first: (metadata domain, key, format).
 ISO = "iso"
 EXIF_FORMAT = "%Y:%m:%d %H:%M:%S"

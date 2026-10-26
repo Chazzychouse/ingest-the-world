@@ -28,7 +28,7 @@ from rasterio.enums import ColorInterp, Resampling
 from rasterio.errors import NotGeoreferencedWarning, RasterioError
 
 from ingest_api.items.kinds import Kind
-from ingest_api.worker.formats.raster import CLOUD_OPTIMIZED
+from ingest_api.items.metadata import CLOUD_OPTIMIZED
 from ingest_api.worker.recipe import Source, Unrenderable
 
 SOFTWARE: Mapping[str, str] = {"GDAL": rasterio.__gdal_version__, "rasterio": rasterio.__version__}
@@ -67,6 +67,7 @@ class Cog:
         "image/tiff; application=geotiff; profile=cloud-optimized",
         ".tif",
     )
+    title, stac_roles = "Cloud-optimized GeoTIFF", ("data", "cloud-optimized")
     deterministic, software = True, SOFTWARE
 
     def applies(self, source: Source) -> bool:
@@ -93,6 +94,7 @@ class Cog:
 
 class Thumbnail:
     role, version, media_type, suffix = "thumbnail", 1, "image/png", ".png"
+    title, stac_roles = "Thumbnail", ("thumbnail",)
     deterministic, software = True, SOFTWARE
 
     def applies(self, source: Source) -> bool:

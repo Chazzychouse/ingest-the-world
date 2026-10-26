@@ -157,6 +157,14 @@ class BlobSigner(Protocol):
         do nothing else: no reads, listing, deletes, or other blobs."""
         ...
 
+    def read_url(
+        self, container: str, name: str, *, expires_at: datetime, media_type: str, filename: str
+    ) -> str:
+        """A URL that lets its holder read this one blob until `expires_at`, and do nothing
+        else. Storage serves it as `media_type`, as an attachment named `filename`, whatever the
+        blob's own headers say."""
+        ...
+
 
 class QueueError(Exception):
     """Base for queue failures."""

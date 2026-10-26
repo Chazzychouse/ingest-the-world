@@ -23,6 +23,9 @@ STAC_VERSION = "1.1.0"
 FILE_EXTENSION = "https://stac-extensions.github.io/file/v2.1.0/schema.json"
 PROJECTION_EXTENSION = "https://stac-extensions.github.io/projection/v2.0.0/schema.json"
 
+# The asset key, and path segment, an item's original goes by; derivatives go by their role.
+ORIGINAL = "original"
+
 DEFAULT_PAGE = 20
 MAX_PAGE = 100
 MAX_FILTER_VALUES = 100
@@ -188,10 +191,24 @@ class NextLink(ApiModel):
 
 
 class Asset(ApiModel):
+    """One of an item's files: its original, or a derivative. `href` answers with a short-lived
+    link to the bytes (`GET /items/{id}/assets/{role}`)."""
+
+    model_config = ConfigDict(validate_by_name=True, serialize_by_alias=True)
+
     href: str
     type: str
     title: str
     roles: list[str]
+    file_size: int = Field(alias="file:size")
+    file_checksum: str = Field(alias="file:checksum")
+
+
+class AssetUrl(ApiModel):
+    """A link to one asset's bytes, read-only, and when it stops working."""
+
+    url: str
+    expires_at: dt.datetime
 
 
 class ItemProperties(ApiModel):
@@ -230,7 +247,8 @@ class StacItem(ApiModel):
     )
     properties: ItemProperties
     links: list[Link]
-    assets: dict[str, Asset]  # empty until downloads are signed (a later slice)
+    # `original`, and each derivative by its role (`cog`, `thumbnail`).
+    assets: dict[str, Asset]
 
 
 class ItemCollection(ApiModel):

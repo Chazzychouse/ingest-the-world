@@ -2,7 +2,16 @@
   "components": {
     "schemas": {
       "Asset": {
+        "description": "One of an item's files: its original, or a derivative. `href` answers with a short-lived\nlink to the bytes (`GET /items/{id}/assets/{role}`).",
         "properties": {
+          "file:checksum": {
+            "title": "File:Checksum",
+            "type": "string"
+          },
+          "file:size": {
+            "title": "File:Size",
+            "type": "integer"
+          },
           "href": {
             "title": "Href",
             "type": "string"
@@ -27,9 +36,31 @@
           "href",
           "type",
           "title",
-          "roles"
+          "roles",
+          "file:size",
+          "file:checksum"
         ],
         "title": "Asset",
+        "type": "object"
+      },
+      "AssetUrl": {
+        "description": "A link to one asset's bytes, read-only, and when it stops working.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
+        ],
+        "title": "AssetUrl",
         "type": "object"
       },
       "Collection": {
@@ -1871,6 +1902,125 @@
           }
         ],
         "summary": "Get Item",
+        "tags": [
+          "items"
+        ]
+      }
+    },
+    "/items/{item_id}/assets/{role}": {
+      "get": {
+        "description": "Redirects to an asset's bytes (`original`, or a derivative's role): a read-only link to\nthat one file, valid for at most 15 minutes.",
+        "operationId": "get_asset_items__item_id__assets__role__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "maxLength": 32,
+              "minLength": 1,
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "307": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such item, or no such asset"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Asset",
+        "tags": [
+          "items"
+        ]
+      }
+    },
+    "/items/{item_id}/assets/{role}/url": {
+      "get": {
+        "description": "The link `GET /items/{id}/assets/{role}` redirects to, as JSON, for clients that can't\nread a redirect: a browser's `fetch` hides it, and an `<img>` can't send a token.",
+        "operationId": "get_asset_url_items__item_id__assets__role__url_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "maxLength": 32,
+              "minLength": 1,
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetUrl"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such item, or no such asset"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Asset Url",
         "tags": [
           "items"
         ]
