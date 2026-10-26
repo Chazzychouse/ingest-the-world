@@ -43,6 +43,11 @@ def _cui_ids(database_url: str) -> set[str]:
         return {r[0] for r in rows}
 
 
+def _marking_codes(database_url: str) -> set[str]:
+    with psycopg.connect(database_url) as conn:
+        return {r[0] for r in conn.execute("SELECT code FROM authz.markings")}
+
+
 # Admin with CUI clearance, cleared Contributor, uncleared Reader. Every generated request
 # is sent as each of them.
 FUZZ_USERS = ["alice", "carol", "bob"]
@@ -64,10 +69,12 @@ def _check_response(case, user, response, fuzz_database):
     if "Clearance.CUI" in USERS[user] or response.status_code == 422:
         return  # 422 bodies echo the caller's own input back
     body = response.json() if response.content else None
+    # Only marking codes disclose a marking: TileJSON, say, describes a `marking` attribute.
+    disclosed = set(_markings(body)) & _marking_codes(fuzz_database)
     check(
         "ACC-1",
-        set(_markings(body)) <= {"UNCLASSIFIED"},
-        f"{user} received markings {_markings(body)} from {case.method} {case.formatted_path}",
+        disclosed <= {"UNCLASSIFIED"},
+        f"{user} received markings {disclosed} from {case.method} {case.formatted_path}",
     )
     leaked = _cui_ids(fuzz_database) & set(response.text.split('"'))
     check("ACC-1", not leaked, f"{user} received CUI ids {leaked} from {case.formatted_path}")
