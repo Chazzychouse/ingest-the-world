@@ -43,7 +43,7 @@ from ingest_api.worker.derive import Deriver, Reason, blob_name
 from ingest_api.worker.recipe import Recipe
 from ingest_api.worker.runner import Retry, derive_once, sweep_derive_once
 from tests.conftest import reset_catalog
-from tests.fakes import Faults, MemoryBlobStore, SimClock, SimQueue
+from tests.fakes import INLINE_RENDERER, Faults, MemoryBlobStore, SimClock, SimQueue
 from tests.invariants import check
 from tests.items import NewItem, catalog
 from tests.recipes import Digest, DigestV2, Picky, Stamp
@@ -107,7 +107,7 @@ class DeriveMachine(RuleBasedStateMachine):
             clock=self.clock, rng=rng, faults=faults, lock_seconds=60, max_delivery_count=3
         )
         self.recipes: list[Recipe] = [Digest(), DigestV2(), Stamp(random.Random(seed)), Picky()]
-        self.deriver = Deriver(self.store, self.clock, self.scratch, self.recipes)
+        self.deriver = Deriver(self.store, self.clock, self.scratch, INLINE_RENDERER, self.recipes)
 
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self.url)

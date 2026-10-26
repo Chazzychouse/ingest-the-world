@@ -21,12 +21,9 @@ class Digest:
     def applies(self, source: Source) -> bool:
         return True
 
-    def render(self, source: Source, scratch: Path) -> Path:
-        digest = hashlib.sha256()
-        for chunk in source.chunks():
-            digest.update(chunk)
+    def render(self, original: Path, scratch: Path) -> Path:
         out = scratch / "digest.txt"
-        out.write_text(digest.hexdigest())
+        out.write_text(hashlib.sha256(original.read_bytes()).hexdigest())
         return out
 
 
@@ -35,8 +32,8 @@ class DigestV2(Digest):
 
     version = 2
 
-    def render(self, source: Source, scratch: Path) -> Path:
-        out = super().render(source, scratch)
+    def render(self, original: Path, scratch: Path) -> Path:
+        out = super().render(original, scratch)
         out.write_text(out.read_text().upper())
         return out
 
@@ -53,9 +50,9 @@ class Stamp:
     def applies(self, source: Source) -> bool:
         return source.kind == Kind.RASTER
 
-    def render(self, source: Source, scratch: Path) -> Path:
+    def render(self, original: Path, scratch: Path) -> Path:
         out = scratch / "stamp.bin"
-        out.write_bytes(self._rng.randbytes(8) + source.fetch(0, 16))
+        out.write_bytes(self._rng.randbytes(8) + original.read_bytes()[:16])
         return out
 
 
@@ -68,9 +65,10 @@ class Picky:
     def applies(self, source: Source) -> bool:
         return True
 
-    def render(self, source: Source, scratch: Path) -> Path:
-        if source.fetch(0, 3) == b"bad":
+    def render(self, original: Path, scratch: Path) -> Path:
+        content = original.read_bytes()
+        if content.startswith(b"bad"):
             raise Unrenderable("starts badly")
         out = scratch / "picky.txt"
-        out.write_text(str(source.size))
+        out.write_text(str(len(content)))
         return out

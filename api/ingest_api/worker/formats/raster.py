@@ -9,6 +9,10 @@ past the end of the file is `unreadable`, however good its header looks.
 Capture time is the best the header offers: an imagery acquisition time (ISO 8601), else EXIF's
 original time, else the TIFF `DateTime` tag ("YYYY:MM:DD HH:MM:SS", local time of unknown zone,
 taken as UTC).
+
+A TIFF also says whether it is cloud-optimized (`raster:cloud_optimized`): GDAL's COG driver
+marks its files so in the header, and any internally tiled TIFF with internal overviews (what
+other COG writers make) serves a tiler as well. The derive stage makes no COG of one.
 """
 
 import datetime as dt
@@ -27,6 +31,7 @@ from ingest_api.worker.formats import crs
 # The single path GDAL is given; the container below serves it.
 PATH = "blob://source"
 MAX_BANDS = 64
+CLOUD_OPTIMIZED = "raster:cloud_optimized"
 # Where each driver keeps a capture time, most specific first: (metadata domain, key, format).
 ISO = "iso"
 EXIF_FORMAT = "%Y:%m:%d %H:%M:%S"
@@ -120,6 +125,8 @@ def _found(dataset: rasterio.DatasetReader) -> Found:
         ],
         "raster:band_count": dataset.count,
     }
+    if dataset.driver == "GTiff":
+        properties[CLOUD_OPTIMIZED] = _cloud_optimized(dataset)
     captured = _captured(dataset)
     if dataset.crs is None:
         return Found(properties=properties, captured=captured)
@@ -128,6 +135,14 @@ def _found(dataset: rasterio.DatasetReader) -> Found:
     bounds = dataset.bounds
     bbox = crs.footprint(native, bounds.left, bounds.bottom, bounds.right, bounds.top)
     return Found(properties=properties, bbox=bbox, crs=native, captured=captured)
+
+
+def _cloud_optimized(dataset: rasterio.DatasetReader) -> bool:
+    if dataset.tags(ns="IMAGE_STRUCTURE").get("LAYOUT") == "COG":
+        return True
+    _, block_width = dataset.block_shapes[0]
+    # Sidecars are never opened, so any overviews are inside the file.
+    return block_width < dataset.width and bool(dataset.overviews(1))
 
 
 def _captured(dataset: rasterio.DatasetReader) -> Captured | None:

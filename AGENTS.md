@@ -52,7 +52,8 @@ api/ingest_api/
   paging.py      keyset page tokens, newest first, for every list the API pages
   ports.py       interfaces to the outside world (clock, ids, blobs, queues)
   adapters/      real implementations of ports (Azure Blob and SAS signing, Service Bus,
-                 the EICAR stand-in scanner, the process sandbox format readers run in)
+                 the EICAR stand-in scanner, the process sandbox format readers and
+                 derive recipes run in)
   wiring.py      builds adapters from settings, for the API, the worker and the shim
   events.py      BlobCreated events in the Event Grid schema: parsed by workers, built by the shim
   event_shim.py  local stand-in for Event Grid: announces committed landing blobs on the queue
@@ -198,7 +199,8 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
 - `api/tests/strategies.py`: the shared Hypothesis strategies (actors, grantees, names).
 - `api/tests/items.py`: catalogs items straight through the pipeline's stores, for read and
   search tests that don't need bytes (or, given `content`, derive tests that do).
-- `api/tests/recipes.py`: small recipes, each with one trait the derive stage must handle.
+- `api/tests/recipes.py`: small recipes, each with one trait the derive stage must handle;
+  `test_raster_recipes.py` runs the real ones, and `test_sandbox.py` misbehaving ones.
 - `api/tests/fakes.py`: seeded, fault-injecting implementations of the ports, and
   `CrashAfter`, which interrupts a job after its N-th storage call (`test_pipeline.py`).
 - `api/tests/contracts/`: one behavioural suite per port, run against the fake *and* the real

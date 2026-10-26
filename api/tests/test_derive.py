@@ -4,6 +4,7 @@ outbox relay that hands it cataloged items."""
 import contextlib
 import hashlib
 import random
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,15 +13,22 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 
+from ingest_api.adapters.process_sandbox import ProcessRenderer
 from ingest_api.items.kinds import Kind
-from ingest_api.ports import Container, TransientStorageError
+from ingest_api.items.metadata import Metadata
+from ingest_api.ports import Container, StorageError, TransientStorageError
 from ingest_api.worker import derive, outbox
 from ingest_api.worker.derive import SHA256, Deriver, Reason, blob_name
-from ingest_api.worker.recipe import Recipe, Source
+from ingest_api.worker.recipe import Recipe, Renderer, Source
+from ingest_api.worker.recipes import RECIPES
+from ingest_api.worker.recipes.raster import Cog
 from ingest_api.worker.runner import Retry, derive_once, sweep_derive_once
-from tests.fakes import CrashAfter, MemoryBlobStore, SimClock, SimQueue
+from tests.conftest import TEST_LIMITS
+from tests.fakes import INLINE_RENDERER, CrashAfter, MemoryBlobStore, SimClock, SimQueue
+from tests.invariants import check
 from tests.items import Cataloged, NewItem, catalog
 from tests.recipes import Digest, Picky, Stamp
+from tests.test_raster_recipes import metadata, rgb, write_raster
 
 DERIVED, RAW = Container.DERIVED, Container.RAW
 NOW = datetime(2026, 3, 1, tzinfo=UTC)
@@ -42,9 +50,9 @@ class Counting:
     def applies(self, source: Source) -> bool:
         return self.inner.applies(source)
 
-    def render(self, source: Source, scratch: Path) -> Path:
+    def render(self, original: Path, scratch: Path) -> Path:
         self.renders += 1
-        return self.inner.render(source, scratch)
+        return self.inner.render(original, scratch)
 
 
 @pytest.fixture
@@ -57,8 +65,16 @@ def item(db, fresh_collection) -> Callable[..., Cataloged]:
         kind: Kind = Kind.RASTER,
         *,
         collection: str | None = None,
+        metadata: Metadata | None = None,
     ) -> Cataloged:
-        new = NewItem(collection or fresh_collection, "f.tif", NOW, kind=kind, content=content)
+        new = NewItem(
+            collection or fresh_collection,
+            "f.tif",
+            NOW,
+            kind=kind,
+            content=content,
+            metadata=metadata,
+        )
         cataloged = catalog(db, new)
         store.put(RAW, cataloged.raw_blob, content)
         return cataloged
@@ -68,8 +84,10 @@ def item(db, fresh_collection) -> Callable[..., Cataloged]:
 
 @pytest.fixture
 def run(database_url, tmp_path) -> Callable[..., dict[str, str]]:
-    def _run(store, item_id: UUID, *, recipes, **limits) -> dict[str, str]:
-        deriver = Deriver(store, SimClock(NOW), tmp_path, recipes, **limits)
+    def _run(
+        store, item_id: UUID, *, recipes, renderer: Renderer = INLINE_RENDERER, **limits
+    ) -> dict[str, str]:
+        deriver = Deriver(store, SimClock(NOW), tmp_path, renderer, recipes, **limits)
         with psycopg.connect(database_url) as conn:
             return dict(derive.derive(conn, deriver, item_id))
 
@@ -157,6 +175,36 @@ def test_an_original_a_recipe_refuses_fails_that_derivative_only(db, item, run):
     assert store.names(DERIVED) == [blob_name(bad.item.collection, bad.id, Digest())]
 
 
+class Escapes(Digest):
+    """Names the original's copy as its derivative, as a compromised render might."""
+
+    def render(self, original: Path, scratch: Path) -> Path:
+        return original
+
+
+@pytest.mark.invariant("ING-12")
+def test_a_render_that_names_a_file_outside_its_scratch_fails(db, item, run):
+    store = MemoryBlobStore()
+    raster = item(store)
+
+    assert run(store, raster.id, recipes=[Escapes()]) == {"digest/v1": "failed"}
+    assert _jobs(db, raster.id) == [("digest", "failed", "unrenderable")]
+    assert store.names(DERIVED) == []
+
+
+@pytest.mark.invariant("ING-7")
+def test_an_original_that_no_longer_matches_its_checksum_is_not_derived(db, item, run):
+    """Lineage names the original by checksum; a derivative of other bytes would be a lie."""
+    store = MemoryBlobStore()
+    raster = item(store)
+    store.put(RAW, raster.raw_blob, TIFF[::-1])
+
+    with pytest.raises(StorageError):
+        run(store, raster.id, recipes=[Digest()])
+    check("ING-7", store.names(DERIVED) == [], "derived from bytes other than the original")
+    assert _assets(db, raster.id) == []
+
+
 @pytest.mark.invariant("ING-12")
 def test_an_original_over_the_size_class_fails_without_rendering(db, item, run):
     store, recipe = MemoryBlobStore(), Counting(Digest())
@@ -230,10 +278,10 @@ def test_giving_up_fails_what_is_unfinished_and_keeps_what_is_made(
 ):
     store = MemoryBlobStore()
     raster = item(store)
-    deriver = Deriver(store, SimClock(NOW), tmp_path, [Digest()])
+    deriver = Deriver(store, SimClock(NOW), tmp_path, INLINE_RENDERER, [Digest()])
     with psycopg.connect(database_url) as conn:
         derive.derive(conn, deriver, raster.id)
-        more = Deriver(store, SimClock(NOW), tmp_path, [Digest(), Picky()])
+        more = Deriver(store, SimClock(NOW), tmp_path, INLINE_RENDERER, [Digest(), Picky()])
         stages = derive.give_up(conn, more, raster.id, Reason.RETRIES_EXHAUSTED)
 
     assert stages == {"digest/v1": "derived", "picky/v2": "failed"}
@@ -251,8 +299,8 @@ def test_giving_up_keeps_a_derivative_written_before_the_attempts_ran_out(
     orphan it."""
     store = MemoryBlobStore()
     raster = item(store)
-    deriver = Deriver(store, SimClock(NOW), tmp_path, [Digest()])
-    crashing = Deriver(CrashAfter(store, 3), SimClock(NOW), tmp_path, [Digest()])
+    deriver = Deriver(store, SimClock(NOW), tmp_path, INLINE_RENDERER, [Digest()])
+    crashing = Deriver(CrashAfter(store, 3), SimClock(NOW), tmp_path, INLINE_RENDERER, [Digest()])
     with psycopg.connect(database_url) as conn:
         with pytest.raises(TransientStorageError):  # head, read, then create takes effect
             derive.derive(conn, crashing, raster.id)
@@ -329,7 +377,7 @@ def deriving(database_url, tmp_path):
     """Runs the derive queue as the worker does, until it takes no message."""
 
     def _deriving(queue: SimQueue, store: MemoryBlobStore, recipes) -> None:
-        deriver = Deriver(store, queue.clock, tmp_path, recipes)
+        deriver = Deriver(store, queue.clock, tmp_path, INLINE_RENDERER, recipes)
         connect = lambda: psycopg.connect(database_url)  # noqa: E731 - a one-line factory
         for _ in range(10):
             if derive_once(queue, connect, deriver, retry=RETRY, batch=10) == 0:
@@ -381,9 +429,65 @@ def test_a_request_whose_message_dead_letters_is_failed_by_the_sweep(
         queue.receive()
         queue.clock.advance(queue.lock_seconds + 1)
     assert queue.receive() == [] and len(queue.dead_letters) == 1
-    deriver = Deriver(store, queue.clock, tmp_path, [Digest()])
+    deriver = Deriver(store, queue.clock, tmp_path, INLINE_RENDERER, [Digest()])
 
     connect = lambda: psycopg.connect(database_url)  # noqa: E731 - a one-line factory
     assert sweep_derive_once(queue, connect, deriver, batch=10) == 1
     assert _jobs(db, raster.id) == [("digest", "failed", "dead-lettered")]
     assert queue.dead_letters == []
+
+
+# -- the raster recipes, rendered in the sandbox --------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def renderer() -> ProcessRenderer:
+    return ProcessRenderer(TEST_LIMITS, max_file_bytes=derive.MAX_OUTPUT_BYTES)
+
+
+@pytest.fixture
+def raster(item, tmp_path) -> Callable[..., Cataloged]:
+    """Catalogs a GeoTIFF with what the raster reader records about it."""
+
+    def make(store: MemoryBlobStore, *, cog: bool = False) -> Cataloged:
+        path = write_raster(tmp_path / f"{uuid4().hex}.tif", rgb(600, 800), nodata=0)
+        if cog:
+            path = Cog().render(path, Path(tempfile.mkdtemp(dir=tmp_path)))
+        return item(store, path.read_bytes(), metadata=metadata(path))
+
+    return make
+
+
+@pytest.mark.invariant("ING-7")
+@pytest.mark.filterwarnings("ignore::rasterio.errors.NotGeoreferencedWarning")
+def test_a_geotiff_gets_a_cog_and_a_thumbnail_that_rebuild_the_same(db, raster, run, renderer):
+    store = MemoryBlobStore()
+    ortho = raster(store)
+
+    assert run(store, ortho.id, recipes=RECIPES, renderer=renderer) == {
+        "cog/v1": "derived",
+        "thumbnail/v1": "derived",
+    }
+    built = _assets(db, ortho.id)
+    assert [(role, media) for role, _, media, *_ in built] == [
+        ("cog", Cog.media_type),
+        ("thumbnail", "image/png"),
+    ]
+    for _, _, _, name, size, sha in built:
+        assert hashlib.sha256(store.content(DERIVED, name)).hexdigest() == sha
+        assert len(store.content(DERIVED, name)) == size
+
+    for name in store.names(DERIVED):
+        store.delete(DERIVED, name)
+    db.execute("DELETE FROM catalog.assets WHERE item_id = %s", (ortho.id,))
+    db.execute("DELETE FROM ingest.derive_jobs WHERE item_id = %s", (ortho.id,))
+    run(store, ortho.id, recipes=RECIPES, renderer=renderer)
+
+    check("ING-7", _assets(db, ortho.id) == built, "a rebuild differs from the first build")
+
+
+def test_a_cog_original_gets_only_a_thumbnail(db, raster, run, renderer):
+    store = MemoryBlobStore()
+    cog = raster(store, cog=True)
+
+    assert run(store, cog.id, recipes=RECIPES, renderer=renderer) == {"thumbnail/v1": "derived"}

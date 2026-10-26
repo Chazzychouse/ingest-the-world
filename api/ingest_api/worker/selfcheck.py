@@ -2,8 +2,9 @@
 
 Slice 4 shipped an image whose GDAL couldn't load (a missing system library), which only a
 live upload revealed. This writes a tiny GeoTIFF with GDAL and a one-row Parquet file with
-Arrow, in memory, and extracts both through the process sandbox, as the worker would. It touches
-no database, storage or queue, so CI can run it on a freshly built image.
+Arrow, extracts both through the process sandbox, as the worker would, and renders every recipe
+from the GeoTIFF through the render sandbox, as the derive stage would. It touches no database,
+storage or queue, so CI can run it on a freshly built image.
 """
 
 import io
@@ -19,13 +20,16 @@ import pyarrow.parquet as pq
 import rasterio
 from rasterio.transform import from_origin
 
-from ingest_api.adapters.process_sandbox import Limits, ProcessSandbox
+from ingest_api.adapters.process_sandbox import Limits, ProcessRenderer, ProcessSandbox
 from ingest_api.worker.classify import Media
 from ingest_api.worker.extract import Budget, extract
 from ingest_api.worker.formats import READERS
+from ingest_api.worker.recipe import Unrenderable
+from ingest_api.worker.recipes import RECIPES
 
 log = logging.getLogger("ingest.worker")
 LIMITS = Limits(timeout_seconds=30.0, memory_bytes=1024 * 1024 * 1024)
+MAX_RENDER_BYTES = 64 * 1024 * 1024
 
 
 def _geotiff() -> bytes:
@@ -55,15 +59,39 @@ def _slice(data: bytes, offset: int, length: int) -> bytes:
     return data[offset : offset + length]
 
 
-def run() -> bool:
-    """True if every sample extracts; logs what failed otherwise."""
-    log.info("GDAL %s, Arrow %s", rasterio.__gdal_version__, pa.__version__)
+def _extracts(geotiff: bytes) -> bool:
     sandbox = ProcessSandbox(LIMITS)
     ok = True
-    for media, data in ((Media.TIFF, _geotiff()), (Media.PARQUET, _parquet())):
+    for media, data in ((Media.TIFF, geotiff), (Media.PARQUET, _parquet())):
         read = partial(_slice, data)
         budget = Budget(read, media, len(data))
         status = extract(READERS[media], budget, sandbox).metadata.status
         log.info("%s: %s", media, status)
         ok = ok and status == "extracted"
     return ok
+
+
+def _renders(geotiff: bytes) -> bool:
+    renderer = ProcessRenderer(LIMITS, max_file_bytes=MAX_RENDER_BYTES)
+    ok = True
+    with tempfile.TemporaryDirectory() as directory:
+        original = Path(directory) / "original"
+        original.write_bytes(geotiff)
+        for recipe in RECIPES:
+            scratch = Path(tempfile.mkdtemp(dir=directory))
+            try:
+                size = renderer.render(recipe, original, scratch).stat().st_size
+            except Unrenderable as exc:
+                log.error("%s: %s", recipe.role, exc)
+                ok = False
+                continue
+            log.info("%s: %d bytes", recipe.role, size)
+    return ok
+
+
+def run() -> bool:
+    """True if every sample extracts and every recipe renders; logs what failed otherwise."""
+    log.info("GDAL %s, Arrow %s", rasterio.__gdal_version__, pa.__version__)
+    geotiff = _geotiff()
+    extracted = _extracts(geotiff)
+    return _renders(geotiff) and extracted

@@ -11,6 +11,7 @@ import random
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from ingest_api.events import blob_created
@@ -26,6 +27,7 @@ from ingest_api.ports import (
     TransientStorageError,
 )
 from ingest_api.worker.extract import Budget, Failed, Found, Reader, read_header
+from ingest_api.worker.recipe import Recipe
 
 
 def event_for(props: BlobProps) -> dict[str, Any]:
@@ -334,3 +336,14 @@ class InlineSandbox:
 
     def run(self, reader: Reader, budget: Budget) -> Found | Failed | None:
         return read_header(reader, budget.fetch, budget.name, budget.size)
+
+
+class InlineRenderer:
+    """Runs recipes in this process, for the same reason, and so a test recipe can share state
+    with its test."""
+
+    def render(self, recipe: Recipe, original: Path, scratch: Path) -> Path:
+        return recipe.render(original, scratch)
+
+
+INLINE_RENDERER = InlineRenderer()

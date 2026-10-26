@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     # Limits on the child process each extraction's reader runs in (ING-8).
     extract_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
     extract_memory_mib: int = Field(default=1024, ge=256, le=16384)
+    # And on the one each derivative is rendered in: a COG of a 2 GiB original takes minutes.
+    derive_timeout_seconds: float = Field(default=1800.0, gt=0, le=7200)
+    derive_memory_mib: int = Field(default=2048, ge=512, le=16384)
 
     # The local event shim's polling interval (`ingest_api.event_shim`).
     shim_poll_seconds: float = Field(default=1.0, gt=0, le=60)
