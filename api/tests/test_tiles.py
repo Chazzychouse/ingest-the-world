@@ -13,7 +13,7 @@ from ingest_api.tiles.routes import VIEW_NOT_FOUND
 from tests.audit_log import AuditLog
 from tests.invariants import check
 from tests.items import Cataloged, NewItem, catalog
-from tests.tiles import footprints
+from tests.tiles import features, footprints
 
 NOW = datetime(2026, 10, 26, 12, tzinfo=UTC)
 ALPHA = "site-survey-alpha"  # UNCLASSIFIED, readable by every Reader
@@ -74,6 +74,21 @@ def test_a_footprint_is_drawn_only_in_the_tiles_it_touches(client, auth, db):
     # Denver is in the north-western quarter of the world at zoom 1.
     assert _ids(client, auth, "bob", view, (1, 0, 0)) == {str(made.id)}
     assert _ids(client, auth, "bob", view, (1, 1, 1)) == set()
+
+
+@pytest.mark.invariant("SRCH-1")
+def test_a_footprint_too_small_to_draw_is_marked_by_a_point(client, auth, db):
+    tag = uuid.uuid4().hex
+    tiny = _item(db, tags=(tag,), bbox=Bbox(-105.0, 39.5, -104.999, 39.501))
+    view = _open(client, auth, "bob", q=tag)
+
+    zoomed_out = _tile(client, auth, "bob", view)
+    zoomed_in = _tile(client, auth, "bob", view, (14, 3413, 6232))  # where it is, close up
+
+    drawn = {f["properties"]["id"]: f["geometry"]["type"] for f in features(zoomed_out.content)}
+    check("SRCH-1", drawn == {str(tiny.id): "Point"}, f"at zoom 0 the tile drew {drawn}")
+    close = {f["properties"]["id"]: f["geometry"]["type"] for f in features(zoomed_in.content)}
+    assert close == {str(tiny.id): "Polygon"}
 
 
 def test_polar_footprints_are_clipped_to_the_map_not_refused(client, auth, db):

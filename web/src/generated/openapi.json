@@ -224,6 +224,17 @@
         "title": "CollectionIn",
         "type": "object"
       },
+      "DeriveReason": {
+        "description": "Why a derive job failed.",
+        "enum": [
+          "too-large",
+          "unrenderable",
+          "retries-exhausted",
+          "dead-lettered"
+        ],
+        "title": "DeriveReason",
+        "type": "string"
+      },
       "Filters": {
         "description": "What a search or a footprint map asks for. Every filter given must hold for every item\nshown (SRCH-1); a list filter that is empty matches nothing.",
         "properties": {
@@ -569,6 +580,21 @@
             "title": "File:Size",
             "type": "integer"
           },
+          "ingest:derivative_failures": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DeriveReason"
+            },
+            "title": "Ingest:Derivative Failures",
+            "type": "object"
+          },
+          "ingest:derivatives": {
+            "enum": [
+              "deriving",
+              "ready"
+            ],
+            "title": "Ingest:Derivatives",
+            "type": "string"
+          },
           "ingest:extraction": {
             "enum": [
               "extracted",
@@ -642,7 +668,9 @@
           "file:size",
           "file:checksum",
           "proj:code",
-          "proj:wkt2"
+          "proj:wkt2",
+          "ingest:derivatives",
+          "ingest:derivative_failures"
         ],
         "title": "ItemProperties",
         "type": "object"

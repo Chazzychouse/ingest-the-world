@@ -173,3 +173,5 @@ def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collectio
                 "stage"
             ]
             check("ING-13", stage == "ready", f"{label}: derivatives ended {stage}")
+            derivatives = api.get(f"/items/{upload_id}")["properties"]["ingest:derivatives"]
+            check("ING-13", derivatives == "ready", f"{label}: the item says {derivatives}")

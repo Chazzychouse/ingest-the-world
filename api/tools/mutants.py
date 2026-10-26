@@ -51,6 +51,7 @@ PIPELINE = "ingest_api/worker/pipeline.py"
 ITEM_ROUTES = "ingest_api/items/routes.py"
 ITEM_STORE = "ingest_api/items/store.py"
 SEARCH_SQL = "migrations/0008_item_search.sql"
+DERIVATIVES_SQL = "migrations/0014_derivative_status.sql"
 DERIVE = "ingest_api/worker/derive.py"
 SANDBOX = "ingest_api/adapters/process_sandbox.py"
 BLOB_ADAPTER = "ingest_api/adapters/azure_blob.py"
@@ -621,10 +622,26 @@ MUTANTS = [
     ),
     Mutant(
         "cataloged-is-always-ready",
-        UPLOAD_STORE,
-        "WHEN u.status = 'cataloged' AND settled.item_id IS NULL THEN 'deriving'",
-        "WHEN false THEN 'deriving'",
+        DERIVATIVES_SQL,
+        "THEN 'ready' ELSE 'deriving' END",
+        "THEN 'ready' ELSE 'ready' END",
         ("ING-13",),
+    ),
+    Mutant(
+        # A derivative an older recipe made is reported missing when a newer version fails.
+        "failure-despite-asset",
+        DERIVATIVES_SQL,
+        "    WHERE newest.stage = 'failed'\n      AND NOT EXISTS (",
+        "    WHERE newest.stage = 'failed'\n      AND true OR false AND NOT EXISTS (",
+        ("ING-13",),
+    ),
+    Mutant(
+        # A footprint smaller than a pixel drops out of the tile, so it vanishes at low zoom.
+        "tiny-footprint-dropped",
+        ITEM_STORE,
+        "ST_AsMVTGeom(ST_PointOnSurface(shape),",
+        "ST_AsMVTGeom(NULL::geometry,",
+        ("SRCH-1",),
     ),
 ]
 

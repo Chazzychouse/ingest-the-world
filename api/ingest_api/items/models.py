@@ -6,6 +6,7 @@ an ItemCollection whose `next` link carries the cursor for the following page.
 """
 
 import datetime as dt
+from enum import StrEnum
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
@@ -225,6 +226,19 @@ class PreviewSession(ApiModel):
     expires_at: dt.datetime
 
 
+class DeriveReason(StrEnum):
+    """Why a derive job failed."""
+
+    TOO_LARGE = "too-large"
+    UNRENDERABLE = "unrenderable"
+    RETRIES_EXHAUSTED = "retries-exhausted"
+    DEAD_LETTERED = "dead-lettered"
+
+
+# Whether an item's derivatives have settled (ING-13), as its upload's stage says once cataloged.
+Derivatives = Literal["deriving", "ready"]
+
+
 class ItemProperties(ApiModel):
     """Core fields plus whatever the header said (`proj:shape`, `raster:bands`, `pc:count`,
     `mesh:triangles`, ...), which is why other keys are allowed."""
@@ -246,6 +260,9 @@ class ItemProperties(ApiModel):
     file_checksum: str = Field(alias="file:checksum")  # a multihash: 0x12 (sha2-256), 0x20 bytes
     proj_code: str | None = Field(alias="proj:code")
     proj_wkt2: str | None = Field(alias="proj:wkt2")
+    derivatives: Derivatives = Field(alias="ingest:derivatives")
+    # The derivatives it lacks because they failed, by role, with why: `too-large`, ...
+    derivative_failures: dict[str, DeriveReason] = Field(alias="ingest:derivative_failures")
 
 
 class StacItem(ApiModel):

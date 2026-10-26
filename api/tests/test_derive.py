@@ -16,9 +16,10 @@ import pytest
 from ingest_api.adapters.process_sandbox import ProcessRenderer
 from ingest_api.items.kinds import Kind
 from ingest_api.items.metadata import Metadata
+from ingest_api.items.models import DeriveReason
 from ingest_api.ports import Container, StorageError, TransientStorageError
 from ingest_api.worker import derive, outbox
-from ingest_api.worker.derive import SHA256, Deriver, Reason, blob_name
+from ingest_api.worker.derive import SHA256, Deriver, blob_name
 from ingest_api.worker.recipe import Recipe, Renderer, Source
 from ingest_api.worker.recipes import RECIPES
 from ingest_api.worker.recipes.raster import Cog
@@ -283,7 +284,7 @@ def test_giving_up_fails_what_is_unfinished_and_keeps_what_is_made(
     with psycopg.connect(database_url) as conn:
         derive.derive(conn, deriver, raster.id)
         more = Deriver(store, SimClock(NOW), tmp_path, INLINE_RENDERER, [Digest(), Picky()])
-        stages = derive.give_up(conn, more, raster.id, Reason.RETRIES_EXHAUSTED)
+        stages = derive.give_up(conn, more, raster.id, DeriveReason.RETRIES_EXHAUSTED)
 
     assert stages == {"digest/v1": "derived", "picky/v2": "failed"}
     assert _jobs(db, raster.id) == [
@@ -305,7 +306,7 @@ def test_giving_up_keeps_a_derivative_written_before_the_attempts_ran_out(
     with psycopg.connect(database_url) as conn:
         with pytest.raises(TransientStorageError):  # head, read, then create takes effect
             derive.derive(conn, crashing, raster.id)
-        stages = derive.give_up(conn, deriver, raster.id, Reason.RETRIES_EXHAUSTED)
+        stages = derive.give_up(conn, deriver, raster.id, DeriveReason.RETRIES_EXHAUSTED)
 
     assert stages == {"digest/v1": "derived"}
     assert _jobs(db, raster.id) == [("digest", "derived", None)]
@@ -334,6 +335,31 @@ def test_an_item_is_not_ready_while_a_new_recipe_derives_it(db, item, database_u
         derive.derive(conn, after, raster.id)
 
     check("ING-13", _settled(db, raster.id), "not ready once every recipe has an outcome")
+
+
+def _status(db, item_id: UUID) -> tuple[str, dict[str, str]]:
+    """What the item reports of its derivatives: their state, and those it lacks for failing."""
+    row = db.execute(
+        "SELECT ingest.derivatives(%s), ingest.derivative_failures(%s)", (item_id, item_id)
+    ).fetchone()
+    return row[0], row[1]
+
+
+@pytest.mark.invariant("ING-13")
+def test_an_item_reports_the_derivatives_it_lacks_for_failing(db, item, database_url, tmp_path):
+    store = MemoryBlobStore()
+    raster = item(store, b"bad bytes")  # which Picky refuses
+    assert _status(db, raster.id) == ("deriving", {})
+    first = Deriver(store, SimClock(NOW), tmp_path, INLINE_RENDERER, [Digest(), Picky()])
+    shipped = [Digest(), DigestV2(), Picky()]
+    later = Deriver(store, SimClock(NOW), tmp_path, INLINE_RENDERER, shipped)
+    with psycopg.connect(database_url) as conn:
+        derive.derive(conn, first, raster.id)
+        assert _status(db, raster.id) == ("ready", {"picky": "unrenderable"})
+        # digest/v2 fails too, but the item still has digest/v1's: nothing is missing.
+        derive.give_up(conn, later, raster.id, DeriveReason.RETRIES_EXHAUSTED)
+
+    assert _status(db, raster.id) == ("ready", {"picky": "unrenderable"})
 
 
 # -- the outbox ---------------------------------------------------------------------------------

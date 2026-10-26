@@ -12,6 +12,7 @@ from ingest_api.items import store
 from ingest_api.items.metadata import CLOUD_OPTIMIZED, Metadata
 from ingest_api.items.routes import ASSET_NOT_FOUND, NOT_FOUND
 from ingest_api.ports import Container
+from ingest_api.worker.jobs import settle_derive
 from tests.audit_log import AuditLog
 from tests.contracts.azurite import azurite
 from tests.invariants import check
@@ -74,6 +75,19 @@ def test_an_item_lists_its_original_and_its_newest_derivatives(client, auth, db)
         "file:size": newest.size_bytes,
         "file:checksum": "1220" + newest.sha256,
     }
+
+
+@pytest.mark.invariant("ING-13")
+def test_an_item_says_whether_its_derivatives_are_ready(client, auth, db):
+    made = _item(db)
+
+    def status() -> tuple[str, dict[str, str]]:
+        properties = client.get(f"/items/{made.id}", headers=auth("bob")).json()["properties"]
+        return properties["ingest:derivatives"], properties["ingest:derivative_failures"]
+
+    check("ING-13", status() == ("deriving", {}), f"unsettled, the item said {status()}")
+    settle_derive(db, made.id, now=NOW)
+    check("ING-13", status() == ("ready", {}), f"settled, the item said {status()}")
 
 
 def test_a_cloud_optimized_original_says_so(client, auth, db):

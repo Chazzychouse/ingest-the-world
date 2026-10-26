@@ -23,6 +23,7 @@ from ingest_api import authz
 from ingest_api.auth import Principal
 from ingest_api.items.kinds import Kind
 from ingest_api.items.metadata import Metadata, Status
+from ingest_api.items.models import Derivatives, DeriveReason
 from ingest_api.paging import Position
 
 # The index that keeps one item per content per collection (migration 0007, ING-9).
@@ -220,6 +221,10 @@ class ItemRow:
     footprint: dict[str, Any] | None  # GeoJSON, from PostGIS
     bbox: list[float] | None  # west, south, east, north
     properties: dict[str, Any]  # jsonb, written by the pipeline from `Metadata.properties`
+    derivatives: Derivatives
+    derivative_failures: dict[
+        str, DeriveReason
+    ]  # role -> why it failed, for each derivative it lacks
 
 
 # Items the principal may read, as `i`, with their marking as `m`: every read starts here (ACC-1).
@@ -238,7 +243,8 @@ _COLUMNS = sql.SQL("""
                ST_XMin(i.footprint), ST_YMin(i.footprint),
                ST_XMax(i.footprint), ST_YMax(i.footprint)
            ] END AS bbox,
-           i.properties
+           i.properties, ingest.derivatives(i.id) AS derivatives,
+           ingest.derivative_failures(i.id) AS derivative_failures
 """)
 _SELECT_READABLE = _COLUMNS + _FROM_READABLE
 
@@ -316,23 +322,28 @@ FOOTPRINT_LAYER = "footprints"
 # Web Mercator's latitude limit: footprints are clipped to it before they're projected.
 MERCATOR_LATITUDE = 85.0511287798066
 
+# A footprint drawn as its shape where that is at least a pixel, and elsewhere as a point on it,
+# so a small item is still seen and picked at low zoom.
 _FOOTPRINT_TILE = (
     sql.SQL("""
     WITH tile AS (SELECT ST_TileEnvelope(%s, %s, %s) AS envelope)
     SELECT ST_AsMVT(f, %s, %s, 'geom') FROM (
-        SELECT i.id::text AS id, i.collection_id AS collection, i.kind, i.marking,
-               i.filename AS title,
-               ST_AsMVTGeom(
+        SELECT id, collection, kind, marking, title, COALESCE(
+                   ST_AsMVTGeom(shape, (SELECT envelope FROM tile), %s, %s, true),
+                   ST_AsMVTGeom(ST_PointOnSurface(shape), (SELECT envelope FROM tile), %s, %s, true)
+               ) AS geom
+        FROM (
+            SELECT i.id::text AS id, i.collection_id AS collection, i.kind, i.marking,
+                   i.filename AS title,
                    ST_Transform(
                        ST_Intersection(i.footprint, ST_MakeEnvelope(-180, -%s, 180, %s, 4326)),
                        3857
-                   ),
-                   (SELECT envelope FROM tile), %s, %s, true
-               ) AS geom
+                   ) AS shape
     """),
     sql.SQL("""
-        AND i.footprint && (SELECT ST_Transform(envelope, 4326) FROM tile)
-        ORDER BY i.created_at DESC, i.id DESC LIMIT %s
+            AND i.footprint && (SELECT ST_Transform(envelope, 4326) FROM tile)
+            ORDER BY i.created_at DESC, i.id DESC LIMIT %s
+        ) s
     ) f WHERE f.geom IS NOT NULL
     """),
 )
@@ -346,9 +357,10 @@ def footprint_tile(
     matching, params = _matching(principal, query)
     head, tail = _FOOTPRINT_TILE
     shape = (tile.z, tile.x, tile.y, FOOTPRINT_LAYER, MVT_EXTENT)
-    clip = (MERCATOR_LATITUDE, MERCATOR_LATITUDE, MVT_EXTENT, MVT_BUFFER)
+    fit = (MVT_EXTENT, MVT_BUFFER) * 2
+    clip = (MERCATOR_LATITUDE, MERCATOR_LATITUDE)
     statement = sql.Composed([head, matching, tail])
-    row = conn.execute(statement, (*shape, *clip, *params, query.limit)).fetchone()
+    row = conn.execute(statement, (*shape, *fit, *clip, *params, query.limit)).fetchone()
     return b"" if row is None or row[0] is None else bytes(row[0])
 
 

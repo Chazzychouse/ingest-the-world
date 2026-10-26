@@ -139,6 +139,8 @@ def stac_item(row: store.ItemRow, derived: Sequence[store.AssetRow]) -> StacItem
         "file:checksum": _checksum(row.sha256),
         "proj:code": code,
         "proj:wkt2": wkt2,
+        "ingest:derivatives": row.derivatives,
+        "ingest:derivative_failures": row.derivative_failures,
     }
     # Core fields win over a header that happens to use the same key.
     properties = ItemProperties.model_validate({**row.properties, **core})
