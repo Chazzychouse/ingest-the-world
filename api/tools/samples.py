@@ -52,6 +52,7 @@ class Expect:
     bbox: tuple[float, float, float, float] | None = None
     bbox_tolerance: float = 0.01  # degrees
     properties: Json = field(default_factory=dict[str, Any])  # a subset the item must carry
+    derivatives: dict[str, str] | None = None  # role -> media type: exactly the item's derivatives
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +94,7 @@ def _expect(raw: Json) -> Expect:
         bbox=tuple(bbox) if bbox else None,
         bbox_tolerance=raw.get("bbox_tolerance", 0.01),
         properties=raw.get("properties", {}),
+        derivatives=raw.get("derivatives"),
     )
 
 

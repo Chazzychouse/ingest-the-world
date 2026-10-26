@@ -7,5 +7,7 @@ COPY . .
 RUN pnpm build
 
 FROM nginx:1.29-alpine
-COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+# The entrypoint renders templates into conf.d, with the container's DNS as nginx's resolver.
+ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
+COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
