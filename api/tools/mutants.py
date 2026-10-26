@@ -317,12 +317,13 @@ MUTANTS = [
         ("ING-6",),
     ),
     Mutant(
-        # An item marked above its collection is shown to anyone who can read the collection.
+        # An item marked above its collection is shown to anyone who can read the collection:
+        # listed by a search (ACC-1), or previewed or downloaded (ACC-9), whichever runs first.
         "item-marking-ignored",
         SEARCH_SQL,
         "    WHERE authz.cleared_for(m.code, clearances)\n",
         "    WHERE true\n",
-        ("ACC-1",),
+        ("ACC-1", "ACC-9"),
     ),
     Mutant(
         "unreadable-item-is-forbidden",
