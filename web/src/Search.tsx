@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useApi, type Collection, type StacItem } from './api'
+import { Files, Thumbnail } from './Assets'
 import { bytes } from './format'
 import { MapView } from './MapView'
 import { itemMarking } from './markings'
@@ -182,6 +183,9 @@ function ItemDetails({ item, collections, onZoom, onBack }: DetailsProps) {
         ← Results
       </button>
       <h2 className="title">{item.properties.title}</h2>
+      {item.assets.thumbnail && (
+        <Thumbnail item={item} className="preview" alt={`Thumbnail of ${item.properties.title}`} />
+      )}
       <div className="meta">
         <span className="chip" style={{ background: marking.banner_color }}>
           {marking.label}
@@ -207,6 +211,7 @@ function ItemDetails({ item, collections, onZoom, onBack }: DetailsProps) {
           {copied ? 'Link copied' : 'Copy link'}
         </button>
       </div>
+      <Files item={item} />
       <dl>
         {[...CORE, ...rest]
           .filter((k) => props[k] !== undefined && props[k] !== null)
@@ -254,6 +259,7 @@ function Results({ items, collections, selected, hovered, onSelect, onHover }: R
               onMouseEnter={() => onHover(item.id)}
               onFocus={() => onHover(item.id)}
             >
+              <Thumbnail item={item} className="thumb" alt="" />
               <span className="title">{item.properties.title}</span>
               <span className="meta">
                 <span className="chip" style={{ background: marking.banner_color }}>

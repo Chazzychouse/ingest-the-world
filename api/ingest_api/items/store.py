@@ -130,6 +130,8 @@ class NewAsset:
     size_bytes: int
     sha256: str
     lineage: dict[str, Any]  # STAC `processing:` fields
+    title: str
+    stac_roles: Sequence[str]
 
 
 def record_asset(conn: Connection[TupleRow], asset: NewAsset, *, created_at: datetime) -> None:
@@ -138,8 +140,8 @@ def record_asset(conn: Connection[TupleRow], asset: NewAsset, *, created_at: dat
     conn.execute(
         """
         INSERT INTO catalog.assets (item_id, role, recipe_version, media_type, blob_name,
-                                    size_bytes, sha256, lineage, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    size_bytes, sha256, lineage, title, stac_roles, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (item_id, role, recipe_version) DO NOTHING
         """,
         (
@@ -151,9 +153,50 @@ def record_asset(conn: Connection[TupleRow], asset: NewAsset, *, created_at: dat
             asset.size_bytes,
             asset.sha256,
             Jsonb(asset.lineage),
+            asset.title,
+            list(asset.stac_roles),
             created_at,
         ),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class AssetRow:
+    """A derivative of an item, at its newest recipe version."""
+
+    item_id: UUID
+    role: str
+    recipe_version: int
+    media_type: str
+    blob_name: str  # in `derived/`
+    size_bytes: int
+    sha256: str
+    title: str
+    stac_roles: list[str]
+
+
+_SELECT_NEWEST_ASSETS = """
+    SELECT DISTINCT ON (item_id, role)
+           item_id, role, recipe_version, media_type, blob_name, size_bytes, sha256, title,
+           stac_roles
+    FROM catalog.assets
+"""
+_NEWEST_FIRST = " ORDER BY item_id, role, recipe_version DESC"
+
+
+def assets_of(conn: Connection[TupleRow], item_ids: Sequence[UUID]) -> list[AssetRow]:
+    """The newest derivative of each role for these items, regardless of access: the caller has
+    already read the items through `authz.READABLE_SCOPES`."""
+    query = _SELECT_NEWEST_ASSETS + " WHERE item_id = ANY(%s)" + _NEWEST_FIRST
+    with conn.cursor(row_factory=class_row(AssetRow)) as cur:
+        return cur.execute(query, (list(item_ids),)).fetchall()
+
+
+def asset_of(conn: Connection[TupleRow], item_id: UUID, role: str) -> AssetRow | None:
+    """The item's newest derivative in `role`, regardless of access, like `assets_of`."""
+    query = _SELECT_NEWEST_ASSETS + " WHERE item_id = %s AND role = %s" + _NEWEST_FIRST
+    with conn.cursor(row_factory=class_row(AssetRow)) as cur:
+        return cur.execute(query, (item_id, role)).fetchone()
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +208,7 @@ class ItemRow:
     filename: str
     size_bytes: int
     sha256: str
+    raw_blob: str  # the original, in `raw/`
     marking: str
     marking_rank: int
     tags: list[str]
@@ -180,7 +224,7 @@ class ItemRow:
 
 _SELECT_READABLE = sql.SQL(f"""
     SELECT i.id, i.collection_id, i.kind, i.media_type, i.filename, i.size_bytes, i.sha256,
-           i.marking, m.rank AS marking_rank, i.tags, i.created_at,
+           i.raw_blob, i.marking, m.rank AS marking_rank, i.tags, i.created_at,
            lower(i.captured) AS captured_start, upper(i.captured) AS captured_end,
            i.extraction, i.crs,
            ST_AsGeoJSON(i.footprint)::jsonb AS footprint,

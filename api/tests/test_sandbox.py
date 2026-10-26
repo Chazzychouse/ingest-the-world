@@ -161,6 +161,7 @@ MAX_FILE_BYTES = 1024 * 1024
 
 class _Misbehaving:
     role, version, media_type, suffix = "misbehaving", 1, "application/octet-stream", ".bin"
+    title, stac_roles = "Misbehaving", ("data",)
     deterministic, software = True, {"tests": "1"}
 
     def applies(self, source: Source) -> bool:

@@ -12,6 +12,9 @@ from typing import Literal, Self
 # out of memory (ING-8). Kept in step with the database by tests/test_items.py.
 Status = Literal["extracted", "unsupported", "unreadable", "over-budget", "failed"]
 type Json = str | int | float | bool | list[Json] | dict[str, Json] | None
+# Recorded for every TIFF: whether the original is a COG already. The derive stage makes one only
+# when it isn't, and the original's STAC asset says so when it is.
+CLOUD_OPTIMIZED = "raster:cloud_optimized"
 
 
 @dataclass(frozen=True, slots=True)

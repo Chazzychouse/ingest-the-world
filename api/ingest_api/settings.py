@@ -6,8 +6,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ingest_api.auth import DEFAULT_CLAIMS
 
-# The longest a signed URL may live (ACC-8). Large uploads renew theirs instead.
+# The longest a signed URL may live (ACC-8). Large uploads renew theirs instead; a download
+# starts at once, and only needs its URL to outlive the start.
 MAX_SIGNED_URL_MINUTES = 60
+MAX_READ_URL_MINUTES = 15
 
 
 class Settings(BaseSettings):
@@ -52,6 +54,7 @@ class Settings(BaseSettings):
     # (`infra/terraform/storage.tf`), so this stays empty there.
     blob_cors_origins: list[str] = Field(default_factory=list, max_length=16)
     upload_url_minutes: int = Field(default=MAX_SIGNED_URL_MINUTES, gt=0, le=MAX_SIGNED_URL_MINUTES)
+    read_url_minutes: int = Field(default=MAX_READ_URL_MINUTES, gt=0, le=MAX_READ_URL_MINUTES)
 
     # Service Bus. Locally a connection string for the emulator; in the cloud the namespace's
     # host name (`sb-x.servicebus.usgovcloudapi.net`) and the process's managed identity, since

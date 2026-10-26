@@ -41,6 +41,7 @@ class Counting:
     def __init__(self, inner: Recipe):
         self.inner, self.renders = inner, 0
         self.role, self.version, self.media_type = inner.role, inner.version, inner.media_type
+        self.title, self.stac_roles = inner.title, inner.stac_roles
         self.suffix, self.deterministic, self.software = (
             inner.suffix,
             inner.deterministic,

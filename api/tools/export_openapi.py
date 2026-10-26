@@ -17,6 +17,11 @@ class NoSigner:
     def upload_url(self, container: str, name: str, *, expires_at: datetime) -> str:
         raise NotImplementedError("the schema exporter signs nothing")
 
+    def read_url(
+        self, container: str, name: str, *, expires_at: datetime, media_type: str, filename: str
+    ) -> str:
+        raise NotImplementedError("the schema exporter signs nothing")
+
 
 def main(argv: list[str]) -> int:
     if len(argv) != 1:

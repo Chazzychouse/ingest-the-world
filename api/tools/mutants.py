@@ -53,6 +53,7 @@ ITEM_STORE = "ingest_api/items/store.py"
 SEARCH_SQL = "migrations/0008_item_search.sql"
 DERIVE = "ingest_api/worker/derive.py"
 SANDBOX = "ingest_api/adapters/process_sandbox.py"
+BLOB_ADAPTER = "ingest_api/adapters/azure_blob.py"
 READ_GRANTED = (
     "      AND c.id IN (SELECT authz.granted_collections(subject, roles, groups, 'read'))"
 )
@@ -151,7 +152,7 @@ MUTANTS = [
     ),
     Mutant(
         "upload-url-can-read",
-        "ingest_api/adapters/azure_blob.py",
+        BLOB_ADAPTER,
         "BlobSasPermissions(create=True, write=True)",
         "BlobSasPermissions(read=True, create=True, write=True)",
         ("ACC-8",),
@@ -160,7 +161,7 @@ MUTANTS = [
         # Found on the running stack, not by the suite: Compose names Azurite by host, the SDK
         # then reads the account name from the host, and storage refused every signed URL.
         "sas-signed-for-sdk-parsed-account",
-        "ingest_api/adapters/azure_blob.py",
+        BLOB_ADAPTER,
         '"account_name": account_name(account_url),',
         '"account_name": BlobServiceClient(account_url).account_name or "",',
         ("ACC-8",),
@@ -323,10 +324,11 @@ MUTANTS = [
     Mutant(
         "unreadable-item-is-forbidden",
         ITEM_ROUTES,
-        "            status_code=status.HTTP_404_NOT_FOUND,",
-        "            status_code=status.HTTP_403_FORBIDDEN if store.marking_of(conn, item_id)\n"
-        "            else status.HTTP_404_NOT_FOUND,",
-        ("ACC-2",),
+        "        status_code=status.HTTP_404_NOT_FOUND,\n        message=NOT_FOUND,",
+        "        status_code=status.HTTP_403_FORBIDDEN if store.marking_of(conn, item_id)\n"
+        "        else status.HTTP_404_NOT_FOUND,\n        message=NOT_FOUND,",
+        # Items and their files share the refusal; whichever is asked first reports it.
+        ("ACC-2", "ACC-9"),
     ),
     Mutant(
         "search-unaudited",
@@ -460,6 +462,46 @@ MUTANTS = [
         "    if digest.hexdigest() != source.sha256:\n",
         "    if False:\n",
         ("ING-7",),
+    ),
+    Mutant(
+        # Finds the derivative by role alone: any item's thumbnail answers for this one's.
+        "asset-of-another-item",
+        ITEM_STORE,
+        '" WHERE item_id = %s AND role = %s"',
+        '" WHERE (item_id = %s OR true) AND role = %s"',
+        ("ACC-9",),
+    ),
+    Mutant(
+        # A URL for a blob other than the one asked for: reported as ACC-8 by the URL check.
+        "asset-served-at-its-oldest-version",
+        ITEM_STORE,
+        '_NEWEST_FIRST = " ORDER BY item_id, role, recipe_version DESC"',
+        '_NEWEST_FIRST = " ORDER BY item_id, role, recipe_version"',
+        ("ACC-8", "ACC-9"),
+    ),
+    Mutant(
+        "read-url-grants-write",
+        BLOB_ADAPTER,
+        "READ_PERMISSION = BlobSasPermissions(read=True)",
+        "READ_PERMISSION = BlobSasPermissions(read=True, write=True)",
+        ("ACC-8",),
+    ),
+    Mutant(
+        # Copied from the upload route: a read URL living an hour.
+        "read-url-lives-as-long-as-an-upload",
+        ITEM_ROUTES,
+        "minutes=runtime.settings.read_url_minutes",
+        "minutes=runtime.settings.upload_url_minutes",
+        ("ACC-8",),
+    ),
+    Mutant(
+        # Serves the blob with the headers its uploader set: an HTML "image" renders on
+        # storage's origin.
+        "read-url-serves-the-uploaders-type",
+        BLOB_ADAPTER,
+        "return self._sign((container, name), READ_PERMISSION, expires_at, served_as)",
+        "return self._sign((container, name), READ_PERMISSION, expires_at)",
+        ("ACC-8",),
     ),
 ]
 

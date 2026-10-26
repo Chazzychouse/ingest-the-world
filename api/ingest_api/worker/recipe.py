@@ -67,6 +67,16 @@ class Recipe(Protocol):
     def media_type(self) -> str: ...
 
     @property
+    def title(self) -> str:
+        """What the derivative is, for people: its STAC asset title."""
+        ...
+
+    @property
+    def stac_roles(self) -> tuple[str, ...]:
+        """What it is for, in STAC's asset role vocabulary: `thumbnail`, `data`, ..."""
+        ...
+
+    @property
     def suffix(self) -> str:
         """The derivative blob's file extension, with its dot."""
         ...
