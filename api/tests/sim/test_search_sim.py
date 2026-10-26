@@ -10,7 +10,9 @@ cataloging more items between pages. After every request it checks:
 - each request wrote one audit event with the highest marking it disclosed (ACC-5);
 
 and at the end of each search, that the pages returned every item that matched when paging
-began exactly once, in order, and nothing that never matched (SRCH-2).
+began exactly once, in order, and nothing that never matched (SRCH-2). A footprint view of the
+same filters draws, in its world tile, exactly the matching readable items with a footprint, and
+only opening it is audited (ACC-9, ACC-5).
 
 Runs are seeded: `make sim SEED=123`.
 """
@@ -41,6 +43,7 @@ from tests.invariants import InvariantViolation, check
 from tests.items import Cataloged, NewItem, catalog
 from tests.model import Actor, World
 from tests.strategies import actors as actor_strategy
+from tests.tiles import footprints as drawn_footprints
 from tests.tokens import TestIdp
 
 GHOST_ITEM = "00000000-0000-4000-8000-000000000000"
@@ -361,8 +364,30 @@ class SearchMachine(RuleBasedStateMachine):
         check("SRCH-2", set(seen) <= at_end, f"returned non-matches: {set(seen) - at_end}")
         check("SRCH-2", positions == sorted(positions, reverse=True), "pages out of order")
 
+    @rule(actor=actors, data=st.data())
+    def draw_footprints(self, actor, data):
+        """Opens a footprint view and draws the whole world at zoom 0, where every footprint the
+        simulation makes is big enough to survive the tile's resolution."""
+        query = self._query(data)
+        expected = self._expected(actor, query)
+        response = self._call(actor, "POST", "/tiles/footprints", json=query.body())
+        check("SRCH-1", response.status_code == 201, f"{query.body()}: {response.text}")
+        markings = [self.items[i].marking for i in expected]
+        highest = max(markings, key=self.world.markings.__getitem__, default=None)
+        self._expect_audit(AuditAction.FOOTPRINTS_VIEW, "allowed", highest)
+        tile = self._call(actor, "GET", response.json()["tiles"][0].format(z=0, x=0, y=0))
+        check("ACC-5", self.audit.since() == [], "a footprint tile was audited")
+        drawn = {feature["id"] for feature in drawn_footprints(tile.content)}
+        unreadable = {
+            i for i in drawn if i not in self.items or not self._readable(actor, self.items[i])
+        }
+        check("ACC-9", not unreadable, f"{actor} was drawn {unreadable}")
+        check("SRCH-1", drawn <= expected, f"drew non-matches {drawn - expected} for {query}")
+        placed = {i for i in expected if self.items[i].item.bbox is not None}
+        check("SRCH-1", drawn == placed, f"didn't draw {placed - drawn} for {query}")
 
-@pytest.mark.invariant("ACC-1", "ACC-2", "ACC-5", "SRCH-1", "SRCH-2")
+
+@pytest.mark.invariant("ACC-1", "ACC-2", "ACC-5", "ACC-9", "SRCH-1", "SRCH-2")
 def test_search_simulation(fresh_database, idp):
     url = fresh_database()
     with TestClient(make_app(url, idp)) as client, psycopg.connect(url, autocommit=True) as db:

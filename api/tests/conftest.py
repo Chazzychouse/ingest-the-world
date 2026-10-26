@@ -131,6 +131,7 @@ def reset_catalog(conn: psycopg.Connection) -> None:
         conn.execute("DELETE FROM ingest.jobs")
         conn.execute("DELETE FROM ingest.outbox")
         conn.execute("DELETE FROM ingest.derive_jobs")
+        conn.execute("DELETE FROM catalog.footprint_views")
         conn.execute("DELETE FROM catalog.assets")
         conn.execute("DELETE FROM catalog.items")
         conn.execute("DELETE FROM ingest.uploads")

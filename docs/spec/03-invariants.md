@@ -64,6 +64,13 @@ the request disclosed or, for a refusal on an existing target, that target's mar
 Malformed requests (401, 422) carry no identity or intent worth auditing and are left to
 request logs. Health, public config and `/me` are not catalog data and are exempt.
 
+Map tiles are audited by the session they belong to, not one by one: a map view is hundreds of
+tiles. Opening a footprint view (`POST /tiles/footprints`) or a preview of one item writes the
+event, with the filters or item it covers and the highest marking it could show when it opened;
+the session lasts at most 15 minutes and serves only its opener. A tile request outside a live
+session of the caller's own is refused with 404 and no event: it names nothing but a random
+session id.
+
 The pipeline is audited the same way: every outcome it gives a blob version writes exactly one
 event, as the system actor `system:pipeline`, committed in the same transaction as the outcome.
 A cataloged version is `allowed`; a quarantined or rejected one is `denied`, with the reason.

@@ -1,4 +1,4 @@
-import type { Kind, NextLink, SearchIn } from './api'
+import type { Kind, NextLink, SearchFilters, SearchIn } from './api'
 
 /** `[west, south, east, north]` as STAC writes it; west > east crosses the antimeridian. */
 export type Bbox = [number, number, number, number]
@@ -54,11 +54,10 @@ export function interval(from: Day, to: Day): string | undefined {
   return `${start}/${end}`
 }
 
-/** The first page's request for `filters` within `area` (undefined: anywhere, footprint or
- * not). Empty filters are left out, not sent empty: the API reads an empty list as "match
- * nothing". */
-export function searchBody(filters: Filters, area: Bbox | undefined): SearchIn {
-  const body: SearchIn = { limit: PAGE_SIZE }
+/** What `filters` ask the API for, wherever it is asked: a search, or the map's footprints.
+ * Empty filters are left out, not sent empty: the API reads an empty list as "match nothing". */
+export function filterBody(filters: Filters): SearchFilters {
+  const body: SearchFilters = {}
   const q = filters.q.trim()
   if (q) body.q = q
   if (filters.kinds.length) body.kinds = filters.kinds
@@ -67,6 +66,13 @@ export function searchBody(filters: Filters, area: Bbox | undefined): SearchIn {
   if (datetime) body.datetime = datetime
   const created = interval(filters.uploadedFrom, filters.uploadedTo)
   if (created) body.created = created
+  return body
+}
+
+/** The first page's request for `filters` within `area` (undefined: anywhere, footprint or
+ * not). */
+export function searchBody(filters: Filters, area: Bbox | undefined): SearchIn {
+  const body: SearchIn = { ...filterBody(filters), limit: PAGE_SIZE }
   if (area) body.bbox = area
   return body
 }

@@ -222,7 +222,13 @@ class ItemRow:
     properties: dict[str, Any]  # jsonb, written by the pipeline from `Metadata.properties`
 
 
-_SELECT_READABLE = sql.SQL(f"""
+# Items the principal may read, as `i`, with their marking as `m`: every read starts here (ACC-1).
+_FROM_READABLE = sql.SQL(f"""
+    FROM catalog.items i JOIN authz.markings m ON m.code = i.marking
+    WHERE (i.collection_id, i.marking) IN ({authz.READABLE_SCOPES})
+""")
+
+_COLUMNS = sql.SQL("""
     SELECT i.id, i.collection_id, i.kind, i.media_type, i.filename, i.size_bytes, i.sha256,
            i.raw_blob, i.marking, m.rank AS marking_rank, i.tags, i.created_at,
            lower(i.captured) AS captured_start, upper(i.captured) AS captured_end,
@@ -233,9 +239,8 @@ _SELECT_READABLE = sql.SQL(f"""
                ST_XMax(i.footprint), ST_YMax(i.footprint)
            ] END AS bbox,
            i.properties
-    FROM catalog.items i JOIN authz.markings m ON m.code = i.marking
-    WHERE (i.collection_id, i.marking) IN ({authz.READABLE_SCOPES})
-""")  # noqa: S608 - composed from constants only
+""")
+_SELECT_READABLE = _COLUMNS + _FROM_READABLE
 
 
 def get_readable(conn: Connection[TupleRow], item_id: UUID, principal: Principal) -> ItemRow | None:
@@ -272,17 +277,79 @@ class Query:
 def search(conn: Connection[TupleRow], principal: Principal, query: Query) -> list[ItemRow]:
     """Up to `query.limit + 1` readable matches after `query.after`, in search order; one more
     than asked for means there is a next page."""
-    where, params = _filters(query)
+    matching, params = _matching(principal, query)
     statement = sql.Composed(
-        [
-            _SELECT_READABLE,
-            *(sql.SQL(" AND ") + clause for clause in where),
-            sql.SQL(" ORDER BY i.created_at DESC, i.id DESC LIMIT %s"),
-        ]
+        [_COLUMNS, matching, sql.SQL(" ORDER BY i.created_at DESC, i.id DESC LIMIT %s")]
     )
     with conn.cursor(row_factory=class_row(ItemRow)) as cur:
-        args = (*authz.principal_args(principal), *params, query.limit + 1)
-        return cur.execute(statement, args).fetchall()
+        return cur.execute(statement, (*params, query.limit + 1)).fetchall()
+
+
+def _matching(principal: Principal, query: Query) -> tuple[sql.Composed, list[object]]:
+    """`FROM ... WHERE ...` for the readable items matching every filter, and its parameters."""
+    where, params = _filters(query)
+    clauses = sql.Composed([_FROM_READABLE, *(sql.SQL(" AND ") + clause for clause in where)])
+    return clauses, [*authz.principal_args(principal), *params]
+
+
+def highest_marking(conn: Connection[TupleRow], principal: Principal, query: Query) -> str | None:
+    """The highest marking among the readable items matching `query`, if any match."""
+    matching, params = _matching(principal, query)
+    statement = sql.SQL("SELECT i.marking ") + matching + sql.SQL(" ORDER BY m.rank DESC LIMIT 1")
+    row = conn.execute(statement, params).fetchone()
+    return None if row is None else row[0]
+
+
+@dataclass(frozen=True, slots=True)
+class Tile:
+    """A web map tile: zoom, column and row in the XYZ scheme over Web Mercator."""
+
+    z: int
+    x: int
+    y: int
+
+
+# The tile's extent, in its own units, and the margin of it drawn past each edge.
+MVT_EXTENT = 4096
+MVT_BUFFER = 64
+FOOTPRINT_LAYER = "footprints"
+# Web Mercator's latitude limit: footprints are clipped to it before they're projected.
+MERCATOR_LATITUDE = 85.0511287798066
+
+_FOOTPRINT_TILE = (
+    sql.SQL("""
+    WITH tile AS (SELECT ST_TileEnvelope(%s, %s, %s) AS envelope)
+    SELECT ST_AsMVT(f, %s, %s, 'geom') FROM (
+        SELECT i.id::text AS id, i.collection_id AS collection, i.kind, i.marking,
+               i.filename AS title,
+               ST_AsMVTGeom(
+                   ST_Transform(
+                       ST_Intersection(i.footprint, ST_MakeEnvelope(-180, -%s, 180, %s, 4326)),
+                       3857
+                   ),
+                   (SELECT envelope FROM tile), %s, %s, true
+               ) AS geom
+    """),
+    sql.SQL("""
+        AND i.footprint && (SELECT ST_Transform(envelope, 4326) FROM tile)
+        ORDER BY i.created_at DESC, i.id DESC LIMIT %s
+    ) f WHERE f.geom IS NOT NULL
+    """),
+)
+
+
+def footprint_tile(
+    conn: Connection[TupleRow], principal: Principal, query: Query, tile: Tile
+) -> bytes:
+    """A Mapbox Vector Tile of the footprints of up to `query.limit` readable items matching
+    `query` in `tile`, newest first: the search's own query, drawn instead of listed."""
+    matching, params = _matching(principal, query)
+    head, tail = _FOOTPRINT_TILE
+    shape = (tile.z, tile.x, tile.y, FOOTPRINT_LAYER, MVT_EXTENT)
+    clip = (MERCATOR_LATITUDE, MERCATOR_LATITUDE, MVT_EXTENT, MVT_BUFFER)
+    statement = sql.Composed([head, matching, tail])
+    row = conn.execute(statement, (*shape, *clip, *params, query.limit)).fetchone()
+    return b"" if row is None or row[0] is None else bytes(row[0])
 
 
 _ENVELOPE = sql.SQL("ST_Intersects(i.footprint, ST_MakeEnvelope(%s, %s, %s, %s, 4326))")

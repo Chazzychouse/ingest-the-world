@@ -5,8 +5,9 @@ import { bytes } from './format'
 import { MapView } from './MapView'
 import { itemMarking } from './markings'
 import { KINDS, MAX_QUERY_LENGTH } from './schema'
-import { NO_FILTERS, searchBody, type Bbox, type Day, type Filters } from './search'
+import { filterBody, NO_FILTERS, searchBody, type Bbox, type Day, type Filters } from './search'
 import { fromQuery, toQuery, type View } from './searchUrl'
+import { useFootprints } from './useFootprints'
 import { MAX_RESULTS, useSearch } from './useSearch'
 
 // Shown first in an item's details; the rest follow alphabetically.
@@ -328,6 +329,8 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
   const body = useMemo(() => searchBody(filters, area), [filters, area])
   const search = useSearch(body, { enabled: !inArea || viewport !== undefined })
   const selection = useSelectedItem(selected, search.items)
+  // Every match's footprint, beyond the pages loaded, drawn faintly beneath the results.
+  const footprintTiles = useFootprints(useMemo(() => filterBody(filters), [filters]))
   const item = selection.item
 
   // An item opened from a link may be outside the results; it's on screen all the same.
@@ -446,6 +449,7 @@ export function Search({ collections, onShown }: { collections: Collection[]; on
       </aside>
       <MapView
         items={shown}
+        footprintTiles={footprintTiles}
         selected={selected}
         hovered={hovered}
         onSelect={select}

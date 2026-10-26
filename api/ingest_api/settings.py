@@ -10,6 +10,8 @@ from ingest_api.auth import DEFAULT_CLAIMS
 # starts at once, and only needs its URL to outlive the start.
 MAX_SIGNED_URL_MINUTES = 60
 MAX_READ_URL_MINUTES = 15
+# The longest a map session (a footprint view, an item preview) serves tiles unaudited (ACC-5).
+MAX_MAP_SESSION_MINUTES = 15
 
 
 class Settings(BaseSettings):
@@ -55,6 +57,9 @@ class Settings(BaseSettings):
     blob_cors_origins: list[str] = Field(default_factory=list, max_length=16)
     upload_url_minutes: int = Field(default=MAX_SIGNED_URL_MINUTES, gt=0, le=MAX_SIGNED_URL_MINUTES)
     read_url_minutes: int = Field(default=MAX_READ_URL_MINUTES, gt=0, le=MAX_READ_URL_MINUTES)
+    map_session_minutes: int = Field(
+        default=MAX_MAP_SESSION_MINUTES, gt=0, le=MAX_MAP_SESSION_MINUTES
+    )
 
     # Service Bus. Locally a connection string for the emulator; in the cloud the namespace's
     # host name (`sb-x.servicebus.usgovcloudapi.net`) and the process's managed identity, since

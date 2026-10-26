@@ -15,6 +15,7 @@ from ingest_api.deps import Runtime
 from ingest_api.items import routes as items
 from ingest_api.ports import BlobSigner, Clock, Ids, StorageError, SystemClock, UuidIds
 from ingest_api.settings import Settings, get_settings
+from ingest_api.tiles import routes as tiles
 from ingest_api.uploads import routes as uploads
 
 POOL_MAX_SIZE = 10
@@ -86,6 +87,13 @@ def create_app(
             headers={"Retry-After": "5"},
         )
 
-    for router in (meta.router, identity.router, collections.router, uploads.router, items.router):
+    for router in (
+        meta.router,
+        identity.router,
+        collections.router,
+        uploads.router,
+        items.router,
+        tiles.router,
+    ):
         app.include_router(router)
     return app
