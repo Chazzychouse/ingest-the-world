@@ -19,8 +19,12 @@ It is the most important document in the repo.
 
 ## Commands
 
-All from the repo root. Postgres, Azurite and (once its licence is accepted in `.env`, see
-`.env.example`) the Service Bus emulator come up automatically.
+All from the repo root. The tests' own Postgres and Azurite (`compose.test.yaml`: memory-backed,
+on ports 5433 and 10010, apart from the local stack's) and, once its licence is accepted in
+`.env` (see `.env.example`), the Service Bus emulator come up automatically. Every test run makes
+its own databases and holds an emulator queue only while using it, so runs from several
+worktrees, `make check` beside `make mutants`, and `make reset` of the stack don't collide.
+Tests run across every core (pytest-xdist); `make services-down` discards the test services.
 
 | Command | Use it when |
 |---|---|
@@ -28,7 +32,7 @@ All from the repo root. Postgres, Azurite and (once its licence is accepted in `
 | `make explore` | After touching authorization, audit or the pipeline: property tests and the simulator with fresh random inputs. |
 | `make sim SEED=n` | Replaying a simulator failure from its seed. |
 | `make soak` | Long simulator run before a milestone. |
-| `make mutants` | After changing tests or checks: plants known bugs and verifies each is caught by the right invariant (runs only the tests declaring each mutant's invariants; ~5 min). |
+| `make mutants` | After changing tests or checks: plants known bugs and verifies each is caught by the right invariant (runs only the tests declaring each mutant's invariants, several mutants at once; `--jobs=N` in `tools/mutants.py`). |
 | `make mutants-full` | The same against the whole suite per mutant (~40 min); nightly CI runs it. |
 | `make up` | Running the full local stack (http://localhost:8081). |
 | `make samples` | Fetching and verifying the sample corpus (`samples/manifest.json`); `LARGE=1` adds multi-GB files. |

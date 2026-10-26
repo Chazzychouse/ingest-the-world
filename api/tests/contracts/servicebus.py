@@ -2,10 +2,13 @@
 emulator isn't running, unless INGEST_REQUIRE_SERVICEBUS is set (`make` sets it once the
 emulator's licence is accepted in .env)."""
 
+import fcntl
 import json
 import os
 import re
 import socket
+import tempfile
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -20,6 +23,12 @@ from ingest_api.adapters.service_bus import ServiceBusQueue
 from tests.conftest import EMULATOR_CONNECTION, app_settings
 
 CONFIG = Path(__file__).resolve().parents[3] / "infra" / "servicebus" / "config.json"
+# One emulator serves every test process at once: xdist workers, `make mutants`' parallel runs,
+# other worktrees. A test drains its queue and expects it to itself, so each queue is held under
+# a lock file while it is used, waited for at most this long.
+LOCK_DIR = Path(tempfile.gettempdir())
+LOCK_POLL_SECONDS = 0.5
+LOCK_WAIT_POLLS = 1200  # ten minutes: longer than any one test module holds a queue
 # The emulator's AMQP port; probed first because the SDK retries a dead endpoint for minutes.
 AMQP_PORT = 5672
 # Batches drained before a test; a queue still not empty after this many is a broken test.
@@ -71,13 +80,32 @@ def _purge(name: str) -> None:
 
 
 @contextmanager
+def _held(name: str) -> Generator[None]:
+    """The queue to this process alone, until the context ends."""
+    with (LOCK_DIR / f"ingest-servicebus-{name}.lock").open("w") as lock:
+        for _ in range(LOCK_WAIT_POLLS):
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                time.sleep(LOCK_POLL_SECONDS)
+        else:
+            raise TimeoutError(f"emulator queue {name!r} still held by another test process")
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+@contextmanager
 def emulator_queue(name: str, *, lock_renewal_seconds: float = 0) -> Generator[ServiceBusQueue]:
-    """The adapter on an emptied emulator queue; by default without lock renewal, so tests can
-    watch locks expire."""
+    """The adapter on an emptied emulator queue, held by this process alone; by default without
+    lock renewal, so tests can watch locks expire."""
     _require_emulator()
-    _purge(name)
     settings = app_settings(database_url="").model_copy(
         update={"queue_lock_renewal_seconds": lock_renewal_seconds}
     )
-    with wiring.queue(settings, name=name) as queue:
-        yield queue
+    with _held(name):
+        _purge(name)
+        with wiring.queue(settings, name=name) as queue:
+            yield queue

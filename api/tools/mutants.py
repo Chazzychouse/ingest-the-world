@@ -7,11 +7,13 @@ reason. Add a mutant whenever you add an invariant or fix a bug that tests misse
     uv run python tools/mutants.py            # all mutants, each against its invariants' tests
     uv run python tools/mutants.py admin      # mutants whose name contains "admin"
     uv run python tools/mutants.py --full     # each against the whole suite (nightly)
+    uv run python tools/mutants.py --jobs=4   # how many mutants run at once (default: below)
 
 By default a mutant runs only the tests that declare one of its `caught_by` invariants
 (`--invariant`), since those are the tests that must catch it; that is minutes, not most of
 an hour. `--full` runs everything per mutant, which also shows a catch moving to some other
-test, and is what the nightly build runs.
+test, and is what the nightly build runs. Mutants run several at a time, each in its own copy of
+the tree and its own databases.
 """
 
 from __future__ import annotations
@@ -22,10 +24,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+# Mutants run at once by default: each is one pytest process, mostly waiting on Postgres.
+DEFAULT_JOBS = min(8, os.cpu_count() or 1)
 
 
 @dataclass(frozen=True)
@@ -706,16 +712,17 @@ def run(mutant: Mutant, snapshot: Path, *, full: bool) -> tuple[bool, str]:
 
 def main(argv: list[str]) -> int:
     full = "--full" in argv
-    names = [a for a in argv if a != "--full"]
+    jobs = next((int(a.split("=", 1)[1]) for a in argv if a.startswith("--jobs=")), DEFAULT_JOBS)
+    names = [a for a in argv if not a.startswith("--")]
     selected = [m for m in MUTANTS if not names or any(a in m.name for a in names)]
     survived = 0
     # Every mutant runs against the tree as it was at the start, so editing code while
     # mutants run neither breaks the run nor leaks half-made changes into it.
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, ThreadPoolExecutor(max_workers=jobs) as pool:
         snapshot = Path(tmp) / "repo"
         shutil.copytree(REPO, snapshot, ignore=SKIP)
-        for mutant in selected:
-            ok, message = run(mutant, snapshot, full=full)
+        results = pool.map(partial(run, snapshot=snapshot, full=full), selected)
+        for mutant, (ok, message) in zip(selected, results, strict=True):  # in the list's order
             survived += not ok
             print(f"{'ok  ' if ok else 'FAIL'} {mutant.name:<30} {message}", flush=True)
     print(f"\n{len(selected) - survived}/{len(selected)} mutants caught")
