@@ -12,8 +12,8 @@ Status: proposed, 2026-10-24. Each choice links to the research that justifies i
 | Workers | Plain OCI containers pulling from the queue; **Container Apps jobs** (dev/IL2) or **AKS + KEDA** (IL4/5) — same image | Container Apps tops out at IL2 in Gov; Functions too small for multi-GB (4 GB RAM / 0.8 GB disk) (02 §3, §1) |
 | Worker language | **Python 3.12**; GDAL via rasterio's wheels (pinned in `uv.lock`), pyarrow for Parquet, pyogrio for vector derivatives (its wheels bundle their own GDAL, so the worker carries two; `--check` loads both in the render sandbox); PDAL and pystac join as derive steps need them; Node/native sidecars for mesh tooling | GDAL/PDAL ecosystem is Python-first (01 §4) |
 | Header reads (ING-6) | GDAL and Arrow read through the **blob store port** (rasterio's Python-filesystem opener), never `/vsiaz/` | One authenticated path to storage (managed identity, Gov authority host); every byte counts against the extraction budget and is testable with a fake store |
-| Mesh tooling | Khronos glTF-Validator, **gltfpack** (native) for proxies, glTF-Transform for small files, **mago-3d-tiler** for GLB → 3D Tiles 1.1, 3d-tiles-tools for validate/package | Cesium 3d-tiles-tools does not tile meshes; mago does (MPL-2.0) — **SPIKE** on a multi-GB GLB (04 §2–3) |
-| Mesh normalizers (D1) | Assimp / headless Blender (FBX, OBJ), IfcOpenShell (IFC), usd-core (USD/USDZ), each converting to glTF | Plugins behind one interface; licenses to be checked per tool in M3 |
+| Mesh tooling | **Our own tiler** (numpy: streamed partition, vertex-clustering levels of detail, `.3tz` archive) for 3D Tiles 1.1, proxies and thumbnails; Khronos glTF-Validator and Cesium 3d-tiles-validator check its output in tests | mago-3d-tiler failed spike S1: no geometric levels of detail outside a single-threaded mode, memory 10–12× the input (M3 plan) |
+| Mesh normalizers (D1) | **Assimp** through `assimp-py` (MIT; wheels bundle Assimp 6, BSD-3) for OBJ, FBX, PLY and STL, in the render sandbox; glTF and GLB read directly; IfcOpenShell (IFC) and usd-core (USD) deferred | One converter for the common interchange formats (M3 plan D-M3-3) |
 | Malware scan (D3) | Defender for Storage malware scanning (cloud), ClamAV container (local) | Gov availability of on-upload scanning is **unverified**; ClamAV worker is the fallback |
 | Database | **PostgreSQL 16+ (Azure Flexible Server)** + PostGIS, pgvector, pg_trgm, btree_gist, pg_partman, TimescaleDB | All listed extensions supported; available in Gov AZ/TX/VA (02 §1, 03 §3) |
 | Catalog | **STAC-shaped API over our own `catalog.items`** (spec D7); pgSTAC 0.9.x only as a derived read model if titiler-pgstac mosaics need it (M2) | One writer and one access rule for every item; pgSTAC's free text is unindexed and S3 is unverified (03 §1–2) |
@@ -35,7 +35,8 @@ Status: proposed, 2026-10-24. Each choice links to the research that justifies i
 - **OpenSearch/Elasticsearch** — not managed in Gov (unconfirmed); deferred. The outbox table (spec §6) keeps this option open.
 - **Azure Functions for processing** — fine for tiny glue code, wrong for multi-GB files.
 - **HoloLens 2** — production ended Dec 2024; don't target it.
-- **Cesium ion** — commercial and not confirmed for Gov; recorded as the alternative if mago-3d-tiler fails its spike.
+- **Cesium ion** — commercial and not confirmed for Gov. mago-3d-tiler did fail S1; our own tiler passed it instead.
+- **mago-3d-tiler** — failed S1 (M3 plan): a 1.6 GB GLB ran out of 13 GiB, and its levels of detail keep every triangle.
 - **Vercel / non-Azure hosting** — the client constraint is Azure (Gov).
 - **Effect (v4) across the web app** — the SPA is a thin view over generated API types, and Effect's runtime and idiom cost more than they save there. Planned instead for the M1 resumable upload engine alone, where retries with backoff, bounded concurrency, cancellation and typed errors are the whole job.
 
@@ -43,7 +44,7 @@ Status: proposed, 2026-10-24. Each choice links to the research that justifies i
 
 | # | Spike | Pass criteria |
 |---|-------|---------------|
-| S1 | mago-3d-tiler on a 2–4 GB GLB | Valid 3D Tiles 1.1 (3d-tiles-tools validate), streams in 3DTilesRendererJS, peak RAM recorded |
+| S1 | ~~mago-3d-tiler~~ A tiler on a 2–4 GB GLB | Valid 3D Tiles 1.1 (Cesium 3d-tiles-validator; 3d-tiles-tools has no validator), streams in 3DTilesRendererJS, peak RAM recorded. mago failed; our own tiler passed on 3.03 GB in 3.4 min and 572 MiB (M3 plan) |
 | S2 | Browser block upload of a 10 GB file to Azurite and to real Blob, with a mid-upload reload | Resumes from IndexedDB state; commit triggers exactly one processed record |
 | S3 | pgSTAC 0.9.x install on Azure Flexible Server (needed only if M2 adds pgSTAC as a derived read model, spec D7) | Migrations run without superuser-only steps |
 | S4 | ~~GDAL `/vsiaz/` against a Gov-style endpoint with an externally supplied token~~ Replaced in M1 slice 4: GDAL reads through the blob store port, so it needs no endpoint or token of its own | Range-only reads proven locally (a 64 MiB tiled GeoTIFF in one 64 KiB request); the Gov endpoint itself is the blob adapter's, verified with it |
