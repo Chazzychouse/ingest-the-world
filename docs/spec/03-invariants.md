@@ -65,11 +65,13 @@ Malformed requests (401, 422) carry no identity or intent worth auditing and are
 request logs. Health, public config and `/me` are not catalog data and are exempt.
 
 Map tiles are audited by the session they belong to, not one by one: a map view is hundreds of
-tiles. Opening a footprint view (`POST /tiles/footprints`) or a preview of one item writes the
-event, with the filters or item it covers and the highest marking it could show when it opened;
-the session lasts at most 15 minutes and serves only its opener. A tile request outside a live
-session of the caller's own is refused with 404 and no event: it names nothing but a random
-session id.
+tiles. Opening a footprint view (`POST /tiles/footprints`) or a preview of one item
+(`POST /items/{id}/preview`) writes the event, with the filters or item it covers and the highest
+marking it could show when it opened; the session lasts at most 15 minutes. A footprint view
+serves only its opener's requests. A preview is served by the tiler, which has no login: its
+requests carry the signed token the API handed the opener, which names the one item. A tile
+request outside a live session is refused with 404 and no event: it names nothing but a session
+id or a token.
 
 The pipeline is audited the same way: every outcome it gives a blob version writes exactly one
 event, as the system actor `system:pipeline`, committed in the same transaction as the outcome.
@@ -105,7 +107,7 @@ URL says.
 
 ### ACC-9 Every byte path asks the same question
 
-Status: enforced (downloads and thumbnails; previews and tiles arrive in M2 slice 6)
+Status: enforced
 
 Downloads, thumbnails, preview tokens, raster tiles and footprint tiles serve only items the
 caller may read under `authz.readable_scopes`, and an unreadable item answers exactly like a

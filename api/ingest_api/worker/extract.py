@@ -38,7 +38,7 @@ class Unreadable(Exception):
 
 
 class BudgetExceeded(Exception):
-    """Reading this header would fetch more than MAX_EXTRACT_BYTES."""
+    """Reading this would fetch more than the budget's limit."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,10 +66,11 @@ class Budget:
     the one place the budget is enforced (ING-6). It runs in the worker, never in the sandbox,
     so nothing a file makes a reader do can overspend it or hide a failure from it."""
 
-    def __init__(self, read_range: Fetch, name: str, size: int):
+    def __init__(self, read_range: Fetch, name: str, size: int, *, limit: int = MAX_EXTRACT_BYTES):
         """`read_range(offset, length)` reads the blob from storage, e.g. a `BlobStore.read_range`
-        with the blob's container and name bound."""
-        self._read_range, self.name, self.size = read_range, name, size
+        with the blob's container and name bound. `limit` is the most it may fetch: an
+        extraction's by default, or the tiler's for one request."""
+        self._read_range, self.name, self.size, self.limit = read_range, name, size, limit
         self.fetched = 0
         self.failure: StorageError | BudgetExceeded | None = None
 
@@ -77,7 +78,7 @@ class Budget:
         """`length` bytes at `offset`, counted against the budget."""
         if offset < 0 or length < 0 or offset + length > self.size:
             raise Unreadable(f"wants bytes {offset}+{length} of a {self.size}-byte file")
-        if self.fetched + length > MAX_EXTRACT_BYTES:
+        if self.fetched + length > self.limit:
             self.failure = self.failure or BudgetExceeded(self.name)
             raise self.failure
         try:

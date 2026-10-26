@@ -56,6 +56,7 @@ SANDBOX = "ingest_api/adapters/process_sandbox.py"
 BLOB_ADAPTER = "ingest_api/adapters/azure_blob.py"
 TILE_ROUTES = "ingest_api/tiles/routes.py"
 TILE_STORE = "ingest_api/tiles/store.py"
+PREVIEWS = "ingest_api/previews.py"
 READ_GRANTED = (
     "      AND c.id IN (SELECT authz.granted_collections(subject, roles, groups, 'read'))"
 )
@@ -311,8 +312,8 @@ MUTANTS = [
     Mutant(
         "extraction-ignores-budget",
         "ingest_api/worker/extract.py",
-        "        if self.fetched + length > MAX_EXTRACT_BYTES:",
-        "        if False and self.fetched + length > MAX_EXTRACT_BYTES:",
+        "        if self.fetched + length > self.limit:",
+        "        if False and self.fetched + length > self.limit:",
         ("ING-6",),
     ),
     Mutant(
@@ -540,6 +541,51 @@ MUTANTS = [
         ITEM_STORE,
         '" ORDER BY m.rank DESC LIMIT 1"',
         '" ORDER BY m.rank LIMIT 1"',
+        ("ACC-5",),
+    ),
+    Mutant(
+        "preview-token-serves-any-item",
+        PREVIEWS,
+        'if claims["sub"] != str(item_id) or container',
+        "if container",
+        ("ACC-9",),
+    ),
+    Mutant(
+        "preview-token-never-expires",
+        PREVIEWS,
+        "    if not isinstance(expires, int) or now.timestamp() >= expires:",
+        "    if not isinstance(expires, int):",
+        ("ACC-9",),
+    ),
+    Mutant(
+        "preview-token-signature-unchecked",
+        PREVIEWS,
+        '"verify_exp": False}',
+        '"verify_exp": False, "verify_signature": False}',
+        ("ACC-9",),
+    ),
+    Mutant(
+        # A raster that isn't a COG is previewed from its original, which a tiler can't serve
+        # a tile at a time: the token names a blob other than the item's COG.
+        "preview-of-a-plain-original",
+        ITEM_ROUTES,
+        "    if row.properties.get(CLOUD_OPTIMIZED) is True:\n"
+        "        return _blob(conn, row, ORIGINAL)",
+        "    if True:\n        return _blob(conn, row, ORIGINAL)",
+        ("ACC-9",),
+    ),
+    Mutant(
+        "preview-unaudited",
+        ITEM_ROUTES,
+        "source.name, expires_at)\n    auditor.allowed(",
+        "source.name, expires_at)\n    (lambda *_, **__: None)(",
+        ("ACC-5",),
+    ),
+    Mutant(
+        "preview-outlives-its-session",
+        ITEM_ROUTES,
+        "dt.timedelta(minutes=runtime.settings.map_session_minutes)",
+        "dt.timedelta(minutes=60)",
         ("ACC-5",),
     ),
 ]

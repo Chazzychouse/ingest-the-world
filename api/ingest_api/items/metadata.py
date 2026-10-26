@@ -15,6 +15,8 @@ type Json = str | int | float | bool | list[Json] | dict[str, Json] | None
 # Recorded for every TIFF: whether the original is a COG already. The derive stage makes one only
 # when it isn't, and the original's STAC asset says so when it is.
 CLOUD_OPTIMIZED = "raster:cloud_optimized"
+# The derivative that is, and the one a raster is previewed from when its original isn't.
+COG_ROLE = "cog"
 
 
 @dataclass(frozen=True, slots=True)

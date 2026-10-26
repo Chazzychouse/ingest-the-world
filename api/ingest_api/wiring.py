@@ -1,6 +1,7 @@
 """Builds adapters from `Settings`, for every process the platform runs: the API (`app`), the
-worker (`worker.__main__`) and the local event shim (`event_shim`). Each composes itself once at
-startup from these, so all three reach storage and the queue the same way."""
+worker (`worker.__main__`), the tiler (`tiler.app`) and the local event shim (`event_shim`).
+Each composes itself once at startup from these, so all of them reach storage and the queue the
+same way."""
 
 import logging
 
@@ -35,6 +36,11 @@ def blob_store(settings: Settings) -> AzureBlobStore:
     if settings.blob_cors_origins:
         allow_browser_uploads(service, settings.blob_cors_origins)
     return AzureBlobStore(service)
+
+
+def blob_reader(settings: Settings) -> AzureBlobStore:
+    """The store, for a process that only reads what others wrote (the tiler)."""
+    return AzureBlobStore(blob_service(settings))
 
 
 def blob_signer(settings: Settings, clock: Clock) -> AzureBlobSigner:

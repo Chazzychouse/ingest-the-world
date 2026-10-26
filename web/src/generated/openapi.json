@@ -974,6 +974,31 @@
         "title": "Polygon",
         "type": "object"
       },
+      "PreviewSession": {
+        "description": "A preview of one raster item: the tiler's TileJSON for it, the token its requests carry\n(as `Authorization: Bearer`), and when that token stops working. A map past that asks again.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "tilejson": {
+            "title": "Tilejson",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tilejson",
+          "token",
+          "expires_at"
+        ],
+        "title": "PreviewSession",
+        "type": "object"
+      },
       "Reason": {
         "description": "Why the pipeline rejected a version. Quarantine's reason is the scanner's signature.",
         "enum": [
@@ -2245,6 +2270,61 @@
           }
         ],
         "summary": "Get Asset Url",
+        "tags": [
+          "items"
+        ]
+      }
+    },
+    "/items/{item_id}/preview": {
+      "post": {
+        "description": "Opens a preview of a raster item: a token for the tiler to serve its map tiles under, for\nat most 15 minutes, and the tiler's TileJSON for it.",
+        "operationId": "open_preview_items__item_id__preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such item, or no COG to preview it from"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Previews are not configured"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Open Preview",
         "tags": [
           "items"
         ]

@@ -63,11 +63,18 @@ api/ingest_api/
   uploads/       upload sessions and their signed URLs: models.py, store.py, routes.py
   items/         cataloged files: kinds.py (what a file is), metadata.py (what its header
                  says), models.py (STAC Items and searches), store.py (only the pipeline
-                 writes; reads and keyset search), routes.py (/items/{id}, /search, and
-                 /items/{id}/assets/{role}: an audited read URL for one file)
+                 writes; reads and keyset search), routes.py (/items/{id}, /search,
+                 /items/{id}/assets/{role}: an audited read URL for one file, and
+                 /items/{id}/preview: an audited preview token for the tiler)
   tiles/         map tiles: footprint views (store.py: the audited sessions a map's tiles
                  are served under) and their vector tiles, drawn by the items store's own
-                 search query (routes.py: /tiles/footprints)
+                 search query (routes.py: /tiles/footprints); TileJSON shapes (models.py)
+  previews.py    preview tokens: minted by the API for one readable item's COG, checked by
+                 the tiler
+  display.py     how a raster is drawn as a picture, by its thumbnail and its preview tiles
+  tiler/         its own service, with no database and no login: one item's raster tiles under
+                 a preview token (app.py: composition; routes.py: /tiles/items/...; raster.py:
+                 the COG read through the blob port within a per-request budget, and drawn)
   worker/        the pipeline: pipeline.py (one blob version's step machine), classify.py,
                  extract.py (budgeted header reads), formats/ (one reader per format family),
                  outbox.py (derive requests, written with the outcome and relayed to the
@@ -96,9 +103,10 @@ api/migrations/  numbered SQL, never edited once merged; add a new file instead
 - **Side effects go through ports.** Production code never calls `time`, `uuid`, `random` or
   a cloud SDK directly outside `adapters/`; it takes a port, so the simulator can substitute a
   seeded fake.
-- **Composition happens once per process,** at startup: `app.py` for the API,
-  `worker/__main__.py` and `event_shim.run` for the daemons, and test fixtures. Each builds
-  its adapters with `wiring.py`, never by hand. No module-level clients, pools or singletons.
+- **Composition happens once per process,** at startup: `app.py` for the API, `tiler/app.py`
+  for the tiler, `worker/__main__.py` and `event_shim.run` for the daemons, and test fixtures.
+  Each builds its adapters with `wiring.py`, never by hand. No module-level clients, pools or
+  singletons.
 
 ## Code standards
 
@@ -194,7 +202,8 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
 - `api/tests/model.py`: the independent reference model of who may read what.
 - `api/tests/sim/`: Hypothesis state machines that drive the real API and Postgres with
   random actors and operations, checking invariants after every step.
-  `test_catalog_sim.py` covers catalog changes, upload sessions and downloads (ACC-*);
+  `test_catalog_sim.py` covers catalog changes, upload sessions, downloads and preview tokens
+  (ACC-*);
   `test_pipeline_sim.py` runs the worker over a faulty queue and blob store, then drains and
   replays every event (ING-1 to ING-5); `test_derive_sim.py` relays derive requests to a
   faulty queue and runs the derive stage over a faulty store, then replays every request and

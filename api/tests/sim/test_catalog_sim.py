@@ -1,11 +1,13 @@
 """Stateful simulation of the catalog and upload API against the reference model.
 
 Hypothesis generates sequences of actors and operations (list, read, create, grant, revoke,
-start an upload, read it, renew its URL, list one's own, download an item's file), runs each
+start an upload, read it, renew its URL, list one's own, download an item's file, preview a
+raster), runs each
 against the real app and a fresh Postgres database, and after every step checks:
 
 - the response matches what the model says the actor may see or do (ACC-1, ACC-2, ACC-4,
-  ACC-7, ACC-9), and every signed URL is scoped to its upload's or asset's blob (ACC-8);
+  ACC-7, ACC-9), every signed URL is scoped to its upload's or asset's blob (ACC-8), and every
+  preview token names only its item and the COG that previews it (ACC-9);
 - exactly one audit event was written, with the right outcome and marking (ACC-5);
 - the database holds the same collections, grants and uploads as the model.
 
@@ -13,8 +15,9 @@ Failures shrink to a minimal sequence of steps and print how to replay them. Run
 seeded: `make sim SEED=123`. The pipeline has its own machine, `test_pipeline_sim.py`.
 """
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -29,15 +32,18 @@ from hypothesis.stateful import (
     run_state_machine_as_test,
 )
 
+from ingest_api import previews
 from ingest_api.audit import AuditAction
 from ingest_api.collections.routes import NOT_FOUND
 from ingest_api.items import store as items
-from ingest_api.items.routes import ASSET_NOT_FOUND
+from ingest_api.items.metadata import CLOUD_OPTIMIZED, COG_ROLE, Metadata
+from ingest_api.items.routes import ASSET_NOT_FOUND, NO_PREVIEW
 from ingest_api.items.routes import NOT_FOUND as ITEM_NOT_FOUND
 from ingest_api.ports import Container
+from ingest_api.settings import MAX_MAP_SESSION_MINUTES
 from ingest_api.uploads.routes import NOT_FOUND as UPLOAD_NOT_FOUND
 from tests.audit_log import AuditLog
-from tests.conftest import make_app, reset_catalog
+from tests.conftest import PREVIEW_KEY, make_app, reset_catalog
 from tests.invariants import InvariantViolation, check
 from tests.items import NewItem, catalog
 from tests.model import Actor, World
@@ -61,6 +67,7 @@ class Item:
     collection: str
     marking: str
     blobs: dict[str, tuple[Container, str, str]]  # asset key -> (container, blob, media type)
+    previewed_from: tuple[Container, str] | None  # its COG, if it has one
 
 
 class CatalogMachine(RuleBasedStateMachine):
@@ -350,29 +357,44 @@ class CatalogMachine(RuleBasedStateMachine):
 
     # -- items and their files --------------------------------------------------------
 
-    @rule(data=st.data(), item_id=st.uuids(version=4), thumbnail=st.booleans())
-    def catalog_item(self, data, item_id, thumbnail):
-        """The pipeline catalogs a file, perhaps marked above its collection, and the derive stage
-        perhaps thumbnails it."""
+    @rule(
+        data=st.data(),
+        item_id=st.uuids(version=4),
+        thumbnail=st.booleans(),
+        cog=st.sampled_from([None, "derived", "original"]),
+    )
+    def catalog_item(self, data, item_id, thumbnail, cog):
+        """The pipeline catalogs a file, perhaps marked above its collection and perhaps a COG
+        already, and the derive stage perhaps thumbnails it or makes it a COG."""
         if str(item_id) in self.items:  # Hypothesis likes to repeat itself
             return
         cid = data.draw(st.sampled_from(sorted(self.world.collections)))
         floor = self.world.markings[self.world.collections[cid]]
         above = sorted(m for m, rank in self.world.markings.items() if rank > floor)
         raise_to = data.draw(st.sampled_from([None, *above]))
-        made = catalog(
-            self.db,
-            NewItem(cid, "ortho.tif", datetime.now(UTC), id=item_id, raise_to=raise_to),
-        )
+        properties = {CLOUD_OPTIMIZED: cog == "original"}
+        new = NewItem(cid, "ortho.tif", datetime.now(UTC), id=item_id, raise_to=raise_to)
+        metadata = Metadata("extracted", 0, properties=properties, crs="EPSG:32613")
+        made = catalog(self.db, replace(new, metadata=metadata))
         blobs = {"original": (Container.RAW, made.raw_blob, OCTETS)}
-        if thumbnail:
-            blob = f"{cid}/{item_id.hex}/{THUMBNAIL}/v1.png"
-            asset = items.NewAsset(
-                item_id, THUMBNAIL, 1, "image/png", blob, 1, "0" * 64, {}, "Thumbnail", (THUMBNAIL,)
-            )
-            items.record_asset(self.db, asset, created_at=datetime.now(UTC))
-            blobs[THUMBNAIL] = (Container.DERIVED, blob, "image/png")
-        self.items[str(item_id)] = Item(cid, made.marking, blobs)
+        for role, wanted in ((THUMBNAIL, thumbnail), (COG_ROLE, cog == "derived")):
+            if wanted:
+                blobs[role] = self._derive(item_id, cid, role)
+        previewed_from = {"original": "original", "derived": COG_ROLE}.get(cog or "")
+        self.items[str(item_id)] = Item(
+            cid,
+            made.marking,
+            blobs,
+            blobs[previewed_from][:2] if previewed_from else None,
+        )
+
+    def _derive(self, item_id: UUID, cid: str, role: str) -> tuple[Container, str, str]:
+        blob = f"{cid}/{item_id.hex}/{role}/v1.png"
+        asset = items.NewAsset(
+            item_id, role, 1, "image/png", blob, 1, "0" * 64, {}, role.title(), (role,)
+        )
+        items.record_asset(self.db, asset, created_at=datetime.now(UTC))
+        return Container.DERIVED, blob, "image/png"
 
     @rule(
         actor=actors,
@@ -411,6 +433,45 @@ class CatalogMachine(RuleBasedStateMachine):
             issued_by=datetime.now(UTC),
         )
         self._expect_audit(action, "allowed", item.marking, item_id)
+
+    @rule(actor=actors, data=st.data())
+    def preview(self, actor, data):
+        """Opens a preview of an item: a token naming exactly that item and its COG, for at most
+        15 minutes, if the model says the actor may read it, and a missing item's 404 otherwise."""
+        item_id = data.draw(st.sampled_from([*self.items, GHOST_ITEM]))
+        response = self._call(actor, "POST", f"/items/{item_id}/preview")
+        item = self.items.get(item_id)
+        action = AuditAction.ITEM_PREVIEW
+        if item is None or not self.world.can_read_item(actor, item.collection, item.marking):
+            check(
+                "ACC-9",
+                (response.status_code, response.json()) == (404, {"detail": ITEM_NOT_FOUND}),
+                f"{actor} previewed {item_id}: {response.status_code} {response.text}",
+            )
+            self._expect_audit(action, "denied", item and item.marking, item_id)
+            return
+        if item.previewed_from is None:
+            check("ACC-9", response.json() == {"detail": NO_PREVIEW}, response.text)
+            self._expect_audit(action, "denied", item.marking, item_id)
+            return
+        check("ACC-9", response.status_code == 201, f"{actor} refused a preview of {item_id}")
+        self._check_token(response.json()["token"], UUID(item_id), item.previewed_from)
+        self._expect_audit(action, "allowed", item.marking, item_id)
+
+    def _check_token(self, token: str, item_id: UUID, source: tuple[Container, str]) -> None:
+        now = datetime.now(UTC)
+        granted = previews.verify(token, PREVIEW_KEY, item_id=item_id, now=now)
+        check(
+            "ACC-9",
+            granted is not None and (granted.container, granted.blob) == source,
+            f"token for {item_id} grants {granted}, not {source}",
+        )
+        lifetime = granted.expires_at - now if granted else timedelta()
+        check("ACC-5", lifetime <= timedelta(minutes=MAX_MAP_SESSION_MINUTES), f"lives {lifetime}")
+        for other in (*self.items, str(uuid4())):
+            if other != str(item_id):
+                elsewhere = previews.verify(token, PREVIEW_KEY, item_id=UUID(other), now=now)
+                check("ACC-9", elsewhere is None, f"token for {item_id} serves {other}")
 
     # -- global checks ----------------------------------------------------------------
 

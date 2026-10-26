@@ -71,6 +71,9 @@ services:
       INGEST_BLOB_CORS_ORIGINS: '["http://localhost:5173", "http://localhost:8081"]'
       # The emulator's fixed connection string; the cloud uses managed identity instead.
       INGEST_QUEUE_CONNECTION: Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;
+      # Signs preview tokens (API) and checks them (tiler). A local-only value; the cloud keeps
+      # its own in a secret.
+      INGEST_PREVIEW_KEY: local-preview-key-not-a-secret-0123456789
     depends_on:
       db: { condition: service_healthy }
 
@@ -81,6 +84,16 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       keycloak: { condition: service_healthy }
+      azurite: { condition: service_started }
+
+  # Serves previews' map tiles under the API's preview tokens (ingest_api.tiler).
+  tiler:
+    image: ingest-api:dev
+    command: ["uvicorn", "ingest_api.tiler.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers"]
+    environment: *api-env
+    ports: ["8001:8001"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
       azurite: { condition: service_started }
 
   # Stands in for Event Grid: announces committed landing/ blobs on the ingest queue.
@@ -152,7 +165,7 @@ services:
     build: web
     image: ingest-web:dev
     ports: ["8081:80"]
-    depends_on: [api]
+    depends_on: [api, tiler]
 
 volumes:
   db-data:

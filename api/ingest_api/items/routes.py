@@ -6,7 +6,8 @@ its metadata (ACC-9); a search simply never returns it (ACC-1). Only cataloged f
 so nothing quarantined or rejected can be served (ING-4).
 
 Files never pass through the API: a request for one is answered with a read-only link to that
-one blob, valid for minutes (ACC-8).
+one blob, valid for minutes (ACC-8). Nor do a raster's map tiles: a preview is answered with a
+token the tiler serves that one item's tiles for, and its tiles are not audited one by one (ACC-5).
 """
 
 import datetime as dt
@@ -16,15 +17,15 @@ from pathlib import PurePath
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from fastapi.responses import RedirectResponse
 
-from ingest_api import paging
+from ingest_api import paging, previews
 from ingest_api.audit import AuditAction, Auditor, Target
 from ingest_api.auth import Principal
 from ingest_api.deps import Audit, Conn, CurrentPrincipal, Rt, Runtime
 from ingest_api.items import store
-from ingest_api.items.metadata import CLOUD_OPTIMIZED
+from ingest_api.items.metadata import CLOUD_OPTIMIZED, COG_ROLE
 from ingest_api.items.models import (
     FILE_EXTENSION,
     ORIGINAL,
@@ -38,6 +39,7 @@ from ingest_api.items.models import (
     NextBody,
     NextLink,
     Polygon,
+    PreviewSession,
     SearchIn,
     StacItem,
     parse_interval,
@@ -48,6 +50,8 @@ router = APIRouter(tags=["items"])
 
 NOT_FOUND = "item not found"
 ASSET_NOT_FOUND = "asset not found"
+NO_PREVIEW = "item has no cloud-optimized raster"
+PREVIEWS_OFF = "previews are not configured"
 # The links are secrets while they last, and the answer changes with access: never cached.
 NO_STORE = {"Cache-Control": "no-store"}
 SEARCH_PATH = "/search"
@@ -279,6 +283,56 @@ def get_asset_url(
     """The link `GET /items/{id}/assets/{role}` redirects to, as JSON, for clients that can't
     read a redirect: a browser's `fetch` hides it, and an `<img>` can't send a token."""
     return _signed((item_id, role), principal, conn, auditor, runtime)
+
+
+def _preview_source(conn: Conn, row: store.ItemRow) -> _Blob | None:
+    """The COG an item is previewed from: its original if that is one, else its `cog`."""
+    if row.properties.get(CLOUD_OPTIMIZED) is True:
+        return _blob(conn, row, ORIGINAL)
+    return _blob(conn, row, COG_ROLE)
+
+
+@router.post(
+    "/items/{item_id}/preview",
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "No such item, or no COG to preview it from"},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "Previews are not configured"},
+    },
+    dependencies=[Depends(_no_store)],
+)
+def open_preview(
+    item_id: UUID, principal: CurrentPrincipal, conn: Conn, auditor: Audit, runtime: Rt
+) -> PreviewSession:
+    """Opens a preview of a raster item: a token for the tiler to serve its map tiles under, for
+    at most 15 minutes, and the tiler's TileJSON for it."""
+    key = runtime.settings.preview_key
+    if key is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, PREVIEWS_OFF)
+    action = AuditAction.ITEM_PREVIEW
+    row = _readable_or_404(conn, auditor, action, item_id, principal)
+    source = _preview_source(conn, row)
+    if source is None:
+        raise auditor.refuse(
+            action,
+            status_code=status.HTTP_404_NOT_FOUND,
+            message=NO_PREVIEW,
+            target=_target(item_id),
+            marking=row.marking,
+        )
+    expires_at = runtime.clock.now() + dt.timedelta(minutes=runtime.settings.map_session_minutes)
+    preview = previews.Preview(item_id, source.container, source.name, expires_at)
+    auditor.allowed(
+        action,
+        target=_target(item_id),
+        marking=row.marking,
+        detail={"blob": f"{source.container}/{source.name}"},
+    )
+    return PreviewSession(
+        tilejson=f"{runtime.settings.tiler_url}{previews.TILES_PATH}/{item_id}/tilejson.json",
+        token=previews.mint(preview, key.get_secret_value()),
+        expires_at=expires_at,
+    )
 
 
 def query(body: Filters, *, limit: int, after: paging.Position | None = None) -> store.Query:
