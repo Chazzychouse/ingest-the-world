@@ -65,8 +65,11 @@ api/ingest_api/
                  writes; reads and keyset search), routes.py (/items/{id}, /search)
   worker/        the pipeline: pipeline.py (one blob version's step machine), classify.py,
                  extract.py (budgeted header reads), formats/ (one reader per format family),
-                 jobs.py (its store), runner.py (queue -> settle, dead-letter sweep),
-                 selfcheck.py (`--check`), __main__.py (composition)
+                 outbox.py (derive requests, written with the outcome and relayed to the
+                 derive queue); the derive stage: derive.py (one item's derivatives),
+                 recipe.py (what a recipe is), recipes/ (one per kind and role); and for both:
+                 jobs.py (their store), runner.py (queue -> settle, dead-letter sweep),
+                 selfcheck.py (`--check`), __main__.py (composition; `--derive` for the stage)
 api/typings/     local type stubs for the parts of untyped libraries we use (rasterio, pyarrow)
 api/migrations/  numbered SQL, never edited once merged; add a new file instead
 ```
@@ -188,11 +191,14 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
   random actors and operations, checking invariants after every step.
   `test_catalog_sim.py` covers catalog changes and upload sessions (ACC-*);
   `test_pipeline_sim.py` runs the worker over a faulty queue and blob store, then drains and
-  replays every event (ING-1 to ING-5); `test_search_sim.py` pages through random searches
-  while items arrive, against its own model of the filters (SRCH-1, SRCH-2).
+  replays every event (ING-1 to ING-5); `test_derive_sim.py` relays derive requests to a
+  faulty queue and runs the derive stage over a faulty store, then replays every request and
+  rebuilds every derivative (ING-7, ING-11, ING-12); `test_search_sim.py` pages through random
+  searches while items arrive, against its own model of the filters (SRCH-1, SRCH-2).
 - `api/tests/strategies.py`: the shared Hypothesis strategies (actors, grantees, names).
 - `api/tests/items.py`: catalogs items straight through the pipeline's stores, for read and
-  search tests that don't need bytes.
+  search tests that don't need bytes (or, given `content`, derive tests that do).
+- `api/tests/recipes.py`: small recipes, each with one trait the derive stage must handle.
 - `api/tests/fakes.py`: seeded, fault-injecting implementations of the ports, and
   `CrashAfter`, which interrupts a job after its N-th storage call (`test_pipeline.py`).
 - `api/tests/contracts/`: one behavioural suite per port, run against the fake *and* the real

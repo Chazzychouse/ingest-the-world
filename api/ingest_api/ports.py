@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, BinaryIO, Protocol
 
 
 class Clock(Protocol):
@@ -97,6 +97,19 @@ class BlobStore(Protocol):
         metadata: dict[str, str] | None = None,
     ) -> BlobProps:
         """Creates or replaces a blob. Replacing always yields a new etag."""
+        ...
+
+    def create(
+        self,
+        container: str,
+        name: str,
+        data: BinaryIO,
+        *,
+        content_type: str | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> BlobProps:
+        """Writes a new blob from `data`, streamed, so its size isn't bounded by memory. Raises
+        BlobExists, leaving the existing blob alone, if the name is taken."""
         ...
 
     def head(self, container: str, name: str) -> BlobProps | None: ...

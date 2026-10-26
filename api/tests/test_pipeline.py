@@ -299,6 +299,24 @@ def test_once_cataloged_an_upload_takes_no_new_version(store, start, database_ur
     assert store.head(LANDING, landed.name) is None
 
 
+def _derive_requests(db) -> list[str]:
+    rows = db.execute("SELECT body ->> 'item_id' FROM ingest.outbox WHERE topic = 'derive'")
+    return [item_id for (item_id,) in rows]
+
+
+@pytest.mark.invariant("ING-11")
+def test_cataloging_asks_once_for_derivatives_and_nothing_else_does(store, start, db, work):
+    clean, infected = start(len(TIFF)), start(len(EICAR))
+    before = _derive_requests(db)
+    clean_props = store.put(LANDING, clean.name, TIFF)
+    infected_props = store.put(LANDING, infected.name, EICAR)
+
+    assert work(store, clean_props) == "cataloged"
+    assert work(store, infected_props) == "quarantined"
+    work(store, clean_props)  # redelivered
+    assert _derive_requests(db)[len(before) :] == [str(clean.upload_id)]
+
+
 def _storage(store: MemoryBlobStore, landed: Landed, etag: str) -> dict[str, list[str]]:
     """Every container's blob names, with this upload's name and etag made generic."""
     return {

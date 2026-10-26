@@ -7,6 +7,8 @@ Terraform isn't parsed in full; the few values that have a local twin are read b
 import re
 from pathlib import Path
 
+import pytest
+
 from ingest_api.events import COMMIT_APIS
 from tests.conftest import TEST_ACCOUNT, TEST_ACCOUNT_KEY
 from tests.contracts.servicebus import duration_seconds, queue_config
@@ -28,9 +30,10 @@ def _setting(block: str, key: str) -> str:
     return match[1].strip('"')
 
 
-def test_the_emulator_ingest_queue_matches_the_deployed_one():
-    deployed = _block("azurerm_servicebus_queue", "ingest")
-    local = queue_config("ingest")
+@pytest.mark.parametrize("queue", ["ingest", "derive"])
+def test_the_emulator_queues_match_the_deployed_ones(queue):
+    deployed = _block("azurerm_servicebus_queue", queue)
+    local = queue_config(queue)
 
     # The emulator caps message TTL at an hour, so only lock and redelivery are compared.
     assert duration_seconds(_setting(deployed, "lock_duration")) == local.lock_seconds

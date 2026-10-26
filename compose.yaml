@@ -109,6 +109,18 @@ services:
       azurite: { condition: service_started }
       servicebus: { condition: service_started }
 
+  # Makes derivatives of cataloged items, from the derive queue (ingest_api.worker --derive).
+  deriver:
+    image: ingest-api:dev
+    command: ["python", "-m", "ingest_api.worker", "--derive"]
+    environment: *api-env
+    profiles: [queue]
+    restart: unless-stopped
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      azurite: { condition: service_started }
+      servicebus: { condition: service_started }
+
   servicebus:
     image: mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.1
     profiles: [queue]
