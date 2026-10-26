@@ -324,10 +324,11 @@ MUTANTS = [
     Mutant(
         "unreadable-item-is-forbidden",
         ITEM_ROUTES,
-        "            status_code=status.HTTP_404_NOT_FOUND,",
-        "            status_code=status.HTTP_403_FORBIDDEN if store.marking_of(conn, item_id)\n"
-        "            else status.HTTP_404_NOT_FOUND,",
-        ("ACC-2",),
+        "        status_code=status.HTTP_404_NOT_FOUND,\n        message=NOT_FOUND,",
+        "        status_code=status.HTTP_403_FORBIDDEN if store.marking_of(conn, item_id)\n"
+        "        else status.HTTP_404_NOT_FOUND,\n        message=NOT_FOUND,",
+        # Items and their files share the refusal; whichever is asked first reports it.
+        ("ACC-2", "ACC-9"),
     ),
     Mutant(
         "search-unaudited",
