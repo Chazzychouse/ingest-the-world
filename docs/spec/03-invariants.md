@@ -251,6 +251,16 @@ stage dies midway. Once the derive queue drains, every item is settled, so no up
 The item says the same (`ingest:derivatives`), and lists as failed (`ingest:derivative_failures`)
 only derivatives it lacks: a role whose newest recipe failed but an older one made is not missing.
 
+### ING-14 Tiles are faithful
+
+Status: planned (M3)
+
+A mesh's 3D Tiles lose nothing and claim no more than they are: the leaves hold every triangle of
+the mesh once (none lost, none repeated, vertices exact to float32), every tile's content lies
+within its bounding volume, geometric error falls strictly from each tile to its children down to
+zero at the leaves, and every vertex of a coarser tile lies within that tile's geometric error of
+a vertex it stands for.
+
 ## Lifecycle
 
 ### LIF-1 Legal hold wins

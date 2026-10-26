@@ -32,13 +32,13 @@ An internal platform that takes in any file a geospatial organization produces (
                      ┌───────────────┬───────────────┼───────────────┬────────────────┐
                      ▼               ▼               ▼               ▼                ▼
                raster/vector    pointcloud        mesh            tabular        generic/doc
-               (GDAL)           (PDAL)            (gltfpack,      (Parquet +      (Tika-style
-                                                  mago, three)    Timescale)      text/EXIF)
+               (GDAL)           (PDAL)            (Assimp,        (Parquet +      (Tika-style
+                                                  our tiler)      Timescale)      text/EXIF)
                      └───────────────┴──── upsert Item + Assets ─────┴────────────────┘
                                                      │
                                        outbox ─► embed worker (Azure OpenAI) ─► catalog.embedding
  Read path: SPA ─► Platform search API / STAC API · TiTiler (COG previews) · Martin (footprint tiles)
-            · Blob read SAS for 3D Tiles / downloads
+            · tiler service (3D Tiles under a scene token) · Blob read SAS for downloads
 ```
 
 ### Storage layout (one flat-namespace account, versioning on)
@@ -68,7 +68,7 @@ An internal platform that takes in any file a geospatial organization produces (
    - raster → COG (unless the original already is one) plus a thumbnail, each rendered in a child process like extraction (ING-8)
    - vector → GeoParquet; the footprint goes to Martin tiles
    - point cloud → COPC, and optionally 3D Tiles
-   - mesh → **normalize** (D1: FBX/OBJ via Assimp or headless Blender, IFC via IfcOpenShell, USD via usd-core → glTF; glTF + external buffers passes through, with no 4 GiB limit), validate, gltfpack a proxy GLB, render a headless thumbnail, then run mago-3d-tiler to make 3D Tiles 1.1. Converters are plugins behind one `MeshNormalizer` interface.
+   - mesh → **normalize** (D1: OBJ, FBX, PLY and STL through Assimp; glTF and GLB read directly; IFC and USD later), validate its structure, then build **3D Tiles 1.1 with our own tiler** (bounded memory, levels of detail by vertex clustering; mago-3d-tiler failed spike S1), packed as one `.3tz` archive, plus a proxy GLB (the coarsest level) and a thumbnail drawn from it (M3 plan D-M3-3 to D-M3-7).
    - tabular readings → per-device-per-day Parquet, plus TimescaleDB rows
    
    Each derivative is an Asset with STAC `processing:` lineage.
@@ -81,7 +81,7 @@ An internal platform that takes in any file a geospatial organization produces (
 
 **Idempotency.** Every stage is keyed on `(blob_url, etag, stage)`, so repeat deliveries are no-ops. A failed attempt backs off before its message is released for redelivery, and the message's lock is renewed while a job runs (ING-10). On the 5th and last delivery a version that still fails is rejected as `retries-exhausted`; a message that dead-letters anyway is swept by the worker, which rejects its version as `dead-lettered` (ING-2). Either way the job keeps its last error for the admin UI, and the uploader uploads again.
 
-**Size classes.** Workers are scheduled by size: S (< 100 MB), M (< 5 GB) and L (≥ 5 GB, mesh). Each class gets its own queue subscription and resource profile. An L mesh job requests 32–64 GB RAM and local NVMe scratch.
+**Size classes.** Workers are scheduled by size: S (< 100 MB), M (< 5 GB) and L (≥ 5 GB). Each class gets its own queue subscription, resource profile and bounded scratch per job. Meshes fit M (a GLB is at most 4 GiB, and the tiler's memory doesn't grow with the file); L arrives with point clouds (M4) and requests 32–64 GB RAM and local NVMe scratch.
 
 ## 5. Data model (Postgres)
 
@@ -126,10 +126,10 @@ Later: relevance and size sorting, facet counts, `within_distance`, fuzzy title 
 |---------|------|-------|
 | Catalog map | MapLibre GL + Martin footprint tiles + TiTiler raster previews | Search results stay in sync with the map viewport |
 | Item page | Metadata panel, thumbnail, `<model-viewer>` for meshes, raster preview | iOS AR via generated USDZ (stretch) |
-| 3D viewer | three.js + 3DTilesRendererJS, on a base-map tile layer | Streams the mesh's 3D Tiles from Blob via read SAS |
+| 3D viewer | three.js + 3DTilesRendererJS | Streams the mesh's 3D Tiles through the tiler service, under a scene token minted in an audited request (as previews) |
 | VR | WebXR `immersive-vr` (Quest Browser, Vision Pro Safari) | Walk the site at 1:1 or tabletop scale |
 | AR | WebXR `immersive-ar` + hit-test + anchors (Quest passthrough, Android Chrome) | Place the model on a real surface at 1:1 |
-| Georeferencing | "Place on map" tool: pick an origin on the map, set heading and scale. The result is saved as the 3D Tiles root transform and in `mesh:origin` | GLB has no CRS, so most models need this step |
+| Georeferencing | None in v1: a mesh without a CRS has no footprint and is viewed on its own | "Place on map" was cut from M3 (D-M3-2): it would make users writers of items, which only the pipeline writes |
 
 **Device targets (D5):** Quest 3 is primary (VR + passthrough AR), then Android Chrome (AR), then Vision Pro (VR only), with iOS/iPadOS AR through Quick Look (USDZ) and desktop as the fallback. Features are switched on by `navigator.xr.isSessionSupported()` and requested features, not by user-agent sniffing.
 
@@ -153,7 +153,7 @@ True lat/lon world anchoring (ARCore Geospatial, native Unity) is out of scope f
 | M0.5 | Invariant catalog (`03-invariants.md`), reference model, stateful simulator, fuzzing, ports + fault-injecting fakes + contract tests, planted-bug runner | Guarantees are explicit and machine-checked before the pipeline exists | Done |
 | M1 | Direct-to-blob resumable upload → event → classify → header metadata → search by text/facets. Workers are resumable step machines over the ports; the simulator gains upload, worker and faulty-queue actors (ACC-7, ACC-8, ING-1 to ING-6, SRCH-1, SRCH-2) | Core pipeline (spikes S2, S4) | Done |
 | M2 | Spatial and temporal search, map UI, raster/vector derivatives, TiTiler previews | Geospatial value | Done ([plan](../plans/m2.md)) |
-| M3 | Mesh pipeline: normalizers (FBX/OBJ/IFC/USD), validation, proxy, thumbnail, 3D Tiles; 3D viewer with "place on map" | Big-file 3D (S1) | Next |
+| M3 | Mesh pipeline: normalizers (OBJ/FBX/PLY/STL), validation, proxy, thumbnail, 3D Tiles from our own tiler; 3D viewer | Big-file 3D (S1: mago-3d-tiler failed; our tiler passed) | Next ([plan](../plans/m3.md)) |
 | M4 | WebXR VR + AR on Quest/Android; `<model-viewer>` + USDZ on item pages | Real-world XR (S5) | |
 | M5 | Readings (streaming endpoint, Timescale, compaction to Parquet), semantic/hybrid search, markings + ABAC, retention policies, live commercial-Azure deployment | Breadth + Gov story (S3) | |
 
