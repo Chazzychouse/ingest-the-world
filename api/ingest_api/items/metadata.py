@@ -1,6 +1,7 @@
 """What an item says about itself, as read from its header (ING-6): STAC-style properties, the
-native CRS and a WGS84 footprint, plus how the reading went."""
+native CRS, a WGS84 footprint and when it was captured, plus how the reading went."""
 
+import datetime as dt
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -34,6 +35,36 @@ class Bbox:
         return cls(west, south, east, north)
 
 
+# Capture times outside these years are a header's placeholder or garbage, not a date.
+EARLIEST_CAPTURE = dt.datetime(1900, 1, 1, tzinfo=dt.UTC)
+LATEST_CAPTURE = dt.datetime(2200, 1, 1, tzinfo=dt.UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class Captured:
+    """When the data was captured, in UTC, both ends inclusive; an instant has `start == end`."""
+
+    start: dt.datetime
+    end: dt.datetime
+
+    @classmethod
+    def checked(cls, start: dt.datetime, end: dt.datetime | None = None) -> Self | None:
+        """The range, or None if it isn't a plausible time: headers carry zeroed and made-up
+        dates, and those shouldn't put an item in a time filter. Naive times are taken as UTC,
+        which is what the formats read here mean when they don't say."""
+        first = _utc(start)
+        last = first if end is None else _utc(end)
+        if not EARLIEST_CAPTURE <= first <= last < LATEST_CAPTURE:
+            return None
+        return cls(first, last)
+
+
+def _utc(moment: dt.datetime) -> dt.datetime:
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=dt.UTC)
+    return moment.astimezone(dt.UTC)
+
+
 @dataclass(frozen=True, slots=True)
 class Metadata:
     status: Status
@@ -41,3 +72,4 @@ class Metadata:
     properties: Mapping[str, Json] = field(default_factory=dict[str, Json])
     bbox: Bbox | None = None
     crs: str | None = None  # "AUTHORITY:code" when the CRS has one, else WKT2
+    captured: Captured | None = None

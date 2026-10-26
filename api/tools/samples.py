@@ -216,6 +216,41 @@ def generate_readings_jsonl(out: BinaryIO, params: Json) -> None:
         out.write(json.dumps(row).encode() + b"\n")
 
 
+def _points(params: Json) -> list[tuple[float, float]]:
+    """`count` seeded points inside `box` (west, south, east, north), starting with its two
+    corners, so the points' extent is exactly the box."""
+    west, south, east, north = params["box"]
+    rng = random.Random(params["seed"])  # noqa: S311 - seeded on purpose: fixed checksums
+    inner = [
+        (round(rng.uniform(west, east), 6), round(rng.uniform(south, north), 6))
+        for _ in range(params["count"] - 2)
+    ]
+    return [(west, south), (east, north), *inner]
+
+
+def generate_geojson(out: BinaryIO, params: Json) -> None:
+    features = [
+        {"type": "Feature", "properties": {"n": i}, "geometry": {"type": "Point", "coordinates": p}}
+        for i, p in enumerate(_points(params))
+    ]
+    out.write(json.dumps({"type": "FeatureCollection", "features": features}).encode())
+
+
+SHP_HEADER = 100
+SHP_POINT, SHP_POINT_RECORD = 1, 28  # record: 8-byte header, shape type, x, y
+
+
+def generate_shapefile(out: BinaryIO, params: Json) -> None:
+    """A point shapefile's main file, with no `.prj`: the header's bbox is the box."""
+    points = _points(params)
+    words = (SHP_HEADER + SHP_POINT_RECORD * len(points)) // 2
+    out.write(struct.pack(">7i", 9994, 0, 0, 0, 0, 0, words))
+    out.write(struct.pack("<2i8d", 1000, SHP_POINT, *params["box"], 0, 0, 0, 0))
+    for number, (x, y) in enumerate(points, start=1):
+        out.write(struct.pack(">2i", number, (SHP_POINT_RECORD - 8) // 2))
+        out.write(struct.pack("<i2d", SHP_POINT, x, y))
+
+
 def generate_eicar(out: BinaryIO, _: Json) -> None:
     out.write(EICAR)
 
@@ -225,6 +260,8 @@ GENERATORS: dict[str, Callable[[BinaryIO, Json], None]] = {
     "readings-csv": generate_readings_csv,
     "readings-jsonl": generate_readings_jsonl,
     "eicar": generate_eicar,
+    "geojson": generate_geojson,
+    "shapefile": generate_shapefile,
 }
 
 

@@ -5,8 +5,13 @@ GDAL reads through rasterio's Python-filesystem plugin, so every byte it asks fo
 `BlobSource` and counts against the budget; it never gets a URL or a credential of its own.
 Opening a dataset reads its header and IFDs; no pixel data is touched. A TIFF whose blocks run
 past the end of the file is `unreadable`, however good its header looks.
+
+Capture time is the best the header offers: an imagery acquisition time (ISO 8601), else EXIF's
+original time, else the TIFF `DateTime` tag ("YYYY:MM:DD HH:MM:SS", local time of unknown zone,
+taken as UTC).
 """
 
+import datetime as dt
 import math
 import warnings
 from typing import override
@@ -15,13 +20,22 @@ import rasterio
 from rasterio.abc import FileContainer
 from rasterio.errors import NotGeoreferencedWarning, RasterioError
 
-from ingest_api.items.metadata import Json
+from ingest_api.items.metadata import Captured, Json
 from ingest_api.worker.extract import BlobSource, Found, SourceFile, Unreadable
 from ingest_api.worker.formats import crs
 
 # The single path GDAL is given; the container below serves it.
 PATH = "blob://source"
 MAX_BANDS = 64
+# Where each driver keeps a capture time, most specific first: (metadata domain, key, format).
+ISO = "iso"
+EXIF_FORMAT = "%Y:%m:%d %H:%M:%S"
+CAPTURE_TAGS = (
+    ("IMAGERY", "ACQUISITIONDATETIME", ISO),
+    (None, "EXIF_DateTimeOriginal", EXIF_FORMAT),
+    (None, "EXIF_DateTime", EXIF_FORMAT),
+    (None, "TIFFTAG_DATETIME", EXIF_FORMAT),
+)
 
 
 class _OneBlob(FileContainer):
@@ -106,10 +120,33 @@ def _found(dataset: rasterio.DatasetReader) -> Found:
         ],
         "raster:band_count": dataset.count,
     }
+    captured = _captured(dataset)
     if dataset.crs is None:
-        return Found(properties=properties)
+        return Found(properties=properties, captured=captured)
     native = crs.name(dataset.crs)
     properties["proj:transform"] = list[Json](dataset.transform)[:6]  # a-f; g-i are fixed
     bounds = dataset.bounds
     bbox = crs.footprint(native, bounds.left, bounds.bottom, bounds.right, bounds.top)
-    return Found(properties=properties, bbox=bbox, crs=native)
+    return Found(properties=properties, bbox=bbox, crs=native, captured=captured)
+
+
+def _captured(dataset: rasterio.DatasetReader) -> Captured | None:
+    domains = set(dataset.tag_namespaces())
+    for domain, key, layout in CAPTURE_TAGS:
+        if domain is not None and domain not in domains:
+            continue
+        text = dataset.tags(ns=domain).get(key)
+        moment = _parse(text, layout) if text else None
+        captured = Captured.checked(moment) if moment else None
+        if captured:
+            return captured
+    return None
+
+
+def _parse(text: str, layout: str) -> dt.datetime | None:
+    try:
+        if layout == ISO:
+            return dt.datetime.fromisoformat(text.strip())
+        return dt.datetime.strptime(text.strip(), layout)
+    except ValueError:
+        return None

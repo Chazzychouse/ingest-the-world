@@ -49,6 +49,12 @@ describe('searchBody', () => {
     const body = searchBody({ ...NO_FILTERS, q: '  ' }, undefined)
     expect(Object.keys(body)).toEqual(['limit'])
   })
+
+  it('sends capture days as `datetime` and upload days as `created`', () => {
+    const body = searchBody({ ...NO_FILTERS, from: '2023-06-01', uploadedTo: '2026-10-25' }, undefined)
+    expect(body.datetime).toBe('2023-06-01T00:00:00Z/..')
+    expect(body.created).toBe('../2026-10-25T23:59:59.999Z')
+  })
 })
 
 // Days in years a date input writes with four digits.

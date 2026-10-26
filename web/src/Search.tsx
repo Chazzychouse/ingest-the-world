@@ -4,14 +4,14 @@ import { bytes } from './format'
 import { MapView } from './MapView'
 import { itemMarking } from './markings'
 import { KINDS, MAX_QUERY_LENGTH } from './schema'
-import { NO_FILTERS, searchBody, type Bbox, type Filters } from './search'
+import { NO_FILTERS, searchBody, type Bbox, type Day, type Filters } from './search'
 import { fromQuery, toQuery, type View } from './searchUrl'
 import { MAX_RESULTS, useSearch } from './useSearch'
 
 // Shown first in an item's details; the rest follow alphabetically.
-const CORE = ['datetime', 'ingest:kind', 'ingest:media_type', 'file:size', 'proj:code', 'ingest:extraction']
+const CORE = ['datetime', 'start_datetime', 'end_datetime', 'created', 'ingest:kind', 'ingest:media_type', 'file:size', 'proj:code', 'ingest:extraction']
 // Shown elsewhere in the details, or only meaningful to the banner.
-const HIDDEN = ['title', 'created', 'keywords', 'ingest:marking', 'ingest:marking_rank']
+const HIDDEN = ['title', 'keywords', 'ingest:marking', 'ingest:marking_rank']
 // How long typing pauses before the text is searched.
 const TYPING_MS = 300
 
@@ -23,16 +23,25 @@ function when(datetime: string): string {
   return new Date(datetime).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+const TIMES = new Set(['datetime', 'start_datetime', 'end_datetime', 'created'])
+
+/** When an item's data was captured, or when it was uploaded if the file doesn't say: its
+ * `datetime`, or the start of its range. */
+function itemTime(item: StacItem): string {
+  const { datetime, created, start_datetime: start } = item.properties
+  return datetime ?? (typeof start === 'string' ? start : created)
+}
+
 function show(key: string, value: unknown): string {
   if (key === 'file:size' && typeof value === 'number') return bytes(value)
-  if (key === 'datetime' && typeof value === 'string') return when(value)
+  if (TIMES.has(key) && typeof value === 'string') return when(value)
   const text = typeof value === 'string' ? value : JSON.stringify(value)
   return text.length > 160 ? `${text.slice(0, 160)}…` : text
 }
 
 /** How many filters besides the text and the map view narrow the search. */
-function narrowing({ kinds, collections, from, to }: Filters): number {
-  return kinds.length + collections.length + (from || to ? 1 : 0)
+function narrowing({ kinds, collections, from, to, uploadedFrom, uploadedTo }: Filters): number {
+  return kinds.length + collections.length + (from || to ? 1 : 0) + (uploadedFrom || uploadedTo ? 1 : 0)
 }
 
 function titleOf(collections: Collection[], id: string): string {
@@ -75,30 +84,42 @@ type FilterProps = {
   onChange: (filters: Filters) => void
 }
 
+type DaysProps = { legend: string; hint?: string; from: Day; to: Day; onChange: (from: Day, to: Day) => void }
+
+/** A range of days, either end open. */
+function Days({ legend, hint, from, to, onChange }: DaysProps) {
+  return (
+    <fieldset className="dates">
+      <legend>{legend}</legend>
+      {hint && <p className="hint muted">{hint}</p>}
+      <label>
+        From
+        <input type="date" value={from} max={to || undefined} onChange={(e) => onChange(e.target.value, to)} />
+      </label>
+      <label>
+        To
+        <input type="date" value={to} min={from || undefined} onChange={(e) => onChange(from, e.target.value)} />
+      </label>
+    </fieldset>
+  )
+}
+
 function FilterPanel({ collections, filters, onChange }: FilterProps) {
   return (
     <div className="filter-body">
-      <fieldset className="dates">
-        <legend>Date, UTC</legend>
-        <label>
-          From
-          <input
-            type="date"
-            value={filters.from}
-            max={filters.to || undefined}
-            onChange={(e) => onChange({ ...filters, from: e.target.value })}
-          />
-        </label>
-        <label>
-          To
-          <input
-            type="date"
-            value={filters.to}
-            min={filters.from || undefined}
-            onChange={(e) => onChange({ ...filters, to: e.target.value })}
-          />
-        </label>
-      </fieldset>
+      <Days
+        legend="Captured, UTC"
+        hint="Or uploaded, for files that don't say when."
+        from={filters.from}
+        to={filters.to}
+        onChange={(from, to) => onChange({ ...filters, from, to })}
+      />
+      <Days
+        legend="Uploaded, UTC"
+        from={filters.uploadedFrom}
+        to={filters.uploadedTo}
+        onChange={(uploadedFrom, uploadedTo) => onChange({ ...filters, uploadedFrom, uploadedTo })}
+      />
       <fieldset>
         <legend>Kind</legend>
         <div className="toggles">
@@ -239,7 +260,7 @@ function Results({ items, collections, selected, hovered, onSelect, onHover }: R
                   {marking.label}
                 </span>
                 {item.properties['ingest:kind']} · {bytes(item.properties['file:size'])} ·{' '}
-                {new Date(item.properties.datetime).toLocaleDateString()}
+                {new Date(itemTime(item)).toLocaleDateString()}
               </span>
               <span className="meta">
                 {titleOf(collections, item.collection)}

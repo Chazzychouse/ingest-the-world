@@ -5,7 +5,7 @@ from collections.abc import Mapping
 
 from ingest_api.worker.classify import Media
 from ingest_api.worker.extract import Reader
-from ingest_api.worker.formats import glb, las, parquet, raster
+from ingest_api.worker.formats import geojson, geopackage, glb, las, parquet, raster, shapefile
 
 # Which reader handles each classified media type; anything else is `unsupported`.
 READERS: Mapping[str, Reader] = {
@@ -16,4 +16,7 @@ READERS: Mapping[str, Reader] = {
     Media.LAS: las.read,
     Media.LAZ: las.read,
     Media.PARQUET: parquet.read,
+    Media.GEOPACKAGE: geopackage.read,
+    Media.SHAPEFILE: shapefile.read,
+    Media.GEOJSON: geojson.read,
 }

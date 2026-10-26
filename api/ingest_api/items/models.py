@@ -119,7 +119,10 @@ class SearchIn(ApiModel):
 
     bbox: BboxQuery | None = None
     intersects: Geometry | None = None
+    # When the data was captured (when it was cataloged, if its header doesn't say): an RFC 3339
+    # instant or `start/end`, matched by overlap with the item's time.
     datetime: str | None = Field(default=None, max_length=80)
+    created: str | None = Field(default=None, max_length=80)  # when it was cataloged, likewise
     q: str | None = Field(default=None, max_length=MAX_QUERY_LENGTH, pattern=NO_NUL_PATTERN)
     collections: list[CollectionId] | None = Field(default=None, max_length=MAX_FILTER_VALUES)
     kinds: list[Kind] | None = Field(default=None, max_length=MAX_FILTER_VALUES)
@@ -134,7 +137,7 @@ class SearchIn(ApiModel):
             raise ValueError("a bbox's south edge can't be north of its north edge")
         return bbox
 
-    @field_validator("datetime")
+    @field_validator("datetime", "created")
     @classmethod
     def _interval(cls, text: str | None) -> str | None:
         if text is not None:
@@ -197,8 +200,9 @@ class ItemProperties(ApiModel):
 
     model_config = ConfigDict(extra="allow", validate_by_name=True, serialize_by_alias=True)
 
-    # When the data was captured, once headers say so; until then, when it was cataloged.
-    datetime: dt.datetime
+    # When the data was captured; when its header doesn't say, when it was cataloged. A range
+    # shows as null here, with `start_datetime` and `end_datetime` (extra keys, present only then).
+    datetime: dt.datetime | None
     created: dt.datetime
     title: str
     keywords: list[str]

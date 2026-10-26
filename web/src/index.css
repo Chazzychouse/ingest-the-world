@@ -197,7 +197,7 @@ input { accent-color: var(--accent); }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 legend { color: var(--muted); font-size: 0.8rem; font-weight: 600; margin-bottom: 0.35rem; padding: 0; }
 .dates { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
-.dates legend { grid-column: 1 / -1; }
+.dates legend, .dates .hint { grid-column: 1 / -1; }
 .dates label { display: grid; gap: 0.2rem; font-size: 0.8rem; color: var(--muted); }
 .dates input {
   font: inherit;

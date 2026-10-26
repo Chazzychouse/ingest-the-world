@@ -128,7 +128,7 @@
         "licence": "Public domain (USGS)",
         "licence_url": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits"
       },
-      "notes": "Header parsed by hand with struct: LAS 1.4, point format 6 (LAZ bit set), 16389299 points (64-bit count; legacy count 0), bounds 476000-476999.999 E, 4425000-4425999.999 N, z 1732.885-1923.166. CRS from the WKT VLR (LASF_Projection 2112): COMPD_CS NAD83(2011) / UTM 13N (EPSG:6342) + NAVD88 Geoid18 (EPSG:5703); compound has no single EPSG code. Point count and native bbox agree with USGS's project VPC (https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/LPC/Projects/CO_DRCOG_2020_B20/CO_DRCOG_1_2020/CO_DRCOG_1_2020.vpc); WGS84 bbox from the ScienceBase item / TNM API and the FGDC XML bounding.",
+      "notes": "Header parsed by hand with struct: LAS 1.4, point format 6 (LAZ bit set), 16389299 points (64-bit count; legacy count 0), bounds 476000-476999.999 E, 4425000-4425999.999 N, z 1732.885-1923.166. CRS from the WKT VLR (LASF_Projection 2112): COMPD_CS NAD83(2011) / UTM 13N (EPSG:6342) + NAVD88 Geoid18 (EPSG:5703); compound has no single EPSG code. Point count and native bbox agree with USGS's project VPC (https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/LPC/Projects/CO_DRCOG_2020_B20/CO_DRCOG_1_2020/CO_DRCOG_1_2020.vpc); WGS84 bbox from the ScienceBase item / TNM API and the FGDC XML bounding. File creation day/year at offset 90, hand-parsed: day 113 of 2021 (2021-04-23), so captured that whole UTC day.",
       "uploads": [
         {
           "expect": {
@@ -147,7 +147,10 @@
               "pc:count": 16389299,
               "las:version": "1.4",
               "las:point_format": 6,
-              "pc:encoding": "laszip"
+              "pc:encoding": "laszip",
+              "datetime": null,
+              "start_datetime": "2021-04-23T00:00:00Z",
+              "end_datetime": "2021-04-23T23:59:59.999999Z"
             }
           }
         }
@@ -164,7 +167,7 @@
         "licence": "CC-BY-4.0",
         "licence_url": "https://github.com/PDAL/data/blob/ce0024257c573526389c4db9ab26e82739b8aaa9/LICENSE"
       },
-      "notes": "Header parsed by hand: LAS 1.4, point format 7, 10653336 points (matches the README's 10,653,336), first VLR is 'copc' record 1 (COPC info), bounds in US survey feet. WKT VLR: NAD83 / Oregon GIC Lambert (ft) (EPSG:2992) + NAVD88 ftUS, compound EPSG:6360. sha256/size match the git-lfs pointer in the repo (oid db2d56cd..., 81123042). WGS84 bbox not independently available.",
+      "notes": "Header parsed by hand: LAS 1.4, point format 7, 10653336 points (matches the README's 10,653,336), first VLR is 'copc' record 1 (COPC info), bounds in US survey feet. WKT VLR: NAD83 / Oregon GIC Lambert (ft) (EPSG:2992) + NAVD88 ftUS, compound EPSG:6360. sha256/size match the git-lfs pointer in the repo (oid db2d56cd..., 81123042). WGS84 bbox not independently available. File creation day/year at offset 90, hand-parsed: (1, 1), a placeholder, so no capture time.",
       "uploads": [
         {
           "expect": {
@@ -177,7 +180,8 @@
               "pc:count": 10653336,
               "las:version": "1.4",
               "las:point_format": 7,
-              "pc:encoding": "copc"
+              "pc:encoding": "copc",
+              "start_datetime": null
             }
           }
         }
@@ -571,6 +575,109 @@
             "kind": "tabular",
             "media_type": "application/jsonl",
             "extraction": "unsupported"
+          }
+        }
+      ]
+    },
+    {
+      "name": "sites.geojson",
+      "set": "default",
+      "sha256": "2fe2a8820cc833c24f68c9d0705c2f5caf784fd7af58c8c076967ea5745914ec",
+      "size": 238455,
+      "generate": {
+        "by": "geojson",
+        "seed": 4,
+        "count": 2000,
+        "box": [
+          -105.2,
+          39.6,
+          -104.6,
+          40.1
+        ]
+      },
+      "notes": "2000 seeded points in a box near Denver, the first two at its corners, so the extent is the box by construction.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "vector",
+            "media_type": "application/geo+json",
+            "extraction": "extracted",
+            "crs": "OGC:CRS84",
+            "bbox": [
+              -105.2,
+              39.6,
+              -104.6,
+              40.1
+            ],
+            "properties": {
+              "geojson:features": 2000
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sites-large.geojson",
+      "set": "default",
+      "sha256": "63af4d18f599fdf6213dc5664646617c96e3136b49b8146695f7ff96146c02c9",
+      "size": 7235415,
+      "generate": {
+        "by": "geojson",
+        "seed": 5,
+        "count": 60000,
+        "box": [
+          -105.2,
+          39.6,
+          -104.6,
+          40.1
+        ]
+      },
+      "notes": "Larger than the 4 MiB extraction budget: GeoJSON has no header, so it is over-budget, not read (ING-6).",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "vector",
+            "media_type": "application/geo+json",
+            "extraction": "over-budget"
+          }
+        }
+      ]
+    },
+    {
+      "name": "sites.shp",
+      "set": "default",
+      "sha256": "66d30acae09a12c1562e19014b261a39b07971ad00274d50f648aedb9d2c5f51",
+      "size": 56100,
+      "generate": {
+        "by": "shapefile",
+        "seed": 6,
+        "count": 2000,
+        "box": [
+          476000.0,
+          4425000.0,
+          477000.0,
+          4426000.0
+        ]
+      },
+      "notes": "A point shapefile's main file alone, coordinates in UTM 13N but with no .prj, so it has a native extent and no footprint.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "vector",
+            "media_type": "application/vnd.shp",
+            "extraction": "extracted",
+            "properties": {
+              "shp:shape_type": "point",
+              "proj:bbox": [
+                476000.0,
+                4425000.0,
+                477000.0,
+                4426000.0
+              ]
+            }
           }
         }
       ]

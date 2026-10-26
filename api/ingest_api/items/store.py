@@ -16,6 +16,7 @@ from uuid import UUID
 from psycopg import Connection, errors, sql
 from psycopg.rows import TupleRow, class_row
 from psycopg.types.json import Jsonb
+from psycopg.types.range import Range
 
 from ingest_api import authz
 from ingest_api.auth import Principal
@@ -61,16 +62,16 @@ def _insert(
     conn: Connection[TupleRow], upload_id: UUID, contents: Contents, *, created_at: datetime
 ) -> None:
     metadata = contents.metadata
-    box = metadata.bbox
+    box, when = metadata.bbox, metadata.captured
     conn.execute(
         """
         INSERT INTO catalog.items
             (id, collection_id, kind, media_type, filename, size_bytes, sha256, raw_blob,
              marking, tags, created_by, created_at,
-             extraction, extracted_bytes, crs, footprint, properties)
+             extraction, extracted_bytes, crs, footprint, properties, captured)
         SELECT u.id, u.collection_id, %s, %s, u.filename, %s, %s, u.blob_name, c.marking,
                u.tags, u.created_by, %s,
-               %s, %s, %s, ST_MakeEnvelope(%s, %s, %s, %s, 4326), %s
+               %s, %s, %s, ST_MakeEnvelope(%s, %s, %s, %s, 4326), %s, %s
         FROM ingest.uploads u JOIN catalog.collections c ON c.id = u.collection_id
         WHERE u.id = %s
         """,
@@ -85,6 +86,7 @@ def _insert(
             metadata.crs,
             *((box.west, box.south, box.east, box.north) if box else (None,) * 4),
             Jsonb(dict(metadata.properties)),
+            Range(when.start, when.end, "[]") if when else None,
             upload_id,
         ),
     )
@@ -103,6 +105,8 @@ class ItemRow:
     marking_rank: int
     tags: list[str]
     created_at: datetime
+    captured_start: datetime | None  # when it was captured, both ends inclusive, if known
+    captured_end: datetime | None
     extraction: Status
     crs: str | None
     footprint: dict[str, Any] | None  # GeoJSON, from PostGIS
@@ -112,7 +116,9 @@ class ItemRow:
 
 _SELECT_READABLE = sql.SQL(f"""
     SELECT i.id, i.collection_id, i.kind, i.media_type, i.filename, i.size_bytes, i.sha256,
-           i.marking, m.rank AS marking_rank, i.tags, i.created_at, i.extraction, i.crs,
+           i.marking, m.rank AS marking_rank, i.tags, i.created_at,
+           lower(i.captured) AS captured_start, upper(i.captured) AS captured_end,
+           i.extraction, i.crs,
            ST_AsGeoJSON(i.footprint)::jsonb AS footprint,
            CASE WHEN i.footprint IS NOT NULL THEN ARRAY[
                ST_XMin(i.footprint), ST_YMin(i.footprint),
@@ -144,8 +150,10 @@ class Query:
     limit: int
     bbox: tuple[float, float, float, float] | None = None  # west > east crosses 180°
     geometry: str | None = None  # GeoJSON, validated at the edge
-    start: datetime | None = None
+    start: datetime | None = None  # `datetime`: capture time, or cataloging time if unknown
     end: datetime | None = None
+    created_start: datetime | None = None  # `created`: cataloging time
+    created_end: datetime | None = None
     terms: Sequence[str] = field(default_factory=tuple[str, ...])
     collections: Sequence[str] | None = None
     kinds: Sequence[Kind] | None = None
@@ -196,10 +204,14 @@ def _where_and_when(query: Query) -> list[Clause]:
         clauses.append((sql.Composed([sql.SQL("("), either, sql.SQL(")")]), values))
     if query.geometry is not None:
         clauses.append((_GEOMETRY, (query.geometry,)))
-    if query.start is not None:
-        clauses.append((sql.SQL("i.created_at >= %s"), (query.start,)))
-    if query.end is not None:
-        clauses.append((sql.SQL("i.created_at <= %s"), (query.end,)))
+    if query.start is not None or query.end is not None:
+        # Null bounds are open, so an interval with one open end overlaps everything that way.
+        overlaps = sql.SQL("i.datetime_range && tstzrange(%s, %s, '[]')")
+        clauses.append((overlaps, (query.start, query.end)))
+    if query.created_start is not None:
+        clauses.append((sql.SQL("i.created_at >= %s"), (query.created_start,)))
+    if query.created_end is not None:
+        clauses.append((sql.SQL("i.created_at <= %s"), (query.created_end,)))
     return clauses
 
 

@@ -7,8 +7,10 @@ read, independently of the reader's own tally.
 
 import io
 import json
+import sqlite3
 import struct
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
 
@@ -24,7 +26,7 @@ from rasterio.errors import NotGeoreferencedWarning
 from rasterio.transform import from_origin
 
 from ingest_api.items.kinds import Kind
-from ingest_api.items.metadata import Bbox
+from ingest_api.items.metadata import Bbox, Captured
 from ingest_api.ports import Container, StorageError
 from ingest_api.worker.classify import Media
 from ingest_api.worker.extract import MAX_EXTRACT_BYTES, Budget, Extraction, extract
@@ -40,8 +42,11 @@ UTM_13N = "EPSG:32613"
 ORIGIN_X, ORIGIN_Y, SIDE_METRES = 500_000.0, 4_500_000.0, 4096.0
 
 
-def geotiff(tmp_path, *, crs: str | None = UTM_13N) -> bytes:
-    """A tiled, uncompressed GeoTIFF bigger than the budget."""
+def geotiff(
+    tmp_path, *, crs: str | None = UTM_13N, tags: Mapping[str, Mapping[str, str]] | None = None
+) -> bytes:
+    """A tiled, uncompressed GeoTIFF bigger than the budget, with metadata `tags` by domain
+    ("" for the default one)."""
     pixels = int((BIG**0.5) // 512 + 1) * 512
     path = tmp_path / "ortho.tif"
     profile: dict[str, Any] = {
@@ -59,10 +64,14 @@ def geotiff(tmp_path, *, crs: str | None = UTM_13N) -> bytes:
         profile["crs"] = crs
     with rasterio.open(str(path), "w", **profile) as dataset:
         dataset.write(np.zeros((1, pixels, pixels), dtype="uint8"))
+        for domain, values in (tags or {}).items():
+            dataset.update_tags(ns=domain or None, **values)
     return path.read_bytes()
 
 
-def las_file(*, point_count: int = 50_000_000, wkt: str | None = None) -> bytes:
+def las_file(
+    *, point_count: int = 50_000_000, wkt: str | None = None, created: tuple[int, int] = (0, 0)
+) -> bytes:
     """A LAS 1.4 header (and optionally a WKT CRS record) followed by BIG bytes of points."""
     vlr = b""
     if wkt is not None:
@@ -79,6 +88,7 @@ def las_file(*, point_count: int = 50_000_000, wkt: str | None = None) -> bytes:
     min_x, min_y = ORIGIN_X, ORIGIN_Y - SIDE_METRES
     las.BOUNDS.pack_into(header, 179, max_x, min_x, max_y, min_y, 1700.0, 1500.0)
     las.POINT_COUNT_14.pack_into(header, 247, point_count)
+    las.CREATED.pack_into(header, 90, *created)
     return bytes(header) + vlr + bytes(BIG)
 
 
@@ -121,6 +131,58 @@ def parquet_file(*, geo: Mapping[str, object] | None = None) -> bytes:
     buffer = io.BytesIO()
     pq.write_table(table, buffer, compression="none")
     return buffer.getvalue()
+
+
+def geopackage(
+    *,
+    layers: int = 1,
+    page_size: int = 1024,
+    extent: tuple[float | None, ...] | None = None,
+) -> bytes:
+    """A GeoPackage written by SQLite itself, not by our reader's idea of the format: small
+    pages, so many layers need interior B-tree pages and a CRS definition overflows its page,
+    and a padding table that puts the file far over the budget."""
+    wkt = CRS.from_epsg(32613).to_wkt(version="WKT2_2019")
+    bounds = extent or (ORIGIN_X, ORIGIN_Y - SIDE_METRES, ORIGIN_X + SIDE_METRES, ORIGIN_Y)
+    db = sqlite3.connect(":memory:")
+    with db:
+        db.execute(f"PRAGMA page_size = {page_size}")
+        db.execute(
+            """CREATE TABLE gpkg_spatial_ref_sys (srs_name TEXT NOT NULL,
+            srs_id INTEGER NOT NULL PRIMARY KEY, organization TEXT NOT NULL,
+            organization_coordsys_id INTEGER NOT NULL, definition TEXT NOT NULL,
+            description TEXT)"""
+        )
+        db.execute(
+            """CREATE TABLE gpkg_contents (table_name TEXT NOT NULL PRIMARY KEY,
+            data_type TEXT NOT NULL, identifier TEXT UNIQUE, description TEXT DEFAULT '',
+            last_change DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+            min_x DOUBLE, min_y DOUBLE, max_x DOUBLE, max_y DOUBLE, srs_id INTEGER,
+            CONSTRAINT fk_gc_r_srs_id FOREIGN KEY (srs_id)
+                REFERENCES gpkg_spatial_ref_sys(srs_id))"""
+        )
+        db.execute("CREATE TABLE padding (data BLOB)")
+        # Named by a definition only (organization "NONE"), so the WKT has to be read in full.
+        db.execute(
+            "INSERT INTO gpkg_spatial_ref_sys VALUES ('utm', 32613, 'NONE', 32613, ?, NULL)", (wkt,)
+        )
+        db.executemany(
+            "INSERT INTO gpkg_contents (table_name, data_type, min_x, min_y, max_x, max_y, srs_id)"
+            " VALUES (?, 'features', ?, ?, ?, ?, 32613)",
+            [(f"layer_{i:03}", *bounds) for i in range(layers)],
+        )
+        db.execute("INSERT INTO padding VALUES (?)", (bytes(BIG),))
+    data = db.serialize()
+    db.close()
+    return data
+
+
+def shapefile(shape_type: int = 5, bounds=(1.0, 2.0, 3.0, 4.0), *, size: int = BIG) -> bytes:
+    header = bytearray(100)
+    struct.pack_into(">ii", header, 0, 9994, 0)
+    struct.pack_into(">i", header, 24, size // 2)
+    struct.pack_into("<ii4d", header, 28, 1000, shape_type, *bounds)
+    return bytes(header) + bytes(size - 100)
 
 
 def _budget(store: MemoryBlobStore, size: int) -> Budget:
@@ -181,6 +243,158 @@ def test_a_las_header_yields_count_bounds_and_crs():
     assert metadata.properties["pc:count"] == 50_000_000
     assert metadata.properties["pc:encoding"] == "las"
     assert metadata.properties["las:version"] == "1.4"
+
+
+UTC_TIME = "2023-05-31T09:00:00Z"
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        (
+            {
+                "IMAGERY": {"ACQUISITIONDATETIME": UTC_TIME},
+                "": {"TIFFTAG_DATETIME": "2024:01:01 00:00:00"},
+            },
+            UTC_TIME,
+        ),
+        ({"": {"TIFFTAG_DATETIME": "2023:06:01 10:20:30"}}, "2023-06-01T10:20:30Z"),
+        ({"IMAGERY": {"ACQUISITIONDATETIME": "2023-05-31T11:00:00+02:00"}}, UTC_TIME),
+        ({"": {"TIFFTAG_DATETIME": "0000:00:00 00:00:00"}}, None),
+        ({"": {"TIFFTAG_DATETIME": "1066:10:14 09:00:00"}}, None),
+        ({}, None),
+    ],
+    ids=["acquisition-first", "tiff-datetime", "offset", "zeroed", "implausible", "none"],
+)
+def test_a_raster_says_when_it_was_captured_if_its_header_does(tmp_path, tags, expected):
+    data = geotiff(tmp_path, tags=tags)
+    captured = _extract(MemoryBlobStore(), Media.TIFF, data).metadata.captured
+
+    moment = datetime.fromisoformat(expected) if expected else None
+    assert captured == (Captured(moment, moment) if moment else None)
+
+
+@pytest.mark.parametrize(
+    ("created", "day"),
+    [((152, 2023), datetime(2023, 6, 1, tzinfo=UTC)), ((0, 0), None), ((366, 2023), None)],
+    ids=["june-1", "unset", "no-day-366"],
+)
+def test_a_las_file_was_captured_on_its_creation_day(created, day):
+    captured = _extract(MemoryBlobStore(), Media.LAS, las_file(created=created)).metadata.captured
+
+    expected = Captured(day, day + timedelta(days=1, microseconds=-1)) if day else None
+    assert captured == expected
+
+
+@pytest.mark.invariant("ING-6")
+def test_a_geopackage_yields_its_layers_crs_and_footprint_from_two_tables():
+    store = MemoryBlobStore()
+    result = _extract(store, Media.GEOPACKAGE, geopackage())
+
+    _within_budget(store, result)
+    metadata = result.metadata
+    assert (metadata.status, result.kind, metadata.crs) == ("extracted", Kind.VECTOR, UTM_13N)
+    assert _near(metadata.bbox, DENVER)
+    assert metadata.properties["gpkg:layers"] == [
+        {"name": "layer_000", "type": "features", "crs": UTM_13N}
+    ]
+
+
+def test_a_geopackage_with_many_layers_is_read_across_interior_pages():
+    result = _extract(MemoryBlobStore(), Media.GEOPACKAGE, geopackage(layers=300))
+
+    layers = result.metadata.properties["gpkg:layers"]
+    assert isinstance(layers, list) and len(layers) == 64  # MAX_LAYERS, in table order
+    assert _near(result.metadata.bbox, DENVER)
+
+
+def test_a_geopackage_without_extents_has_no_footprint():
+    result = _extract(MemoryBlobStore(), Media.GEOPACKAGE, geopackage(extent=(None,) * 4))
+
+    assert (result.metadata.status, result.metadata.bbox) == ("extracted", None)
+
+
+@pytest.mark.invariant("ING-6")
+def test_a_shapefile_has_a_native_extent_but_no_footprint_without_its_prj():
+    store = MemoryBlobStore()
+    result = _extract(store, Media.SHAPEFILE, shapefile())
+
+    _within_budget(store, result)
+    metadata = result.metadata
+    assert (metadata.status, result.kind, metadata.bbox, metadata.crs) == (
+        "extracted",
+        Kind.VECTOR,
+        None,
+        None,
+    )
+    assert metadata.properties == {"shp:shape_type": "polygon", "proj:bbox": [1.0, 2.0, 3.0, 4.0]}
+
+
+def test_a_shapefile_whose_header_misstates_its_length_is_unreadable():
+    data = shapefile()[:-2]
+
+    assert _extract(MemoryBlobStore(), Media.SHAPEFILE, data).metadata.status == "unreadable"
+
+
+def _geojson(document: object) -> bytes:
+    return json.dumps(document).encode()
+
+
+def _feature(geometry: object) -> dict[str, object]:
+    return {"type": "Feature", "properties": {}, "geometry": geometry}
+
+
+LINE = {"type": "LineString", "coordinates": [[-104.9, 40.65], [-104.95, 40.62]]}
+FEATURES = {
+    "type": "FeatureCollection",
+    "features": [
+        _feature({"type": "Point", "coordinates": [-105, 40.6]}),
+        _feature({"type": "GeometryCollection", "geometries": [LINE]}),
+        _feature(None),
+    ],
+}
+
+
+@pytest.mark.invariant("ING-6")
+def test_a_geojson_file_within_the_budget_yields_its_footprint():
+    store = MemoryBlobStore()
+    result = _extract(store, Media.GEOJSON, _geojson(FEATURES))
+
+    _within_budget(store, result)
+    metadata = result.metadata
+    assert (metadata.status, metadata.crs) == ("extracted", "OGC:CRS84")
+    assert metadata.bbox == Bbox(-105, 40.6, -104.9, 40.65)
+    assert metadata.properties["geojson:features"] == 3
+
+
+def test_a_legacy_geojson_crs_is_honoured():
+    utm: dict[str, object] = {
+        "type": "Point",
+        "coordinates": [ORIGIN_X + SIDE_METRES / 2, ORIGIN_Y - SIDE_METRES / 2],
+        "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::32613"}},
+    }
+
+    metadata = _extract(MemoryBlobStore(), Media.GEOJSON, _geojson(utm)).metadata
+
+    assert metadata.crs == UTM_13N and metadata.bbox is not None
+    assert (
+        DENVER[0] < metadata.bbox.west < DENVER[2] and DENVER[1] < metadata.bbox.south < DENVER[3]
+    )
+
+
+@pytest.mark.invariant("ING-6")
+def test_a_geojson_file_over_the_budget_is_not_read():
+    store = MemoryBlobStore()
+    result = _extract(store, Media.GEOJSON, _geojson(FEATURES) + b" " * BIG)
+
+    _within_budget(store, result)
+    assert result.metadata.status == "over-budget"
+
+
+def test_deeply_nested_geojson_is_unreadable_not_a_crash():
+    data = b'{"type": "Point", "coordinates": ' + b"[" * 100_000 + b"]" * 100_000 + b"}"
+
+    assert _extract(MemoryBlobStore(), Media.GEOJSON, data).metadata.status == "unreadable"
 
 
 def test_a_plain_png_is_a_raster_without_a_footprint(tmp_path):
@@ -306,6 +520,9 @@ SIGNATURES = {
     Media.GLB: b"glTF\x02\x00\x00\x00",
     Media.LAS: b"LASF",
     Media.PARQUET: b"PAR1",
+    Media.GEOPACKAGE: b"SQLite format 3\x00",
+    Media.SHAPEFILE: b"\x00\x00\x27\x0a",
+    Media.GEOJSON: b'{"type": "FeatureCollection", "features": [',
 }
 
 
@@ -322,6 +539,24 @@ def test_no_file_can_make_a_reader_crash_or_overspend(media, body, padding):
     if media == Media.PARQUET:
         data += b"PAR1"  # the trailer, so Arrow reads the footer length from the fuzz
     result = _extract(store, media, data)
+
+    _within_budget(store, result)
+    assert result.metadata.status in ("extracted", "unreadable", "over-budget")
+
+
+GEOPACKAGE = geopackage(layers=40, page_size=512)
+
+
+@pytest.mark.invariant("ING-6")
+@given(st.lists(st.tuples(st.integers(0, 16 * 512 - 1), st.integers(0, 255)), max_size=8))
+def test_no_corruption_of_a_geopackage_can_crash_its_reader_or_overspend(changes):
+    """Bytes changed in the pages the reader walks (header, schema, both tables): the walk
+    still ends in a status, within the budget."""
+    data = bytearray(GEOPACKAGE)
+    for offset, value in changes:
+        data[offset] = value
+    store = MemoryBlobStore()
+    result = _extract(store, Media.GEOPACKAGE, bytes(data))
 
     _within_budget(store, result)
     assert result.metadata.status in ("extracted", "unreadable", "over-budget")

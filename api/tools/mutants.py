@@ -377,6 +377,15 @@ MUTANTS = [
         'query += " AND (u.created_at, u.id) <= (%s, %s)"',
         ("ACC-1",),
     ),
+    Mutant(
+        "datetime-filters-upload-time",
+        ITEM_STORE,
+        "overlaps = sql.SQL(\"i.datetime_range && tstzrange(%s, %s, '[]')\")",
+        "overlaps = sql.SQL(\"tstzrange(i.created_at, i.created_at, '[]')\"\n"
+        "    \" && tstzrange(%s, %s, '[]')\")",
+        # Returns items off the filter (SRCH-1) and misses ones on it (SRCH-2).
+        ("SRCH-1", "SRCH-2"),
+    ),
 ]
 
 

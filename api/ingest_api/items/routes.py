@@ -6,6 +6,7 @@ never returns it (ACC-1). Only cataloged files are items, so nothing quarantined
 can be served (ING-4).
 """
 
+import datetime as dt
 from uuid import UUID
 
 from fastapi import APIRouter, status
@@ -47,10 +48,20 @@ def _crs(crs: str | None) -> tuple[str | None, str | None]:
     return (None, crs) if "[" in crs else (crs, None)
 
 
+def _times(row: store.ItemRow) -> dict[str, dt.datetime | None]:
+    """STAC's time fields: one `datetime`, or a null one and the range's ends."""
+    start, end = row.captured_start, row.captured_end
+    if start is None or end is None:
+        return {"datetime": row.created_at}
+    if start == end:
+        return {"datetime": start}
+    return {"datetime": None, "start_datetime": start, "end_datetime": end}
+
+
 def stac_item(row: store.ItemRow) -> StacItem:
     code, wkt2 = _crs(row.crs)
     core = {
-        "datetime": row.created_at,
+        **_times(row),
         "created": row.created_at,
         "title": row.filename,
         "keywords": row.tags,
@@ -101,12 +112,15 @@ def get_item(item_id: UUID, principal: CurrentPrincipal, conn: Conn, auditor: Au
 
 def _query(body: SearchIn) -> store.Query:
     start, end = parse_interval(body.datetime) if body.datetime else (None, None)
+    created_start, created_end = parse_interval(body.created) if body.created else (None, None)
     return store.Query(
         limit=body.limit,
         bbox=body.bbox,
         geometry=body.intersects.model_dump_json() if body.intersects else None,
         start=start,
         end=end,
+        created_start=created_start,
+        created_end=created_end,
         terms=body.q.split() if body.q else (),
         collections=body.collections,
         kinds=body.kinds,

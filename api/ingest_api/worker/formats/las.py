@@ -4,17 +4,22 @@ The header (at most 375 bytes) holds the point count and the bounds; the VLRs af
 CRS (as OGC WKT, or as GeoTIFF keys in older files) and mark COPC files. Point records start at
 `offset to point data` and are never read. LAZ compresses only the points, so its header is
 the same. https://www.asprs.org/wp-content/uploads/2019/07/LAS_1_4_r15.pdf
+
+The header's file creation day (day of year, year; GMT) is the nearest it has to a capture time,
+so an item is captured sometime that day.
 """
 
+import datetime as dt
 import struct
 
-from ingest_api.items.metadata import Json
+from ingest_api.items.metadata import Captured, Json
 from ingest_api.worker.extract import BlobSource, Found, Unreadable
 from ingest_api.worker.formats import crs
 
 SIGNATURE = b"LASF"
 # The fields used, by offset into the public header block (LAS 1.0 to 1.4).
 VERSION = struct.Struct("<BB")  # at 24
+CREATED = struct.Struct("<HH")  # at 90: file creation day of year (1-366), year
 LAYOUT = struct.Struct("<HII")  # at 94: header size, offset to point data, number of VLRs
 POINT_FORMAT = struct.Struct("<BHI")  # at 104: format, record length, legacy point count
 BOUNDS = struct.Struct("<6d")  # at 179: max x, min x, max y, min y, max z, min z
@@ -38,6 +43,7 @@ def read(source: BlobSource) -> Found:
     header_size, point_offset, vlr_count = LAYOUT.unpack_from(head, 94)
     point_format, _, legacy_count = POINT_FORMAT.unpack_from(head, 104)
     max_x, min_x, max_y, min_y, max_z, min_z = BOUNDS.unpack_from(head, 179)
+    day, year = CREATED.unpack_from(head, 90)
     if header_size < MIN_HEADER or point_offset < header_size:
         raise Unreadable(f"header size {header_size}, points at {point_offset}")
     count = legacy_count
@@ -54,7 +60,17 @@ def read(source: BlobSource) -> Found:
         "pc:extent": {"min": [min_x, min_y, min_z], "max": [max_x, max_y, max_z]},
     }
     bbox = crs.footprint(native, min_x, min_y, max_x, max_y) if native else None
-    return Found(properties=properties, bbox=bbox, crs=native)
+    return Found(properties=properties, bbox=bbox, crs=native, captured=_captured(day, year))
+
+
+def _captured(day: int, year: int) -> Captured | None:
+    """The creation day as a range; writers leave zeros when they don't know."""
+    if not (1 <= day <= 366 and year >= 1):
+        return None
+    start = dt.datetime(year, 1, 1, tzinfo=dt.UTC) + dt.timedelta(days=day - 1)
+    if start.year != year:
+        return None  # day 366 of a common year
+    return Captured.checked(start, start + dt.timedelta(days=1, microseconds=-1))
 
 
 def _vlrs(source: BlobSource, start: int, end: int, count: int) -> dict[tuple[str, int], bytes]:

@@ -316,9 +316,16 @@
             "type": "string"
           },
           "datetime": {
-            "format": "date-time",
-            "title": "Datetime",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Datetime"
           },
           "file:checksum": {
             "title": "File:Checksum",
@@ -870,6 +877,18 @@
               }
             ],
             "title": "Collections"
+          },
+          "created": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created"
           },
           "datetime": {
             "anyOf": [
