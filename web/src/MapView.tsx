@@ -21,16 +21,17 @@ const LAYERS = ['fill', 'dots', 'others-fill', 'others-dots'] // the layers a po
 // footprint too small for its tile comes as a point, so every match shows at low zoom.
 const OTHERS = 'others'
 const POINTS = ['==', ['geometry-type'], 'Point'] as maplibregl.FilterSpecification
+
 const GREY = '#5d6662'
 // Past this zoom the tiles are stretched rather than fetched again.
 const OTHERS_MAX_ZOOM = 14
-// The selected raster, drawn by the tiler, beneath every footprint.
+// The selected raster, drawn by the tiler, over the footprints' fills and under their outlines.
 const PREVIEW = 'preview'
 const PREVIEW_TILES = '/tiles/items/'
 
 type Props = {
   items: StacItem[]
-  footprintTiles: string | undefined // every match's footprints, as vector tiles
+  footprintTiles: string | undefined // every match's footprints: an absolute vector tile template
   preview: Preview | undefined // a raster to draw, from the tiler
   previewOpacity: number
   selected: string | undefined
@@ -74,6 +75,25 @@ function centres(items: StacItem[]): FeatureCollection {
   }
 }
 
+/** Every match's footprints, from `tiles`, beneath the results'. Added once a view opens: a source
+ * with no URL yet fails every tile it fetches. */
+function addOthers(m: maplibregl.Map, tiles: string) {
+  m.addSource(OTHERS, { type: 'vector', tiles: [tiles], maxzoom: OTHERS_MAX_ZOOM })
+  const others: maplibregl.LayerSpecification[] = [
+    { id: 'others-fill', type: 'fill', source: OTHERS, 'source-layer': 'footprints', paint: { 'fill-color': GREY, 'fill-opacity': 0.04 } },
+    { id: 'others-line', type: 'line', source: OTHERS, 'source-layer': 'footprints', paint: { 'line-color': GREY, 'line-width': 0.75, 'line-opacity': 0.6 } },
+    {
+      id: 'others-dots',
+      type: 'circle',
+      source: OTHERS,
+      'source-layer': 'footprints',
+      filter: POINTS,
+      paint: { 'circle-color': GREY, 'circle-radius': 3, 'circle-opacity': 0.6, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1 },
+    },
+  ]
+  for (const layer of others) m.addLayer(layer, 'fill')
+}
+
 function dotLayer(id: string, color: string, radius: number): maplibregl.CircleLayerSpecification {
   return {
     id,
@@ -99,6 +119,18 @@ function bounds([west, south, east, north]: Bbox): LngLatBoundsLike {
     [west, south],
     [east < west ? east + 360 : east, north],
   ]
+}
+
+/** In the map's place when it can't be drawn: the rest of the page works without it. */
+export function MapUnavailable() {
+  return (
+    <div className="map unavailable" role="note">
+      <p>
+        The map can't be shown: this browser has WebGL turned off, or no graphics support for it. Search and the
+        results still work.
+      </p>
+    </div>
+  )
 }
 
 /** The search map: footprints of the results, kept in step with the viewport. */
@@ -150,29 +182,6 @@ export function MapView({ items, footprintTiles, preview, previewOpacity, select
       })
     }
     m.on('load', () => {
-      m.addSource(OTHERS, { type: 'vector', tiles: [], maxzoom: OTHERS_MAX_ZOOM })
-      m.addLayer({
-        id: 'others-fill',
-        type: 'fill',
-        source: OTHERS,
-        'source-layer': 'footprints',
-        paint: { 'fill-color': GREY, 'fill-opacity': 0.04 },
-      })
-      m.addLayer({
-        id: 'others-line',
-        type: 'line',
-        source: OTHERS,
-        'source-layer': 'footprints',
-        paint: { 'line-color': GREY, 'line-width': 0.75, 'line-opacity': 0.6 },
-      })
-      m.addLayer({
-        id: 'others-dots',
-        type: 'circle',
-        source: OTHERS,
-        'source-layer': 'footprints',
-        filter: POINTS,
-        paint: { 'circle-color': GREY, 'circle-radius': 3, 'circle-opacity': 0.6, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1 },
-      })
       m.addSource(SOURCE, { type: 'geojson', data: footprints([]) })
       m.addSource(DOTS, { type: 'geojson', data: centres([]) })
       m.addLayer({ id: 'fill', type: 'fill', source: SOURCE, paint: { 'fill-color': BLUE, 'fill-opacity': 0.12 } })
@@ -232,7 +241,11 @@ export function MapView({ items, footprintTiles, preview, previewOpacity, select
 
   useEffect(() => {
     if (!ready) return
-    map.current?.getSource<VectorTileSource>(OTHERS)?.setTiles(footprintTiles ? [new URL(footprintTiles, window.location.href).href] : [])
+    const m = map.current
+    if (!m || !footprintTiles) return // the last view's tiles stay until the next opens
+    const source = m.getSource<VectorTileSource>(OTHERS)
+    if (source) source.setTiles([footprintTiles])
+    else addOthers(m, footprintTiles)
   }, [ready, footprintTiles])
 
   const tilejson = preview?.tilejson
@@ -246,25 +259,30 @@ export function MapView({ items, footprintTiles, preview, previewOpacity, select
     const m = map.current
     if (!ready || !m || !tilejson) return
     m.addSource(PREVIEW, { type: 'raster', url: tilejson, tileSize: 256 })
-    m.addLayer({ id: PREVIEW, type: 'raster', source: PREVIEW, paint: { 'raster-opacity': opacityRef.current } }, 'others-fill')
+    // Over every footprint's fill, which would tint it (overlapping items' as much as its own), and
+    // under their outlines, so what else is there still shows.
+    m.addLayer({ id: PREVIEW, type: 'raster', source: PREVIEW, paint: { 'raster-opacity': opacityRef.current } }, 'line')
     return () => {
       if (m.getLayer(PREVIEW)) m.removeLayer(PREVIEW)
       if (m.getSource(PREVIEW)) m.removeSource(PREVIEW)
     }
   }, [ready, tilejson])
 
+  // The selected item, while its raster is drawn: its footprint is outlined, never filled, since a
+  // tint over the raster would hide what it shows.
+  const previewed = preview ? selected : undefined
   useEffect(() => {
     if (!ready) return
     map.current?.setFilter('selected', byId(selected))
-    map.current?.setFilter('selected-fill', byId(selected))
+    map.current?.setFilter('selected-fill', byId(previewed ? undefined : selected))
     map.current?.setFilter('dots-selected', byId(selected))
-  }, [ready, selected])
+  }, [ready, selected, previewed])
 
   useEffect(() => {
     if (!ready) return
-    map.current?.setFilter('hovered', byId(hovered))
+    map.current?.setFilter('hovered', byId(hovered === previewed ? undefined : hovered))
     map.current?.setFilter('dots-hovered', byId(hovered))
-  }, [ready, hovered])
+  }, [ready, hovered, previewed])
 
   useEffect(() => {
     if (ready && fit) map.current?.fitBounds(bounds(fit.bbox), { padding: 80, maxZoom: 14, duration: 600 })

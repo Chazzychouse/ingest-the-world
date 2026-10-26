@@ -36,6 +36,7 @@ Development credentials only, defined in [`infra/keycloak/ingest-realm.json`](in
 |---------|-----|
 | Web (nginx, built SPA) | http://localhost:8081 |
 | API (OpenAPI docs at `/docs`) | http://localhost:8000 |
+| Tiler (raster previews, under a token the API mints) | http://localhost:8001 |
 | Keycloak (admin / admin) | http://localhost:8080 |
 | Postgres + PostGIS + pgvector | `postgresql://ingest:ingest@localhost:5432/ingest` |
 | Azurite (Blob emulator) | http://localhost:10000 |
@@ -105,3 +106,14 @@ ING-10). Cataloged files are STAC Items, searchable by text, kind, collection, t
 with complete keyset paging (SRCH-1, SRCH-2), and shown on a map. The Upload tab lists your
 uploads from the API (`GET /uploads`), says where each is in the pipeline, explains every
 rejection, and resumes an unfinished one from any browser.
+
+**M2 — geospatial value**: search by when data was captured (read from each file's header) as
+well as when it was uploaded, and footprints for GeoTIFF/COG, LAS/LAZ, GeoParquet, GeoPackage,
+Shapefile and GeoJSON (ING-6). A separate derive stage, fed through an outbox, makes a COG and
+a thumbnail of each raster and a GeoParquet copy of each vector file in a sandbox; derivatives are rebuildable, never change an outcome,
+and exist once per role and recipe (ING-7, ING-11, ING-12). Every byte path asks the same
+access question (ACC-9): downloads are audited redirects to a read URL for one blob that expires
+within 15 minutes (ACC-8); the map draws every match from footprint vector tiles and previews a
+raster from our own tiler, each under an audited session (ACC-5). Uploads report live over
+server-sent events until their derivatives are ready (ING-13). The plan, and where each slice
+departed from it, is [`docs/plans/m2.md`](docs/plans/m2.md).

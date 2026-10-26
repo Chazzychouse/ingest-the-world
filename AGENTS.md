@@ -83,7 +83,8 @@ api/ingest_api/
                  recipe.py (what a recipe is), recipes/ (one per kind and role); and for both:
                  jobs.py (their store), runner.py (queue -> settle, dead-letter sweep),
                  selfcheck.py (`--check`), __main__.py (composition; `--derive` for the stage)
-api/typings/     local type stubs for the parts of untyped libraries we use (rasterio, pyarrow)
+api/typings/     local type stubs for the parts of untyped libraries we use (rasterio, pyarrow,
+                 pyogrio)
 api/migrations/  numbered SQL, never edited once merged; add a new file instead
 ```
 

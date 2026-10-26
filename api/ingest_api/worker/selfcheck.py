@@ -3,7 +3,8 @@
 Slice 4 shipped an image whose GDAL couldn't load (a missing system library), which only a
 live upload revealed. This writes a tiny GeoTIFF with GDAL and a one-row Parquet file with
 Arrow, extracts both through the process sandbox, as the worker would, and renders every recipe
-from the GeoTIFF through the render sandbox, as the derive stage would. It touches no database,
+through the render sandbox, as the derive stage would: the raster ones from the GeoTIFF, the
+vector ones from a one-point GeoJSON (read by pyogrio's own GDAL). It touches no database,
 storage or queue, so CI can run it on a freshly built image.
 """
 
@@ -21,14 +22,23 @@ import rasterio
 from rasterio.transform import from_origin
 
 from ingest_api.adapters.process_sandbox import Limits, ProcessRenderer, ProcessSandbox
+from ingest_api.settings import Settings
 from ingest_api.worker.classify import Media
 from ingest_api.worker.extract import Budget, extract
 from ingest_api.worker.formats import READERS
-from ingest_api.worker.recipe import Unrenderable
-from ingest_api.worker.recipes import RECIPES
+from ingest_api.worker.recipe import Recipe, Unrenderable
+from ingest_api.worker.recipes import RASTER, VECTOR
 
 log = logging.getLogger("ingest.worker")
-LIMITS = Limits(timeout_seconds=30.0, memory_bytes=1024 * 1024 * 1024)
+MIB = 1024 * 1024
+TIMEOUT_SECONDS = 30.0
+# The worker's own default limits: they cover the whole address space, GDAL and Arrow included.
+EXTRACT_LIMITS = Limits(TIMEOUT_SECONDS, Settings.model_fields["extract_memory_mib"].default * MIB)
+RENDER_LIMITS = Limits(TIMEOUT_SECONDS, Settings.model_fields["derive_memory_mib"].default * MIB)
+GEOJSON = (
+    b'{"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {},'
+    b' "geometry": {"type": "Point", "coordinates": [-105, 40]}}]}'
+)
 MAX_RENDER_BYTES = 64 * 1024 * 1024
 
 
@@ -60,7 +70,7 @@ def _slice(data: bytes, offset: int, length: int) -> bytes:
 
 
 def _extracts(geotiff: bytes) -> bool:
-    sandbox = ProcessSandbox(LIMITS)
+    sandbox = ProcessSandbox(EXTRACT_LIMITS)
     ok = True
     for media, data in ((Media.TIFF, geotiff), (Media.PARQUET, _parquet())):
         read = partial(_slice, data)
@@ -72,13 +82,15 @@ def _extracts(geotiff: bytes) -> bool:
 
 
 def _renders(geotiff: bytes) -> bool:
-    renderer = ProcessRenderer(LIMITS, max_file_bytes=MAX_RENDER_BYTES)
+    renderer = ProcessRenderer(RENDER_LIMITS, max_file_bytes=MAX_RENDER_BYTES)
+    originals: list[tuple[Recipe, bytes]] = [(r, geotiff) for r in RASTER]
+    originals += [(r, GEOJSON) for r in VECTOR]
     ok = True
     with tempfile.TemporaryDirectory() as directory:
-        original = Path(directory) / "original"
-        original.write_bytes(geotiff)
-        for recipe in RECIPES:
+        for recipe, data in originals:
             scratch = Path(tempfile.mkdtemp(dir=directory))
+            original = scratch.with_name(f"{scratch.name}-original")
+            original.write_bytes(data)
             try:
                 size = renderer.render(recipe, original, scratch).stat().st_size
             except Unrenderable as exc:

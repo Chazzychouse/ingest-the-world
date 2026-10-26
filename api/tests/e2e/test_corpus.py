@@ -7,7 +7,10 @@ Each run makes its own collections (as alice), so reruns never meet an earlier r
 and uploads as carol, a Contributor granted write on them. The outcome is read through the API
 as the web app will, and so is the item, which must also be found by searching for it (by its
 footprint, where the manifest gives one) and download, through the link the API signs, as the
-bytes uploaded. Expectations live only in the manifest.
+bytes uploaded. Once its derivatives settle it must have exactly those the manifest names, none
+failed, each COG among them must pass rio-cogeo's validator, and each GeoParquet the GeoParquet
+project's schema. Expectations live only in the
+manifest.
 """
 
 import hashlib
@@ -15,13 +18,16 @@ import os
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+from rio_cogeo.cogeo import cog_validate
 
 from ingest_api.items.routes import SHA256_MULTIHASH
 from tests.e2e.stack import API_URL, TIMEOUT, Api, sign_in, upload_blocks
+from tests.geoparquet import valid_geoparquet
 from tests.invariants import check
 from tools import samples
 
@@ -33,6 +39,7 @@ POLL_SECONDS = 1.0
 BASE_WAIT_SECONDS = 60.0
 WAIT_BYTES_PER_SECOND = 20 * 1024 * 1024
 WRONG_SHA256 = "0" * 64
+PARQUET = "application/vnd.apache.parquet"
 
 
 @pytest.fixture(scope="module")
@@ -125,20 +132,47 @@ def _check_item(label: str, item: dict[str, Any], sample: samples.Sample, e: sam
         )
 
 
-def _downloaded_sha256(api: Api, upload_id: str) -> str:
-    """The SHA-256 of the item's original, streamed from storage through its signed link."""
-    url = api.get(f"/items/{upload_id}/assets/original/url")["url"]
-    digest = hashlib.sha256()
+def _download(api: Api, upload_id: str, role: str, *, into: Callable[[bytes], object]) -> None:
+    """Streams one of the item's files from storage, through the link the API signs for it."""
+    url = api.get(f"/items/{upload_id}/assets/{role}/url")["url"]
     with httpx.stream("GET", url, timeout=TIMEOUT) as response:
         response.raise_for_status()
         for chunk in response.iter_bytes():
-            digest.update(chunk)
+            into(chunk)
+
+
+def _downloaded_sha256(api: Api, upload_id: str) -> str:
+    """The SHA-256 of the item's original, as downloaded."""
+    digest = hashlib.sha256()
+    _download(api, upload_id, "original", into=digest.update)
     return digest.hexdigest()
 
 
-@pytest.mark.invariant("ING-2", "ING-4", "ING-5", "ING-6", "ING-13", "SRCH-1", "ACC-9")
+def _check_derivatives(api: Api, label: str, upload_id: str, e: samples.Expect, scratch: Path):
+    """The item's derivatives, once settled, against the manifest's; each COG validated."""
+    stac = api.get(f"/items/{upload_id}")
+    made = {role: a["type"] for role, a in stac["assets"].items() if role != "original"}
+    failed = stac["properties"]["ingest:derivative_failures"]
+    assert failed == {}, f"{label}: derivatives failed: {failed}"
+    if e.derivatives is None:
+        return
+    check("ING-12", made == e.derivatives, f"{label}: derivatives {made}, wanted {e.derivatives}")
+    for role, asset in stac["assets"].items():
+        if role == "original":
+            continue
+        path = scratch / f"{upload_id}-{role}"
+        with path.open("wb") as out:
+            _download(api, upload_id, role, into=out.write)
+        if "cloud-optimized" in asset["roles"]:
+            valid, errors, _ = cog_validate(path, quiet=True)
+            assert valid, f"{label}: {role} is not a valid COG: {errors}"
+        if asset["type"] == PARQUET:
+            assert valid_geoparquet(path).num_rows > 0, f"{label}: {role} has no features"
+
+
+@pytest.mark.invariant("ING-2", "ING-4", "ING-5", "ING-6", "ING-12", "ING-13", "SRCH-1", "ACC-9")
 @pytest.mark.parametrize("sample", CORPUS, ids=[s.name for s in CORPUS])
-def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collection):
+def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collection, tmp_path):
     if not sample.path.exists():
         pytest.fail(f"{sample.path} is missing: run `make samples`")
     api = Api(http, sign_in("carol"))
@@ -175,3 +209,4 @@ def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collectio
             check("ING-13", stage == "ready", f"{label}: derivatives ended {stage}")
             derivatives = api.get(f"/items/{upload_id}")["properties"]["ingest:derivatives"]
             check("ING-13", derivatives == "ready", f"{label}: the item says {derivatives}")
+            _check_derivatives(api, label, upload_id, expect, tmp_path)

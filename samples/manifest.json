@@ -1,5 +1,5 @@
 {
-  "about": "The sample corpus for `make samples` and `make e2e`. Each sample is downloaded from the cited primary source, generated, or derived from another sample, and kept only if its sha256 matches. `uploads` says how the e2e suite uploads it (filename, which of the run's collections, declared checksum) and what each upload must become; fields left out are not checked. Mesh extents are POSITION accessor bounds in model space; footprints are WGS84 west, south, east, north.",
+  "about": "The sample corpus for `make samples` and `make e2e`. Each sample is downloaded from the cited primary source, generated, or derived from another sample, and kept only if its sha256 matches. `uploads` says how the e2e suite uploads it (filename, which of the run's collections, declared checksum) and what each upload must become; fields left out are not checked. Mesh extents are POSITION accessor bounds in model space; footprints are WGS84 west, south, east, north. `derivatives` maps each derivative a cataloged upload must end with, and no other, to its media type, by the spec's derive rules (01-spec.md §4, step 7), not by running them: a raster whose header reads gets a PNG thumbnail, and a COG too when it has a CRS and isn't one already; a GeoPackage, Shapefile or GeoJSON whose header reads, or was too big to read within the budget, gets a GeoParquet copy; other kinds get none yet. Every COG made is checked by rio-cogeo, and every GeoParquet against the GeoParquet project's schema, not by our recipes.",
   "samples": [
     {
       "name": "S2A_10SEG_20230618_0_L2A_TCI.tif",
@@ -34,6 +34,9 @@
                 10980
               ],
               "raster:cloud_optimized": true
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
             }
           }
         }
@@ -66,6 +69,10 @@
                 20
               ],
               "raster:cloud_optimized": false
+            },
+            "derivatives": {
+              "cog": "image/tiff; application=geotiff; profile=cloud-optimized",
+              "thumbnail": "image/png"
             }
           }
         },
@@ -104,6 +111,9 @@
                 2048
               ],
               "raster:driver": "PNG"
+            },
+            "derivatives": {
+              "thumbnail": "image/png"
             }
           }
         },
@@ -114,7 +124,10 @@
             "outcome": "cataloged",
             "kind": "raster",
             "media_type": "image/png",
-            "extraction": "extracted"
+            "extraction": "extracted",
+            "derivatives": {
+              "thumbnail": "image/png"
+            }
           }
         }
       ]
@@ -153,7 +166,8 @@
               "datetime": null,
               "start_datetime": "2021-04-23T00:00:00Z",
               "end_datetime": "2021-04-23T23:59:59.999999Z"
-            }
+            },
+            "derivatives": {}
           }
         }
       ]
@@ -184,7 +198,8 @@
               "las:point_format": 7,
               "pc:encoding": "copc",
               "start_datetime": null
-            }
+            },
+            "derivatives": {}
           }
         }
       ]
@@ -226,7 +241,8 @@
                   0.5
                 ]
               }
-            }
+            },
+            "derivatives": {}
           }
         },
         {
@@ -241,7 +257,8 @@
           "expect": {
             "outcome": "cataloged",
             "kind": "mesh",
-            "media_type": "model/gltf-binary"
+            "media_type": "model/gltf-binary",
+            "derivatives": {}
           }
         }
       ]
@@ -283,7 +300,8 @@
                   66.62486267089844
                 ]
               }
-            }
+            },
+            "derivatives": {}
           }
         }
       ]
@@ -325,7 +343,8 @@
                   0.0544500239
                 ]
               }
-            }
+            },
+            "derivatives": {}
           }
         }
       ]
@@ -370,7 +389,8 @@
                   0.3527080714702606
                 ]
               }
-            }
+            },
+            "derivatives": {}
           }
         }
       ]
@@ -404,7 +424,8 @@
             "properties": {
               "table:row_count": 5,
               "geoparquet:geometry_column": "geometry"
-            }
+            },
+            "derivatives": {}
           }
         }
       ]
@@ -431,7 +452,8 @@
             "properties": {
               "table:row_count": 8,
               "table:column_count": 11
-            }
+            },
+            "derivatives": {}
           }
         }
       ]
@@ -454,7 +476,8 @@
             "outcome": "cataloged",
             "kind": "tabular",
             "media_type": "text/csv",
-            "extraction": "unsupported"
+            "extraction": "unsupported",
+            "derivatives": {}
           }
         }
       ]
@@ -492,7 +515,8 @@
                   26.37746238708496
                 ]
               }
-            }
+            },
+            "derivatives": {}
           }
         }
       ]
@@ -530,7 +554,8 @@
                   26.37746238708496
                 ]
               }
-            }
+            },
+            "derivatives": {}
           }
         }
       ]
@@ -553,7 +578,8 @@
             "outcome": "cataloged",
             "kind": "tabular",
             "media_type": "text/csv",
-            "extraction": "unsupported"
+            "extraction": "unsupported",
+            "derivatives": {}
           }
         }
       ]
@@ -576,7 +602,8 @@
             "outcome": "cataloged",
             "kind": "tabular",
             "media_type": "application/jsonl",
-            "extraction": "unsupported"
+            "extraction": "unsupported",
+            "derivatives": {}
           }
         }
       ]
@@ -614,6 +641,9 @@
             ],
             "properties": {
               "geojson:features": 2000
+            },
+            "derivatives": {
+              "geoparquet": "application/vnd.apache.parquet"
             }
           }
         }
@@ -642,7 +672,10 @@
             "outcome": "cataloged",
             "kind": "vector",
             "media_type": "application/geo+json",
-            "extraction": "over-budget"
+            "extraction": "over-budget",
+            "derivatives": {
+              "geoparquet": "application/vnd.apache.parquet"
+            }
           }
         }
       ]
@@ -679,6 +712,9 @@
                 477000.0,
                 4426000.0
               ]
+            },
+            "derivatives": {
+              "geoparquet": "application/vnd.apache.parquet"
             }
           }
         }
@@ -719,7 +755,8 @@
             "outcome": "cataloged",
             "kind": "raster",
             "media_type": "image/tiff",
-            "extraction": "unreadable"
+            "extraction": "unreadable",
+            "derivatives": {}
           }
         }
       ]
