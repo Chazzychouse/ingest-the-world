@@ -372,11 +372,12 @@ class SearchMachine(RuleBasedStateMachine):
         expected = self._expected(actor, query)
         response = self._call(actor, "POST", "/tiles/footprints", json=query.body())
         check("SRCH-1", response.status_code == 201, f"{query.body()}: {response.text}")
-        markings = [self.items[i].marking for i in expected]
-        highest = max(markings, key=self.world.markings.__getitem__, default=None)
-        self._expect_audit(AuditAction.FOOTPRINTS_VIEW, "allowed", highest)
-        tile = self._call(actor, "GET", response.json()["tiles"][0].format(z=0, x=0, y=0))
-        check("ACC-5", self.audit.since() == [], "a footprint tile was audited")
+        # Not `_call`: the view's audit event and the tile's (there must be none) are read
+        # together, after what was drawn. The event's marking follows what the view matched, so
+        # a wrong match is reported as the SRCH-1 it is before the marking it skews.
+        tile = self.client.get(
+            response.json()["tiles"][0].format(z=0, x=0, y=0), headers=self._headers(actor)
+        )
         drawn = {feature["id"] for feature in drawn_footprints(tile.content)}
         unreadable = {
             i for i in drawn if i not in self.items or not self._readable(actor, self.items[i])
@@ -385,6 +386,9 @@ class SearchMachine(RuleBasedStateMachine):
         check("SRCH-1", drawn <= expected, f"drew non-matches {drawn - expected} for {query}")
         placed = {i for i in expected if self.items[i].item.bbox is not None}
         check("SRCH-1", drawn == placed, f"didn't draw {placed - drawn} for {query}")
+        markings = [self.items[i].marking for i in expected]
+        highest = max(markings, key=self.world.markings.__getitem__, default=None)
+        self._expect_audit(AuditAction.FOOTPRINTS_VIEW, "allowed", highest)  # and none per tile
 
 
 @pytest.mark.invariant("ACC-1", "ACC-2", "ACC-5", "ACC-9", "SRCH-1", "SRCH-2")

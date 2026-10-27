@@ -20,6 +20,7 @@ import json
 import random
 import struct
 import sys
+import time
 import zlib
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -37,6 +38,10 @@ CACHE = REPO / "samples" / ".cache"
 CHUNK = 1024 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 120.0
 DOWNLOAD_ATTEMPTS = 3
+# Statuses a source sends when it is busy, not when the file is gone; worth waiting out.
+RETRY_STATUSES = frozenset({429, 502, 503, 504})
+RETRY_WAIT_SECONDS = 30.0
+RETRY_WAIT_MAX_SECONDS = 120.0
 
 type Json = dict[str, Any]
 SampleSet = Literal["default", "large", "demo"]
@@ -407,7 +412,8 @@ def sha256_of(path: Path) -> str:
 
 
 def _download(sample: Sample, url: str, out: BinaryIO) -> None:
-    """The file at `url`, tried up to DOWNLOAD_ATTEMPTS times: some sources (USGS's) stall."""
+    """The file at `url`, tried up to DOWNLOAD_ATTEMPTS times: some sources (USGS's) stall, or
+    turn away a burst of requests with 429."""
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         out.seek(0)
         out.truncate()
@@ -418,6 +424,21 @@ def _download(sample: Sample, url: str, out: BinaryIO) -> None:
             if attempt == DOWNLOAD_ATTEMPTS:
                 raise
             print(f"retry    {sample.name}: attempt {attempt} stalled", flush=True)
+        except httpx.HTTPStatusError as busy:
+            if attempt == DOWNLOAD_ATTEMPTS or busy.response.status_code not in RETRY_STATUSES:
+                raise
+            wait = _retry_after(busy.response)
+            print(
+                f"retry    {sample.name}: {busy.response.status_code}, in {wait:.0f} s", flush=True
+            )
+            time.sleep(wait)
+
+
+def _retry_after(response: httpx.Response) -> float:
+    """The wait a busy source asks for in seconds, within RETRY_WAIT_MAX_SECONDS."""
+    asked = response.headers.get("retry-after", "")
+    wait = float(asked) if asked.isdigit() else RETRY_WAIT_SECONDS
+    return min(wait, RETRY_WAIT_MAX_SECONDS)
 
 
 def _download_once(sample: Sample, url: str, out: BinaryIO) -> None:
