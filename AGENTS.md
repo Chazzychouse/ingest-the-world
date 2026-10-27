@@ -85,7 +85,8 @@ api/ingest_api/
                  extract.py (budgeted header reads), formats/ (one reader per format family),
                  outbox.py (derive requests, written with the outcome and relayed to the
                  derive queue); the derive stage: derive.py (one item's derivatives),
-                 recipe.py (what a recipe is), recipes/ (one per kind and role); and for both:
+                 recipe.py (what a recipe is), recipes/ (one per kind and role), meshes/ (the
+                 3D Tiles tiler: GLB reader, clustering, texture crops, `.3tz` writer); and for both:
                  jobs.py (their store), runner.py (queue -> settle, dead-letter sweep),
                  selfcheck.py (`--check`), __main__.py (composition; `--derive` for the stage)
 api/typings/     local type stubs for the parts of untyped libraries we use (rasterio, pyarrow,
@@ -220,6 +221,9 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
 - `api/tests/strategies.py`: the shared Hypothesis strategies (actors, grantees, names).
 - `api/tests/items.py`: catalogs items straight through the pipeline's stores, for read and
   search tests that don't need bytes (or, given `content`, derive tests that do).
+- `api/tests/meshes.py`: random models (positions on a 1/8 grid, so tiles compare exactly) and
+  tilesets read back; `test_tiler.py` checks ING-14 over them, and Cesium's 3d-tiles-validator
+  (`api/tools/validators`, installed by `make services`) checks a textured one.
 - `api/tests/recipes.py`: small recipes, each with one trait the derive stage must handle;
   `test_raster_recipes.py` runs the real ones, and `test_sandbox.py` misbehaving ones.
 - `api/tests/fakes.py`: seeded, fault-injecting implementations of the ports, and

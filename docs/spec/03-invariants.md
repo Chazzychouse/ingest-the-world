@@ -253,13 +253,14 @@ only derivatives it lacks: a role whose newest recipe failed but an older one ma
 
 ### ING-14 Tiles are faithful
 
-Status: planned (M3)
+Status: enforced
 
 A mesh's 3D Tiles lose nothing and claim no more than they are: the leaves hold every triangle of
-the mesh once (none lost, none repeated, vertices exact to float32), every tile's content lies
-within its bounding volume, geometric error falls strictly from each tile to its children down to
-zero at the leaves, and every vertex of a coarser tile lies within that tile's geometric error of
-a vertex it stands for.
+the mesh once (none lost, none repeated, vertices as exact as float32 allows); every tile has a
+bounding volume holding its content and its children's volumes; geometric error falls strictly
+from each tile to its children, down to zero at the leaves; and every vertex of a coarser tile
+lies within that tile's geometric error of a vertex of the mesh. Checked over random models by
+the tiler's property tests, and by Cesium's 3d-tiles-validator over a textured one.
 
 ## Lifecycle
 

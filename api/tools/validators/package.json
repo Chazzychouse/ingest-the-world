@@ -1,0 +1,8 @@
+{
+  "name": "ingest-validators",
+  "private": true,
+  "description": "Cesium's 3D Tiles validator (which runs Khronos's glTF-Validator on every tile), for the tests that check our tilesets: `make validators` installs it.",
+  "devDependencies": {
+    "3d-tiles-validator": "0.6.1"
+  }
+}

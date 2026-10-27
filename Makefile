@@ -32,7 +32,14 @@ logs:
 # The tests' own Postgres and Azurite (compose.test.yaml): memory-backed, apart from the stack's.
 TEST_SERVICES = docker compose -f compose.test.yaml up -d --wait
 
-services:  # the backing services the tests run against
+# Cesium's 3D Tiles validator (and Khronos's glTF-Validator inside it), which the tiler's tests
+# run over its tilesets; installed once, again when its lockfile changes.
+VALIDATOR = api/tools/validators/node_modules/.bin/3d-tiles-validator
+$(VALIDATOR): api/tools/validators/package-lock.json
+	cd api/tools/validators && npm ci --no-audit --no-fund
+	touch $@
+
+services: $(VALIDATOR)  # the backing services (and tools) the tests run against
 	$(TEST_SERVICES) db azurite
 	$(if $(QUEUE),docker compose up -d --wait $(QUEUE))
 	$(wait_for_queue)

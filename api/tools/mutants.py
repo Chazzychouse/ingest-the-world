@@ -64,6 +64,8 @@ BLOB_ADAPTER = "ingest_api/adapters/azure_blob.py"
 TILE_ROUTES = "ingest_api/tiles/routes.py"
 TILE_STORE = "ingest_api/tiles/store.py"
 PREVIEWS = "ingest_api/previews.py"
+TILER = "ingest_api/worker/meshes/tiler.py"
+GLTF = "ingest_api/worker/meshes/gltf.py"
 READ_GRANTED = (
     "      AND c.id IN (SELECT authz.granted_collections(subject, roles, groups, 'read'))"
 )
@@ -648,6 +650,39 @@ MUTANTS = [
         "ST_AsMVTGeom(ST_PointOnSurface(shape),",
         "ST_AsMVTGeom(NULL::geometry,",
         ("SRCH-1",),
+    ),
+    Mutant(
+        # A coarse tile declares only its own clustering's error, not what its children's had
+        # already moved: a viewer trusting it shows a surface further off than it claims.
+        "tile-error-ignores-children",
+        TILER,
+        "return clustering.cluster(merged, box[0], cell), clustering.diagonal(cell) + worst",
+        "return clustering.cluster(merged, box[0], cell), clustering.diagonal(cell)",
+        ("ING-14",),
+    ),
+    Mutant(
+        # The last chunk of a primitive's triangles, short of a whole one, is never read.
+        "partial-chunk-dropped",
+        GLTF,
+        "corners = max(0, min(count, primitive.triangles - start)) * 3",
+        "corners = count * 3 if primitive.triangles - start >= count else 0",
+        ("ING-14",),
+    ),
+    Mutant(
+        # Indices are trusted: one past the vertices reads whatever the gather finds there.
+        "mesh-index-unchecked",
+        GLTF,
+        "        if len(ids) and int(ids.max()) >= primitive.positions.count:",
+        "        if False:",
+        ("ING-8",),
+    ),
+    Mutant(
+        # A tile's box is its own content's alone: a parent's no longer holds its children.
+        "tile-box-without-children",
+        TILER,
+        "box = _union([own, *(c.box for c in children)])",
+        "box = _union([own])",
+        ("ING-14",),
     ),
     Mutant(
         # A tile on the antimeridian, half a cell past it, loses its footprint and its place on
