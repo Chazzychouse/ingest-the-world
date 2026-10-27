@@ -42,6 +42,12 @@ class Mutant:
     old: str
     new: str
     caught_by: tuple[str, ...]  # the run must fail at least one of these invariants
+    # Services its catching tests need beyond Postgres and Azurite, by the environment variable
+    # that says they're up: without them those tests skip, so the mutant is reported as not run.
+    needs: tuple[str, ...] = ()
+
+
+SERVICEBUS = "INGEST_REQUIRE_SERVICEBUS"  # the Service Bus emulator
 
 
 LIST_AUDIT = "    auditor.allowed(\n        AuditAction.COLLECTION_LIST,"
@@ -287,6 +293,7 @@ MUTANTS = [
         "        if self._renewal > 0:\n",
         "        if False:\n",
         ("ING-10",),
+        needs=(SERVICEBUS,),
     ),
     Mutant(
         "pipeline-outcome-not-audited",
@@ -760,9 +767,14 @@ def plant(mutant: Mutant, tree: Path) -> bool:
     return True
 
 
-def run(mutant: Mutant, snapshot: Path, *, full: bool) -> tuple[bool, str]:
+def run(mutant: Mutant, snapshot: Path, *, full: bool) -> tuple[bool | None, str]:
     """Applies `mutant` to a throwaway copy of `snapshot` and runs the suite there: the tests
-    declaring its invariants, or with `full` all of them."""
+    declaring its invariants, stopping at the first failure; or with `full` all of them, to the
+    end, so a catch by its own invariant counts even when another test fails first. None when
+    a service its tests need isn't up."""
+    missing = [n for n in mutant.needs if not os.environ.get(n)]
+    if missing:
+        return None, f"not run: its tests need {', '.join(missing)}"
     with tempfile.TemporaryDirectory() as tmp:
         sandbox = Path(tmp) / "repo"
         shutil.copytree(snapshot, sandbox)
@@ -775,7 +787,7 @@ def run(mutant: Mutant, snapshot: Path, *, full: bool) -> tuple[bool, str]:
                 "-m",
                 "pytest",
                 "-q",
-                "-x",
+                *([] if full else ["-x"]),
                 "-p",
                 "no:cacheprovider",
                 f"--invariants-report={report}",
@@ -808,7 +820,7 @@ def main(argv: list[str]) -> int:
     shard = next((a.split("=", 1)[1] for a in argv if a.startswith("--shard=")), "0/1")
     index, count = (int(x) for x in shard.split("/", 1))
     selected = selected[index::count]
-    survived = 0
+    survived = skipped = 0
     # Every mutant runs against the tree as it was at the start, so editing code while
     # mutants run neither breaks the run nor leaks half-made changes into it.
     with tempfile.TemporaryDirectory() as tmp, ThreadPoolExecutor(max_workers=jobs) as pool:
@@ -816,9 +828,12 @@ def main(argv: list[str]) -> int:
         shutil.copytree(REPO, snapshot, ignore=SKIP)
         results = pool.map(partial(run, snapshot=snapshot, full=full), selected)
         for mutant, (ok, message) in zip(selected, results, strict=True):  # in the list's order
-            survived += not ok
-            print(f"{'ok  ' if ok else 'FAIL'} {mutant.name:<30} {message}", flush=True)
-    print(f"\n{len(selected) - survived}/{len(selected)} mutants caught")
+            survived += ok is False
+            skipped += ok is None
+            mark = {True: "ok  ", False: "FAIL", None: "skip"}[ok]
+            print(f"{mark} {mutant.name:<30} {message}", flush=True)
+    ran = len(selected) - skipped
+    print(f"\n{ran - survived}/{ran} mutants caught" + (f", {skipped} not run" if skipped else ""))
     return 1 if survived else 0
 
 

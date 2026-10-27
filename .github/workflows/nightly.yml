@@ -63,14 +63,15 @@ jobs:
           name: canary-reports
           path: api/reports/
 
-  # Every planted bug against the whole suite, split across machines.
+  # Every planted bug against the whole suite, split across machines. Each runs the suite to the
+  # end, so a bug is counted as caught by its own invariant even if another test fails first.
   mutants:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     defaults:
       run:
         working-directory: api
@@ -82,7 +83,7 @@ jobs:
         run: docker compose -f compose.test.yaml up -d --wait db azurite
       - run: uv sync --frozen
       - name: Planted bugs
-        run: uv run python tools/mutants.py --full --shard=${{ matrix.shard }}/6
+        run: uv run python tools/mutants.py --full --shard=${{ matrix.shard }}/8
         env:
           INGEST_REQUIRE_DB: "1"
           INGEST_REQUIRE_AZURITE: "1"
