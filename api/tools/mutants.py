@@ -8,6 +8,7 @@ reason. Add a mutant whenever you add an invariant or fix a bug that tests misse
     uv run python tools/mutants.py admin      # mutants whose name contains "admin"
     uv run python tools/mutants.py --full     # each against the whole suite (nightly)
     uv run python tools/mutants.py --jobs=4   # how many mutants run at once (default: below)
+    uv run python tools/mutants.py --shard=1/4  # the second quarter of them (nightly's matrix)
 
 By default a mutant runs only the tests that declare one of its `caught_by` invariants
 (`--invariant`), since those are the tests that must catch it; that is minutes, not most of
@@ -677,17 +678,25 @@ SKIP = shutil.ignore_patterns(
 )
 
 
+def plant(mutant: Mutant, tree: Path) -> bool:
+    """Applies `mutant` to the copy of the repo at `tree`; False if its pattern isn't there
+    exactly once."""
+    path = tree / "api" / mutant.file
+    original = path.read_text()
+    if original.count(mutant.old) != 1:
+        return False
+    path.write_text(original.replace(mutant.old, mutant.new))
+    return True
+
+
 def run(mutant: Mutant, snapshot: Path, *, full: bool) -> tuple[bool, str]:
     """Applies `mutant` to a throwaway copy of `snapshot` and runs the suite there: the tests
     declaring its invariants, or with `full` all of them."""
     with tempfile.TemporaryDirectory() as tmp:
         sandbox = Path(tmp) / "repo"
         shutil.copytree(snapshot, sandbox)
-        path = sandbox / "api" / mutant.file
-        original = path.read_text()
-        if original.count(mutant.old) != 1:
+        if not plant(mutant, sandbox):
             return False, f"pattern not found exactly once in {mutant.file} (update the mutant)"
-        path.write_text(original.replace(mutant.old, mutant.new))
         report = Path(tmp) / "report.json"
         subprocess.run(
             [
@@ -724,6 +733,10 @@ def main(argv: list[str]) -> int:
     jobs = next((int(a.split("=", 1)[1]) for a in argv if a.startswith("--jobs=")), DEFAULT_JOBS)
     names = [a for a in argv if not a.startswith("--")]
     selected = [m for m in MUTANTS if not names or any(a in m.name for a in names)]
+    # --shard=i/n: every n-th mutant from the i-th, so n machines split the run between them.
+    shard = next((a.split("=", 1)[1] for a in argv if a.startswith("--shard=")), "0/1")
+    index, count = (int(x) for x in shard.split("/", 1))
+    selected = selected[index::count]
     survived = 0
     # Every mutant runs against the tree as it was at the start, so editing code while
     # mutants run neither breaks the run nor leaks half-made changes into it.
