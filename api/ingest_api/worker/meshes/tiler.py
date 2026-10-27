@@ -29,15 +29,14 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ingest_api.tilesets import Writer
-from ingest_api.worker.meshes import clustering
+from ingest_api.worker.meshes import clustering, streaming
 from ingest_api.worker.meshes.gltf import Glb, Primitive, runs
 from ingest_api.worker.meshes.model import Floats, Indices, Mesh, Part, bounds, merge
+from ingest_api.worker.meshes.streaming import Box, Vector
 from ingest_api.worker.meshes.textures import Baked, Textures
 from ingest_api.worker.meshes.writer import glb as write_glb
 from ingest_api.worker.recipe import Unrenderable
 
-type Vector = NDArray[np.float64]
-type Box = tuple[Vector, Vector]  # low and high corners, Y up
 type Cells = NDArray[np.int64]
 
 TILESET = "tileset.json"
@@ -112,7 +111,7 @@ class _Job:
     def run(self) -> Built:
         if not self.primitives:
             raise Unrenderable("the model has no triangles")
-        low, high = self._bounds()
+        low, high = streaming.bounds(self.model, self.primitives, self.limits.chunk_rows)
         triangles = sum(p.triangles for p in self.primitives)
         shape = _grid(low, high, self.limits, triangles=triangles)
         cell = np.maximum((high - low) / shape, 1e-12)
@@ -122,30 +121,15 @@ class _Job:
         self._partition(columns, leaves, shape)
         return self._build(leaves)
 
-    # -- 1. bounds -----------------------------------------------------------------------------
-
-    def _bounds(self) -> Box:
-        low, high = np.full(3, np.inf), np.full(3, -np.inf)
-        for primitive in self.primitives:
-            for world in self._positions(primitive):
-                low = np.minimum(low, world.min(axis=0))
-                high = np.maximum(high, world.max(axis=0))
-        if not (np.all(np.isfinite(low)) and np.all(np.isfinite(high))):
-            raise Unrenderable("positions that aren't finite numbers")
-        return low, high
-
-    def _positions(self, primitive: Primitive) -> Iterator[Vector]:
-        step = self.limits.chunk_rows
-        for start in range(0, primitive.positions.count, step):
-            yield _world(self.model.read(primitive.positions, start, step), primitive)
-
     # -- 2. cells and counts -------------------------------------------------------------------
 
     def _cells(self, index: int, low: Vector, cell: Vector, shape: Cells) -> Path:
         """Each vertex's flat cell index, as an int32 column in scratch."""
         path = self.scratch / f"cells-{index}.i32"
         with path.open("wb") as column:
-            for world in self._positions(self.primitives[index]):
+            for world in streaming.positions(
+                self.model, self.primitives[index], self.limits.chunk_rows
+            ):
                 grid = np.clip(((world - low) / cell).astype(np.int64), 0, shape - 1)
                 flat = np.ravel_multi_index((grid[:, 0], grid[:, 1], grid[:, 2]), _dims(shape))
                 column.write(flat.astype(np.int32).tobytes())
@@ -163,15 +147,10 @@ class _Job:
                 found[first:last] = block[unique[first:last].astype(np.int64) - low]
         return found[inverse.reshape(-1)]
 
-    def _triangles(self, primitive: Primitive) -> Iterator[Indices]:
-        step = self.limits.chunk_rows
-        for start in range(0, primitive.triangles, step):
-            yield self.model.read_indices(primitive, start, step)
-
     def _counts(self, columns: list[Path], shape: Cells) -> NDArray[np.int64]:
         counts = np.zeros(int(np.prod(shape)), np.int64)
         for primitive, column in zip(self.primitives, columns, strict=True):
-            for triangles in self._triangles(primitive):
+            for triangles in streaming.triangles(self.model, primitive, self.limits.chunk_rows):
                 cells = self._cells_of(column, triangles[:, 0])
                 counts += np.bincount(cells, minlength=counts.size)
         return counts.reshape(_dims(shape))
@@ -188,7 +167,7 @@ class _Job:
         held: dict[int, list[bytes]] = {}
         size = 0
         for p, (primitive, column) in enumerate(zip(self.primitives, columns, strict=True)):
-            for triangles in self._triangles(primitive):
+            for triangles in streaming.triangles(self.model, primitive, self.limits.chunk_rows):
                 leaf = flat[self._cells_of(column, triangles[:, 0])]
                 order = np.argsort(leaf, kind="stable")
                 rows = np.empty(len(order), ROW)
@@ -235,7 +214,7 @@ class _Job:
         ids, local = np.unique(triangles, return_inverse=True)
         ids = ids.astype(np.uint32)
         gap = self.limits.gap_rows
-        positions = _world(self.model.gather(primitive.positions, ids, gap=gap), primitive)
+        positions = streaming.world(self.model.gather(primitive.positions, ids, gap=gap), primitive)
         normals = None
         if primitive.normals is not None:
             inverse = np.linalg.inv(primitive.transform[:3, :3]).T
@@ -284,11 +263,6 @@ class _Job:
             if (found := self.textures.bake(image, part.uvs, texels=texels)) is not None:
                 baked[material] = found
         return baked
-
-
-def _world(rows: Vector, primitive: Primitive) -> Vector:
-    m = primitive.transform
-    return rows @ m[:3, :3].T + m[:3, 3]
 
 
 def _dims(shape: Cells) -> tuple[int, int, int]:

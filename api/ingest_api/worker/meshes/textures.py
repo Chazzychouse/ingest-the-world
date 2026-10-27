@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from numpy.typing import NDArray
 from rasterio._err import CPLE_BaseError
 from rasterio.enums import Resampling
 from rasterio.errors import NotGeoreferencedWarning, RasterioError
@@ -65,6 +66,25 @@ class Textures:
         remapped[:, 1] = (uvs[:, 1] * height - low[1]) / span[1]
         media = "image/png" if alpha else "image/jpeg"
         return Baked(_encode(pixels, png=alpha), media, remapped.astype(np.float32))
+
+    def sampler(self, image: int, *, pixels: int) -> Callable[[Floats], NDArray[np.float64]] | None:
+        """Image `image` at most `pixels` on a side, as a function from texture coordinates to
+        colours (0 to 1, nearest pixel, repeating); None if the model holds no such image."""
+        source = self._source(image)
+        if source is None:
+            return None
+        with _gdal(), rasterio.open(str(source)) as dataset:
+            scale = min(1.0, pixels / max(dataset.width, dataset.height))
+            shape = (3, max(1, round(dataset.height * scale)), max(1, round(dataset.width * scale)))
+            rgb = dataset.read([1, 2, 3], out_shape=shape, resampling=Resampling.average) / 255.0
+        _, height, width = rgb.shape
+
+        def sample(uvs: Floats) -> NDArray[np.float64]:
+            x = np.floor(np.mod(uvs[:, 0], 1.0) * width).astype(np.int64).clip(0, width - 1)
+            y = np.floor(np.mod(uvs[:, 1], 1.0) * height).astype(np.int64).clip(0, height - 1)
+            return rgb[:, y, x].T
+
+        return sample
 
     def _source(self, image: int) -> Path | None:
         if image not in self._prepared:
@@ -150,3 +170,8 @@ def _gdal() -> Generator[None]:
             yield
     except (RasterioError, CPLE_BaseError) as exc:
         raise Unrenderable(f"a texture: {exc}") from exc
+
+
+def png(pixels: NDArray[np.uint8]) -> bytes:
+    """`pixels` (bands, rows, columns) as a PNG."""
+    return _encode(pixels, png=True)

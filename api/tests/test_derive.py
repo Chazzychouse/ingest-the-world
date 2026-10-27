@@ -574,9 +574,17 @@ def test_a_glb_gets_a_tileset_the_catalog_records(db, run, renderer, fresh_colle
 
     jobs = "SELECT reason, last_error FROM ingest.derive_jobs WHERE item_id = %s"
     errors = db.execute(jobs, (mesh.id,))
-    check("ING-12", outcomes == {"tileset/v1": "derived"}, f"{outcomes}: {errors.fetchall()}")
-    [(role, _, media, name, size, _)] = _assets(db, mesh.id)
-    assert (role, media, len(store.content(DERIVED, name))) == ("tileset", "application/zip", size)
+    wanted = {"tileset/v1": "derived", "proxy/v1": "derived", "thumbnail/v1": "derived"}
+    check("ING-12", outcomes == wanted, f"{outcomes}: {errors.fetchall()}")
+    built = {
+        role: (media, len(store.content(DERIVED, name)) == size)
+        for role, _, media, name, size, _ in _assets(db, mesh.id)
+    }
+    assert built == {
+        "tileset": ("application/zip", True),
+        "proxy": ("model/gltf-binary", True),
+        "thumbnail": ("image/png", True),
+    }
 
 
 def _slice(data: bytes, offset: int, length: int) -> bytes:

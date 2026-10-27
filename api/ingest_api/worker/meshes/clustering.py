@@ -28,13 +28,16 @@ def diagonal(cell: float) -> float:
     return cell * math.sqrt(3)
 
 
-def cluster(mesh: Mesh, origin: NDArray[np.float64], cell: float) -> dict[int, Part]:
-    """`mesh` simplified on a grid of cubes of side `cell` whose corner is at `origin`."""
-    return {material: _part(part, origin, cell) for material, part in mesh.items()}
+def cluster(
+    mesh: Mesh, origin: NDArray[np.float64], cell: float, *, uv_bands: int = UV_BANDS
+) -> dict[int, Part]:
+    """`mesh` simplified on a grid of cubes of side `cell` whose corner is at `origin`, texture
+    coordinates kept apart in `uv_bands` bands across the texture."""
+    return {material: _part(part, origin, cell, uv_bands) for material, part in mesh.items()}
 
 
-def _part(part: Part, origin: NDArray[np.float64], cell: float) -> Part:
-    keys = _keys(part, origin, cell)
+def _part(part: Part, origin: NDArray[np.float64], cell: float, uv_bands: int) -> Part:
+    keys = _keys(part, origin, cell, uv_bands)
     _, first, members = np.unique(keys, return_index=True, return_inverse=True)
     clusters = len(first)
     triangles = _surviving(members.reshape(-1)[part.triangles].astype(np.uint32))
@@ -53,13 +56,13 @@ def _part(part: Part, origin: NDArray[np.float64], cell: float) -> Part:
     )
 
 
-def _keys(part: Part, origin: NDArray[np.float64], cell: float) -> NDArray[np.int64]:
+def _keys(part: Part, origin: NDArray[np.float64], cell: float, uv_bands: int) -> NDArray[np.int64]:
     q = np.floor((part.positions.astype(np.float64) - origin) / cell).astype(np.int64)
     q &= (1 << KEY_BITS) - 1
     keys = (q[:, 0] << (2 * KEY_BITS)) | (q[:, 1] << KEY_BITS) | q[:, 2]
     if part.uvs is None:
         return keys
-    bands = np.floor(part.uvs.astype(np.float64) * UV_BANDS).astype(np.int64)
+    bands = np.floor(part.uvs.astype(np.float64) * uv_bands).astype(np.int64)
     uv_key = (bands[:, 0] & 0xFFFF) << 16 | (bands[:, 1] & 0xFFFF)
     # Combined into one sortable pair: cell first, then texture band.
     return np.unique(np.stack([keys, uv_key], axis=1), axis=0, return_inverse=True)[1].reshape(-1)
