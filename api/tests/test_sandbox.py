@@ -32,9 +32,10 @@ from ingest_api.worker.extract import (
 )
 from ingest_api.worker.formats import READERS
 from ingest_api.worker.recipe import Source, Unrenderable
-from ingest_api.worker.recipes import RASTER, RECIPES, VECTOR
+from ingest_api.worker.recipes import MESH, RASTER, RECIPES, VECTOR
 from tests.fakes import INLINE_RENDERER, Faults, InlineSandbox, MemoryBlobStore
 from tests.invariants import check
+from tests.meshes import textured_model
 from tests.recipes import Digest
 from tests.test_extract import geotiff
 from tests.test_vector_recipes import uploaded_shapefile
@@ -268,9 +269,18 @@ def _shapefile(tmp_path: Path) -> bytes:
     return uploaded_shapefile(tmp_path).read_bytes()
 
 
+def _model(tmp_path: Path) -> bytes:
+    return textured_model(tmp_path / "model.glb").read_bytes()
+
+
 # Each recipe on an original of its kind: the vector one on a Shapefile uploaded alone, which it
-# links and indexes in scratch, with pyogrio's GDAL loaded beside rasterio's in the child.
-_ORIGINALS = {**dict.fromkeys(RASTER, _geotiff), **dict.fromkeys(VECTOR, _shapefile)}
+# links and indexes in scratch, with pyogrio's GDAL loaded beside rasterio's in the child; the
+# mesh one on a textured model, within the memory renders get in production.
+_ORIGINALS = {
+    **dict.fromkeys(RASTER, _geotiff),
+    **dict.fromkeys(VECTOR, _shapefile),
+    **dict.fromkeys(MESH, _model),
+}
 
 
 @pytest.mark.parametrize("recipe", RECIPES, ids=lambda r: r.role)

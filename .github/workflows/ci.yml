@@ -32,6 +32,11 @@ jobs:
           for i in $(seq 60); do curl -sf localhost:5300/health && exit 0; sleep 2; done
           docker compose logs servicebus; exit 1
       - run: uv sync --frozen
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Cesium's 3D Tiles validator, which the tiler's tests run
+        run: npm ci --prefix tools/validators --no-audit --no-fund
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pyright
@@ -45,6 +50,7 @@ jobs:
           INGEST_REQUIRE_DB: "1"
           INGEST_REQUIRE_AZURITE: "1"
           INGEST_REQUIRE_SERVICEBUS: ${{ vars.ACCEPT_EULA == 'Y' && '1' || '' }}
+          INGEST_REQUIRE_VALIDATORS: "1"
           INGEST_HYPOTHESIS_PROFILE: ci
       - name: Upload invariant report
         if: always()

@@ -4,10 +4,11 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from ingest_api import wiring
+from ingest_api import previews, tilesets, wiring
 from ingest_api.ports import BlobNotFound, BlobStore, Clock, StorageError, SystemClock
 from ingest_api.settings import Settings, get_settings
 from ingest_api.tiler import raster, routes
+from ingest_api.tiler.scenes import Archives
 
 
 class NoPreviewKey(Exception):
@@ -24,10 +25,12 @@ def create_app(
     if settings.preview_key is None:
         raise NoPreviewKey("set INGEST_PREVIEW_KEY, the key the API signs preview tokens with")
     app = FastAPI(title="Ingest the World tiler", version="0.1.0")
+    blobs = blobs or wiring.blob_reader(settings)
     app.state.runtime = routes.Runtime(
         key=settings.preview_key.get_secret_value(),
-        blobs=blobs or wiring.blob_reader(settings),
+        blobs=blobs,
         clock=clock or SystemClock(),
+        archives=Archives(blobs),
     )
     if settings.cors_origins:
         app.add_middleware(
@@ -38,16 +41,23 @@ def create_app(
         )
 
     @app.exception_handler(BlobNotFound)
-    async def gone(_: Request, __: BlobNotFound) -> JSONResponse:
-        # The token's COG was replaced or removed since it was minted: nothing to preview.
-        return JSONResponse(
-            {"detail": routes.PREVIEW_NOT_FOUND}, status_code=status.HTTP_404_NOT_FOUND
-        )
+    async def gone(request: Request, __: BlobNotFound) -> JSONResponse:
+        # The token's blob was replaced or removed since it was minted: nothing to show.
+        scene = request.url.path.startswith(previews.SCENES_PATH)
+        detail = routes.SCENE_NOT_FOUND if scene else routes.PREVIEW_NOT_FOUND
+        return JSONResponse({"detail": detail}, status_code=status.HTTP_404_NOT_FOUND)
 
     @app.exception_handler(raster.Undrawable)
     async def undrawable(_: Request, exc: raster.Undrawable) -> JSONResponse:
         return JSONResponse(
             {"detail": f"can't draw this: {exc}"},
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    @app.exception_handler(tilesets.Malformed)
+    async def unreadable(_: Request, exc: tilesets.Malformed) -> JSONResponse:
+        return JSONResponse(
+            {"detail": f"can't read this scene: {exc}"},
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
 
@@ -60,4 +70,5 @@ def create_app(
         )
 
     app.include_router(routes.router)
+    app.include_router(routes.scenes_router)
     return app

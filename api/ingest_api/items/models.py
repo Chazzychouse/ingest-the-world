@@ -226,6 +226,16 @@ class PreviewSession(ApiModel):
     expires_at: dt.datetime
 
 
+class SceneSession(ApiModel):
+    """A scene of one mesh item: its 3D Tiles' `tileset.json` on the tiler, the token every
+    request for it and the files it names carry (as `Authorization: Bearer`), and when that token
+    stops working. A viewer past that asks again."""
+
+    tileset: str
+    token: str
+    expires_at: dt.datetime
+
+
 class DeriveReason(StrEnum):
     """Why a derive job failed."""
 

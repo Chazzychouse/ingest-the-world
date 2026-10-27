@@ -53,6 +53,9 @@
     { "sample": "ABeautifulGame.glb", "collection": "site-survey-alpha", "tags": ["mesh", "photogrammetry"] },
     { "sample": "WaterBottle.glb", "collection": "site-survey-alpha", "tags": ["mesh"] },
     { "sample": "WaterBottle_emissive.png", "collection": "site-survey-alpha", "tags": ["texture"] },
+    { "sample": "terrain.glb", "collection": "site-survey-alpha", "tags": ["mesh", "terrain", "3d-tiles"] },
+    { "sample": "box.fbx", "collection": "site-survey-alpha", "tags": ["mesh", "fbx"] },
+    { "sample": "Spider_binary.stl", "collection": "site-survey-alpha", "tags": ["mesh", "stl"] },
 
     { "sample": "readings-kits.csv", "collection": "bio-lab-readings", "tags": ["field-kits", "daily"] },
     { "sample": "readings-kits.jsonl", "collection": "bio-lab-readings", "tags": ["field-kits", "daily"] },

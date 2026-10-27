@@ -42,10 +42,11 @@ DERIVED, RAW = Container.DERIVED, Container.RAW
 # Blob metadata on a derivative: its checksum, so a retry can record a blob an earlier attempt
 # wrote without reading it back, and the original's.
 SHA256, SOURCE_SHA256 = "sha256", "source_sha256"
-# Size classes S and M (spec section 4): originals up to this size are derived here, larger ones
-# wait for M3's L class.
-MAX_SOURCE_BYTES = 2 * 1024**3
-MAX_OUTPUT_BYTES = 2 * 1024**3
+# Size classes S and M (spec section 4): originals under 5 GB are derived here, larger ones wait
+# for the L class (M4). The largest derivative is a mesh's tileset: up to about 1.6 times its
+# GLB, which is at most 4 GiB.
+MAX_SOURCE_BYTES = 5 * 1000**3
+MAX_OUTPUT_BYTES = 8 * 1024**3
 MAX_RECIPES = 32
 # The original's copy in an item's scratch directory; each recipe renders in one beside it.
 ORIGINAL = "original"

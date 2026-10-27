@@ -7,6 +7,7 @@ import random
 import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -19,15 +20,26 @@ from ingest_api.items.metadata import Metadata
 from ingest_api.items.models import DeriveReason
 from ingest_api.ports import Container, StorageError, TransientStorageError
 from ingest_api.worker import derive, outbox
+from ingest_api.worker.classify import Media
 from ingest_api.worker.derive import SHA256, Deriver, blob_name
+from ingest_api.worker.extract import Budget, extract
+from ingest_api.worker.formats import READERS
 from ingest_api.worker.recipe import Recipe, Renderer, Source
 from ingest_api.worker.recipes import RECIPES
 from ingest_api.worker.recipes.raster import Cog
 from ingest_api.worker.runner import Retry, derive_once, sweep_derive_once
 from tests.conftest import TEST_LIMITS
-from tests.fakes import INLINE_RENDERER, CrashAfter, MemoryBlobStore, SimClock, SimQueue
+from tests.fakes import (
+    INLINE_RENDERER,
+    CrashAfter,
+    InlineSandbox,
+    MemoryBlobStore,
+    SimClock,
+    SimQueue,
+)
 from tests.invariants import check
 from tests.items import Cataloged, NewItem, catalog
+from tests.meshes import textured_model
 from tests.recipes import Digest, DigestV2, Picky, Stamp
 from tests.test_raster_recipes import metadata, rgb, write_raster
 
@@ -542,3 +554,38 @@ def test_a_cog_original_gets_only_a_thumbnail(db, raster, run, renderer):
     cog = raster(store, cog=True)
 
     assert run(store, cog.id, recipes=RECIPES, renderer=renderer) == {"thumbnail/v1": "derived"}
+
+
+@pytest.mark.invariant("ING-12")
+def test_a_glb_gets_a_tileset_the_catalog_records(db, run, renderer, fresh_collection, tmp_path):
+    """The mesh recipe through the whole stage, in the sandbox and into the database: a role the
+    catalog refused would fail every mesh's tileset, and only a live upload would show it."""
+    store = MemoryBlobStore()
+    model = textured_model(tmp_path / "terrain.glb").read_bytes()
+    found = extract(
+        READERS[Media.GLB], Budget(partial(_slice, model), "m", len(model)), InlineSandbox()
+    )
+    new = NewItem(fresh_collection, "terrain.glb", NOW, kind=Kind.MESH, content=model,
+                  metadata=found.metadata, media_type=Media.GLB)  # fmt: skip
+    mesh = catalog(db, new)
+    store.put(RAW, mesh.raw_blob, model)
+
+    outcomes = run(store, mesh.id, recipes=RECIPES, renderer=renderer)
+
+    jobs = "SELECT reason, last_error FROM ingest.derive_jobs WHERE item_id = %s"
+    errors = db.execute(jobs, (mesh.id,))
+    wanted = {"tileset/v1": "derived", "proxy/v1": "derived", "thumbnail/v1": "derived"}
+    check("ING-12", outcomes == wanted, f"{outcomes}: {errors.fetchall()}")
+    built = {
+        role: (media, len(store.content(DERIVED, name)) == size)
+        for role, _, media, name, size, _ in _assets(db, mesh.id)
+    }
+    assert built == {
+        "tileset": ("application/zip", True),
+        "proxy": ("model/gltf-binary", True),
+        "thumbnail": ("image/png", True),
+    }
+
+
+def _slice(data: bytes, offset: int, length: int) -> bytes:
+    return data[offset : offset + length]

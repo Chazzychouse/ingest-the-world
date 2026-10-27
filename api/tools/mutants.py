@@ -42,6 +42,12 @@ class Mutant:
     old: str
     new: str
     caught_by: tuple[str, ...]  # the run must fail at least one of these invariants
+    # Services its catching tests need beyond Postgres and Azurite, by the environment variable
+    # that says they're up: without them those tests skip, so the mutant is reported as not run.
+    needs: tuple[str, ...] = ()
+
+
+SERVICEBUS = "INGEST_REQUIRE_SERVICEBUS"  # the Service Bus emulator
 
 
 LIST_AUDIT = "    auditor.allowed(\n        AuditAction.COLLECTION_LIST,"
@@ -65,6 +71,8 @@ BLOB_ADAPTER = "ingest_api/adapters/azure_blob.py"
 TILE_ROUTES = "ingest_api/tiles/routes.py"
 TILE_STORE = "ingest_api/tiles/store.py"
 PREVIEWS = "ingest_api/previews.py"
+TILER = "ingest_api/worker/meshes/tiler.py"
+GLTF = "ingest_api/worker/meshes/gltf.py"
 READ_GRANTED = (
     "      AND c.id IN (SELECT authz.granted_collections(subject, roles, groups, 'read'))"
 )
@@ -285,6 +293,7 @@ MUTANTS = [
         "        if self._renewal > 0:\n",
         "        if False:\n",
         ("ING-10",),
+        needs=(SERVICEBUS,),
     ),
     Mutant(
         "pipeline-outcome-not-audited",
@@ -584,10 +593,11 @@ MUTANTS = [
         ("ACC-9",),
     ),
     Mutant(
+        # Opening a preview or a scene goes unaudited: both share the one place that audits it.
         "preview-unaudited",
         ITEM_ROUTES,
-        "source.name, expires_at)\n    auditor.allowed(",
-        "source.name, expires_at)\n    (lambda *_, **__: None)(",
+        "blob.name, expires_at)\n    auditor.allowed(",
+        "blob.name, expires_at)\n    (lambda *_, **__: None)(",
         ("ACC-5",),
     ),
     Mutant(
@@ -651,6 +661,74 @@ MUTANTS = [
         ("SRCH-1",),
     ),
     Mutant(
+        # The scene routes take any token the tiler signed: a preview's opens a scene.
+        "scene-takes-a-preview-token",
+        "ingest_api/tiler/routes.py",
+        "token, runtime.key, item_id=item_id, now=now, audience=previews.SCENE_AUDIENCE",
+        "token, runtime.key, item_id=item_id, now=now",
+        ("ACC-9",),
+    ),
+    Mutant(
+        # A scene opens for an item whatever its derivatives: the token names a blob that isn't
+        # its tileset (here its original), which the tiler would serve as one.
+        "scene-of-the-original",
+        ITEM_ROUTES,
+        "    return _blob(conn, row, TILESET_ROLE)",
+        "    return _blob(conn, row, ORIGINAL)",
+        ("ACC-9",),
+    ),
+    Mutant(
+        # A role the catalog's rule refuses (it must start with a letter): every mesh's tileset
+        # fails to record. Found before it shipped, by the first test that recorded one.
+        "tileset-role-the-catalog-refuses",
+        "ingest_api/items/metadata.py",
+        'TILESET_ROLE = "tileset"',
+        'TILESET_ROLE = "3dtiles"',
+        ("ING-12",),
+    ),
+    Mutant(
+        # Normals written as clustering left them: opposite ones averaged to zero, which glTF
+        # forbids (found by the corpus's chess set).
+        "zero-normals-written",
+        "ingest_api/worker/meshes/writer.py",
+        'attributes["NORMAL"] = doc.accessor(_unit(part.normals), target=ARRAY_BUFFER)',
+        'attributes["NORMAL"] = doc.accessor(part.normals, target=ARRAY_BUFFER)',
+        ("ING-14",),
+    ),
+    Mutant(
+        # A coarse tile declares only its own clustering's error, not what its children's had
+        # already moved: a viewer trusting it shows a surface further off than it claims.
+        "tile-error-ignores-children",
+        TILER,
+        "return clustering.cluster(merged, box[0], cell), clustering.diagonal(cell) + worst",
+        "return clustering.cluster(merged, box[0], cell), clustering.diagonal(cell)",
+        ("ING-14",),
+    ),
+    Mutant(
+        # The last chunk of a primitive's triangles, short of a whole one, is never read.
+        "partial-chunk-dropped",
+        GLTF,
+        "corners = max(0, min(count, primitive.triangles - start)) * 3",
+        "corners = count * 3 if primitive.triangles - start >= count else 0",
+        ("ING-14",),
+    ),
+    Mutant(
+        # Indices are trusted: one past the vertices reads whatever the gather finds there.
+        "mesh-index-unchecked",
+        GLTF,
+        "        if len(ids) and int(ids.max()) >= primitive.positions.count:",
+        "        if False:",
+        ("ING-8",),
+    ),
+    Mutant(
+        # A tile's box is its own content's alone: a parent's no longer holds its children.
+        "tile-box-without-children",
+        TILER,
+        "box = _union([own, *(c.box for c in children)])",
+        "box = _union([own])",
+        ("ING-14",),
+    ),
+    Mutant(
         # A tile on the antimeridian, half a cell past it, loses its footprint and its place on
         # the map: found by the demo's Copernicus tile of Taveuni.
         "edge-overshoot-refused",
@@ -689,9 +767,14 @@ def plant(mutant: Mutant, tree: Path) -> bool:
     return True
 
 
-def run(mutant: Mutant, snapshot: Path, *, full: bool) -> tuple[bool, str]:
+def run(mutant: Mutant, snapshot: Path, *, full: bool) -> tuple[bool | None, str]:
     """Applies `mutant` to a throwaway copy of `snapshot` and runs the suite there: the tests
-    declaring its invariants, or with `full` all of them."""
+    declaring its invariants, stopping at the first failure; or with `full` all of them, to the
+    end, so a catch by its own invariant counts even when another test fails first. None when
+    a service its tests need isn't up."""
+    missing = [n for n in mutant.needs if not os.environ.get(n)]
+    if missing:
+        return None, f"not run: its tests need {', '.join(missing)}"
     with tempfile.TemporaryDirectory() as tmp:
         sandbox = Path(tmp) / "repo"
         shutil.copytree(snapshot, sandbox)
@@ -704,7 +787,7 @@ def run(mutant: Mutant, snapshot: Path, *, full: bool) -> tuple[bool, str]:
                 "-m",
                 "pytest",
                 "-q",
-                "-x",
+                *([] if full else ["-x"]),
                 "-p",
                 "no:cacheprovider",
                 f"--invariants-report={report}",
@@ -737,7 +820,7 @@ def main(argv: list[str]) -> int:
     shard = next((a.split("=", 1)[1] for a in argv if a.startswith("--shard=")), "0/1")
     index, count = (int(x) for x in shard.split("/", 1))
     selected = selected[index::count]
-    survived = 0
+    survived = skipped = 0
     # Every mutant runs against the tree as it was at the start, so editing code while
     # mutants run neither breaks the run nor leaks half-made changes into it.
     with tempfile.TemporaryDirectory() as tmp, ThreadPoolExecutor(max_workers=jobs) as pool:
@@ -745,9 +828,12 @@ def main(argv: list[str]) -> int:
         shutil.copytree(REPO, snapshot, ignore=SKIP)
         results = pool.map(partial(run, snapshot=snapshot, full=full), selected)
         for mutant, (ok, message) in zip(selected, results, strict=True):  # in the list's order
-            survived += not ok
-            print(f"{'ok  ' if ok else 'FAIL'} {mutant.name:<30} {message}", flush=True)
-    print(f"\n{len(selected) - survived}/{len(selected)} mutants caught")
+            survived += ok is False
+            skipped += ok is None
+            mark = {True: "ok  ", False: "FAIL", None: "skip"}[ok]
+            print(f"{mark} {mutant.name:<30} {message}", flush=True)
+    ran = len(selected) - skipped
+    print(f"\n{ran - survived}/{ran} mutants caught" + (f", {skipped} not run" if skipped else ""))
     return 1 if survived else 0
 
 

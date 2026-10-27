@@ -71,25 +71,30 @@ api/ingest_api/
                  says), models.py (STAC Items and searches), store.py (only the pipeline
                  writes; reads and keyset search), routes.py (/items/{id}, /search,
                  /items/{id}/assets/{role}: an audited read URL for one file, and
-                 /items/{id}/preview: an audited preview token for the tiler)
+                 /items/{id}/preview and /scene: audited tokens for the tiler)
   tiles/         map tiles: footprint views (store.py: the audited sessions a map's tiles
                  are served under) and their vector tiles, drawn by the items store's own
                  search query (routes.py: /tiles/footprints); TileJSON shapes (models.py)
-  previews.py    preview tokens: minted by the API for one readable item's COG, checked by
-                 the tiler
+  previews.py    preview and scene tokens: minted by the API for one readable item's COG or
+                 `.3tz`, checked by the tiler
+  tilesets.py    `.3tz` archives: written by the worker, read a file at a time by the tiler
   display.py     how a raster is drawn as a picture, by its thumbnail and its preview tiles
   tiler/         its own service, with no database and no login: one item's raster tiles under
-                 a preview token (app.py: composition; routes.py: /tiles/items/...; raster.py:
-                 the COG read through the blob port within a per-request budget, and drawn)
+                 a preview token, or its 3D Tiles under a scene token (app.py: composition;
+                 routes.py: /tiles/items/... and /scenes/...; raster.py: the COG read through the
+                 blob port within a per-request budget, and drawn; scenes.py: a `.3tz`'s files
+                 read through the blob port, its index kept per process)
   worker/        the pipeline: pipeline.py (one blob version's step machine), classify.py,
                  extract.py (budgeted header reads), formats/ (one reader per format family),
                  outbox.py (derive requests, written with the outcome and relayed to the
                  derive queue); the derive stage: derive.py (one item's derivatives),
-                 recipe.py (what a recipe is), recipes/ (one per kind and role); and for both:
+                 recipe.py (what a recipe is), recipes/ (one per kind and role), meshes/ (the
+                 3D Tiles tiler: GLB reader, clustering, texture crops, coarse proxies and
+                 thumbnails, Assimp for other formats); and for both:
                  jobs.py (their store), runner.py (queue -> settle, dead-letter sweep),
                  selfcheck.py (`--check`), __main__.py (composition; `--derive` for the stage)
 api/typings/     local type stubs for the parts of untyped libraries we use (rasterio, pyarrow,
-                 pyogrio)
+                 pyogrio, assimp_py)
 api/migrations/  numbered SQL, never edited once merged; add a new file instead
 ```
 
@@ -209,7 +214,7 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
 - `api/tests/model.py`: the independent reference model of who may read what.
 - `api/tests/sim/`: Hypothesis state machines that drive the real API and Postgres with
   random actors and operations, checking invariants after every step.
-  `test_catalog_sim.py` covers catalog changes, upload sessions, downloads and preview tokens
+  `test_catalog_sim.py` covers catalog changes, upload sessions, downloads, and preview and scene tokens
   (ACC-*);
   `test_pipeline_sim.py` runs the worker over a faulty queue and blob store, then drains and
   replays every event (ING-1 to ING-5); `test_derive_sim.py` relays derive requests to a
@@ -220,6 +225,9 @@ Start from `failures[].invariants` and `error`. Simulator failures include the s
 - `api/tests/strategies.py`: the shared Hypothesis strategies (actors, grantees, names).
 - `api/tests/items.py`: catalogs items straight through the pipeline's stores, for read and
   search tests that don't need bytes (or, given `content`, derive tests that do).
+- `api/tests/meshes.py`: random models (positions on a 1/8 grid, so tiles compare exactly) and
+  tilesets read back; `test_tiler.py` checks ING-14 over them, and Cesium's 3d-tiles-validator
+  (`api/tools/validators`, installed by `make services`) checks a textured one.
 - `api/tests/recipes.py`: small recipes, each with one trait the derive stage must handle;
   `test_raster_recipes.py` runs the real ones, and `test_sandbox.py` misbehaving ones.
 - `api/tests/fakes.py`: seeded, fault-injecting implementations of the ports, and

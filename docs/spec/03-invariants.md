@@ -40,10 +40,12 @@ same status code and same body. Markings can't be probed by guessing ids.
 
 ### ACC-3 Marking floor
 
-Status: enforced (collections, items, banner); planned for derivatives (M3)
+Status: enforced
 
 An item's marking is at least its collection's, and a derivative's marking is at least its
-source's. The page banner shows the highest marking among everything currently displayed,
+source's: a derivative has no marking of its own, and every path to its bytes (a read URL, a
+preview, a scene) is opened only for a caller who may read its item, so it is always served at
+its item's marking. The page banner shows the highest marking among everything currently displayed,
 computed from marking rank rather than from response order.
 
 ### ACC-4 No creation above clearance
@@ -65,11 +67,12 @@ Malformed requests (401, 422) carry no identity or intent worth auditing and are
 request logs. Health, public config and `/me` are not catalog data and are exempt.
 
 Map tiles are audited by the session they belong to, not one by one: a map view is hundreds of
-tiles. Opening a footprint view (`POST /tiles/footprints`) or a preview of one item
-(`POST /items/{id}/preview`) writes the event, with the filters or item it covers and the highest
-marking it could show when it opened; the session lasts at most 15 minutes. A footprint view
-serves only its opener's requests. A preview is served by the tiler, which has no login: its
-requests carry the signed token the API handed the opener, which names the one item. A tile
+tiles. Opening a footprint view (`POST /tiles/footprints`), a preview of one item
+(`POST /items/{id}/preview`) or a scene of one (`POST /items/{id}/scene`, its 3D Tiles) writes
+the event, with the filters or item it covers and the highest marking it could show when it
+opened; the session lasts at most 15 minutes. A footprint view serves only its opener's requests.
+Previews and scenes are served by the tiler, which has no login: their requests carry the signed
+token the API handed the opener, which names the one item. A tile
 request outside a live session is refused with 404 and no event: it names nothing but a session
 id or a token.
 
@@ -113,10 +116,10 @@ URL says.
 
 Status: enforced
 
-Downloads, thumbnails, preview tokens, raster tiles and footprint tiles serve only items the
-caller may read under `authz.readable_scopes`, and an unreadable item answers exactly like a
-missing one (ACC-1 and ACC-2, extended from rows to bytes). A preview token serves only the item
-it was minted for. A file is served by a read URL for its own blob and no other: an item's
+Downloads, thumbnails, preview and scene tokens, raster tiles, 3D tiles and footprint tiles
+serve only items the caller may read under `authz.readable_scopes`, and an unreadable item answers
+exactly like a missing one (ACC-1 and ACC-2, extended from rows to bytes). A preview or scene token
+serves only the item it was minted for, from the one blob it names, on its own kind of route. A file is served by a read URL for its own blob and no other: an item's
 original, or its newest derivative in the role asked for.
 
 ## Ingest integrity
@@ -254,13 +257,14 @@ only derivatives it lacks: a role whose newest recipe failed but an older one ma
 
 ### ING-14 Tiles are faithful
 
-Status: planned (M3)
+Status: enforced
 
 A mesh's 3D Tiles lose nothing and claim no more than they are: the leaves hold every triangle of
-the mesh once (none lost, none repeated, vertices exact to float32), every tile's content lies
-within its bounding volume, geometric error falls strictly from each tile to its children down to
-zero at the leaves, and every vertex of a coarser tile lies within that tile's geometric error of
-a vertex it stands for.
+the mesh once (none lost, none repeated, vertices as exact as float32 allows); every tile has a
+bounding volume holding its content and its children's volumes; geometric error falls strictly
+from each tile to its children, down to zero at the leaves; and every vertex of a coarser tile
+lies within that tile's geometric error of a vertex of the mesh. Checked over random models by
+the tiler's property tests, and by Cesium's 3d-tiles-validator over a textured one.
 
 ## Lifecycle
 

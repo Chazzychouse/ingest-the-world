@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Platform API for the Ingest the World geospatial data platform"
 requires-python = ">=3.12"
 dependencies = [
+    "assimp-py==1.2.0",
     "azure-identity>=1.26.0",
     "azure-servicebus>=7.14",
     "azure-storage-blob>=12.31.0",

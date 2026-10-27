@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useApi, type Collection, type StacItem } from './api'
 import { Files, Thumbnail } from './Assets'
 import { derivativeNotes } from './derivatives'
@@ -13,6 +13,11 @@ import { useFootprints } from './useFootprints'
 import { previewable, usePreview } from './usePreview'
 import { MAX_RESULTS, useSearch } from './useSearch'
 import { canDrawMaps } from './webgl'
+
+// The 3D viewer brings three.js: loaded when someone opens one, not with the search.
+const SceneView = lazy(() => import('./SceneView'))
+// The asset a mesh's 3D view streams from: its 3D Tiles.
+const TILESET = 'tileset'
 
 // Shown first in an item's details; the rest follow alphabetically.
 const CORE = ['datetime', 'start_datetime', 'end_datetime', 'created', 'ingest:kind', 'ingest:media_type', 'file:size', 'proj:code', 'ingest:extraction']
@@ -200,6 +205,7 @@ type DetailsProps = {
 
 function ItemDetails({ item, collections, preview, onPreview, onZoom, onBack }: DetailsProps) {
   const [copied, setCopied] = useState(false)
+  const [viewing, setViewing] = useState(false)
   const marking = itemMarking(item, collections)
   const bbox = item.bbox
   const notes = derivativeNotes(item)
@@ -248,6 +254,16 @@ function ItemDetails({ item, collections, preview, onPreview, onZoom, onBack }: 
         </button>
       </div>
       {previewable(item) && <PreviewControls {...preview} onPreview={onPreview} />}
+      {item.assets[TILESET] && (
+        <div className="actions">
+          <button onClick={() => setViewing(true)}>View in 3D</button>
+        </div>
+      )}
+      {viewing && (
+        <Suspense fallback={<p className="muted">Loading the 3D view…</p>}>
+          <SceneView itemId={item.id} title={item.properties.title} onClose={() => setViewing(false)} />
+        </Suspense>
+      )}
       {notes.length > 0 && (
         <ul className="notes">
           {notes.map((note) => (

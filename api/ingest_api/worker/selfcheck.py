@@ -4,7 +4,8 @@ Slice 4 shipped an image whose GDAL couldn't load (a missing system library), wh
 live upload revealed. This writes a tiny GeoTIFF with GDAL and a one-row Parquet file with
 Arrow, extracts both through the process sandbox, as the worker would, and renders every recipe
 through the render sandbox, as the derive stage would: the raster ones from the GeoTIFF, the
-vector ones from a one-point GeoJSON (read by pyogrio's own GDAL). It touches no database,
+vector ones from a one-point GeoJSON (read by pyogrio's own GDAL), the mesh ones from a
+one-triangle GLB, and one of them from an OBJ, through Assimp. It touches no database,
 storage or queue, so CI can run it on a freshly built image.
 """
 
@@ -26,8 +27,10 @@ from ingest_api.settings import Settings
 from ingest_api.worker.classify import Media
 from ingest_api.worker.extract import Budget, extract
 from ingest_api.worker.formats import READERS
+from ingest_api.worker.meshes.model import Part
+from ingest_api.worker.meshes.writer import glb
 from ingest_api.worker.recipe import Recipe, Unrenderable
-from ingest_api.worker.recipes import RASTER, VECTOR
+from ingest_api.worker.recipes import MESH, RASTER, VECTOR
 
 log = logging.getLogger("ingest.worker")
 MIB = 1024 * 1024
@@ -40,6 +43,7 @@ GEOJSON = (
     b' "geometry": {"type": "Point", "coordinates": [-105, 40]}}]}'
 )
 MAX_RENDER_BYTES = 64 * 1024 * 1024
+OBJ = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n"
 
 
 def _geotiff() -> bytes:
@@ -57,6 +61,12 @@ def _geotiff() -> bytes:
         with rasterio.open(str(path), "w", **profile) as dataset:
             dataset.write(np.zeros((1, 8, 8), dtype="uint8"))
         return path.read_bytes()
+
+
+def _glb() -> bytes:
+    positions = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], np.float32)
+    part = Part(positions, None, None, np.array([[0, 1, 2]], np.uint32))
+    return glb({0: part}, centre=np.zeros(3), materials=[], baked={})
 
 
 def _parquet() -> bytes:
@@ -85,6 +95,8 @@ def _renders(geotiff: bytes) -> bool:
     renderer = ProcessRenderer(RENDER_LIMITS, max_file_bytes=MAX_RENDER_BYTES)
     originals: list[tuple[Recipe, bytes]] = [(r, geotiff) for r in RASTER]
     originals += [(r, GEOJSON) for r in VECTOR]
+    originals += [(r, _glb()) for r in MESH]
+    originals += [(MESH[0], OBJ)]
     ok = True
     with tempfile.TemporaryDirectory() as directory:
         for recipe, data in originals:

@@ -1,9 +1,11 @@
-"""HTTP for previews: an item's TileJSON and its PNG tiles, each under the item's preview token.
+"""HTTP for previews and scenes: an item's TileJSON and its PNG tiles under its preview token,
+and the files of its 3D Tiles (`tileset.json` and what that names) under its scene token.
 
 Every request carries the token as `Authorization: Bearer`. One that is missing, forged,
-expired or minted for another item answers 404, the same for every reason, and nothing is read
-(ACC-9). Requests are not audited: opening the preview was (ACC-5). A COG that is gone answers
-404 too, and one that can't be drawn 422 (`tiler.app` maps both).
+expired, for the other kind of route or minted for another item answers 404, the same for every
+reason, and nothing is read (ACC-9). Requests are not audited: opening the preview or scene was
+(ACC-5). A blob that is gone answers 404 too, and one that can't be drawn or read 422
+(`tiler.app` maps both).
 """
 
 from dataclasses import dataclass
@@ -11,6 +13,7 @@ from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import Path as PathParam
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from rio_tiler.errors import TileOutsideBounds
 
@@ -18,13 +21,17 @@ from ingest_api import display, previews
 from ingest_api.items.store import Tile
 from ingest_api.ports import BlobStore, Clock
 from ingest_api.tiler import raster
+from ingest_api.tiler.scenes import Archives
 from ingest_api.tiles.models import RasterTiles
 from ingest_api.tiles.routes import tile_at
 
 router = APIRouter(prefix=previews.TILES_PATH, tags=["previews"])
+scenes_router = APIRouter(prefix=previews.SCENES_PATH, tags=["scenes"])
 
 PREVIEW_NOT_FOUND = "preview not found"
+SCENE_NOT_FOUND = "scene not found"
 PNG = "image/png"
+MAX_SCENE_PATH = 256
 _bearer = HTTPBearer(auto_error=False)
 
 
@@ -35,6 +42,7 @@ class Runtime:
     key: str
     blobs: BlobStore
     clock: Clock
+    archives: Archives
 
 
 def _runtime(request: Request) -> Runtime:
@@ -113,3 +121,38 @@ def preview_tile(
     except TileOutsideBounds:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     return Response(png, media_type=PNG, headers=_private(preview, runtime))
+
+
+def _scene(
+    item_id: UUID,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    runtime: Rt,
+) -> previews.Preview:
+    token = credentials.credentials if credentials else ""
+    now = runtime.clock.now()
+    scene = previews.verify(
+        token, runtime.key, item_id=item_id, now=now, audience=previews.SCENE_AUDIENCE
+    )
+    if scene is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, SCENE_NOT_FOUND)
+    return scene
+
+
+@scenes_router.get(
+    "/{item_id}/{path:path}",
+    response_class=Response,
+    responses={
+        status.HTTP_200_OK: {"description": "A file of the item's 3D Tiles"},
+        status.HTTP_404_NOT_FOUND: {"description": "No live scene of this item, or no such file"},
+    },
+)
+def scene_file(
+    scene: Annotated[previews.Preview, Depends(_scene)],
+    path: Annotated[str, PathParam(min_length=1, max_length=MAX_SCENE_PATH)],
+    runtime: Rt,
+) -> Response:
+    """One file of the item's tileset, as its `.3tz` holds it."""
+    found = runtime.archives.file(scene, path)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, SCENE_NOT_FOUND)
+    return Response(found.data, media_type=found.media_type, headers=_private(scene, runtime))

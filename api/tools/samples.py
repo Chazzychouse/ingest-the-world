@@ -20,6 +20,7 @@ import json
 import random
 import struct
 import sys
+import zlib
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -34,7 +35,8 @@ REPO = Path(__file__).resolve().parents[2]
 MANIFEST = REPO / "samples" / "manifest.json"
 CACHE = REPO / "samples" / ".cache"
 CHUNK = 1024 * 1024
-DOWNLOAD_TIMEOUT_SECONDS = 60.0
+DOWNLOAD_TIMEOUT_SECONDS = 120.0
+DOWNLOAD_ATTEMPTS = 3
 
 type Json = dict[str, Any]
 SampleSet = Literal["default", "large", "demo"]
@@ -139,6 +141,7 @@ GLB_HEADER = struct.Struct("<4sII")
 GLB_CHUNK = struct.Struct("<II")
 GLB_JSON, GLB_BIN = 0x4E4F534A, 0x004E4942
 FLOAT, VEC3_BYTES = 5126, 12
+UNSIGNED_INT = 5125
 # Positions are one block of a seeded point grid, repeated; min and max are the block's.
 GLB_BLOCK_VERTICES = 87_381  # 3 per triangle, and just under 1 MiB of positions
 
@@ -190,6 +193,111 @@ def generate_glb(out: BinaryIO, params: Json) -> None:
     out.write(GLB_CHUNK.pack(binary, GLB_BIN))
     for _ in range(blocks):
         out.write(block)
+
+
+def _png(width: int, height: int, rows: Iterator[bytes]) -> bytes:
+    """An 8-bit RGB PNG of `rows` (3 bytes a pixel), with the standard library's zlib."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    pixels = zlib.compress(b"".join(b"\0" + row for row in rows), 9)
+    return (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", pixels) + chunk(b"IEND", b"")
+    )
+
+
+def generate_terrain_glb(out: BinaryIO, params: Json) -> None:
+    """A textured terrain: a `side` x `side` grid of heights (multiples of 1/8, from 0 at the
+    first corner to 8 at the last), one material whose PNG texture spans it; what the tiler cuts
+    into several tiles, each with its own crop of the texture."""
+    rng = random.Random(params["seed"])  # noqa: S311 - seeded on purpose: fixed checksums
+    side, px = params["side"], params["texture"]
+    heights = [rng.randint(1, 63) / 8 for _ in range(side * side)]
+    heights[0], heights[-1] = 0.0, 8.0
+    positions = b"".join(
+        struct.pack("<3f", c, heights[r * side + c], r) for r in range(side) for c in range(side)
+    )
+    uvs = b"".join(
+        struct.pack("<2f", c / (side - 1), r / (side - 1)) for r in range(side) for c in range(side)
+    )
+    quads = [(r * side + c, side) for r in range(side - 1) for c in range(side - 1)]
+    indices = b"".join(
+        struct.pack("<6I", a, a + n, a + 1, a + 1, a + n, a + n + 1) for a, n in quads
+    )
+    image = _png(px, px, (_texture_row(y, px) for y in range(px)))
+    _write_glb(
+        out,
+        positions,
+        uvs,
+        indices,
+        image,
+        vertices=side * side,
+        low=[0.0, 0.0, 0.0],
+        high=[side - 1.0, 8.0, side - 1.0],
+    )
+
+
+def _texture_row(y: int, px: int) -> bytes:
+    """A row of the terrain's texture: red across, green down, blue a weave of both."""
+    return bytes(v for x in range(px) for v in (x * 255 // px, y * 255 // px, (x ^ y) & 255))
+
+
+def _write_glb(
+    out: BinaryIO, *views: bytes, vertices: int, low: list[float], high: list[float]
+) -> None:
+    """A GLB of one textured triangle mesh: positions, UVs, indices, then its PNG."""
+    offsets: list[int] = []
+    binary = b""
+    for view in views:
+        offsets.append(len(binary))
+        binary += view + b"\0" * (-len(view) % 4)
+    positions, uvs, indices, image = (
+        {"buffer": 0, "byteOffset": offsets[i], "byteLength": len(views[i])} for i in range(4)
+    )
+    document = {
+        "asset": {"version": "2.0", "generator": "ingest-the-world samples"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0}],
+        "meshes": [
+            {
+                "primitives": [
+                    {"attributes": {"POSITION": 0, "TEXCOORD_0": 1}, "indices": 2, "material": 0}
+                ]
+            }
+        ],
+        "materials": [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}],
+        "textures": [{"source": 0}],
+        "images": [{"bufferView": 3, "mimeType": "image/png"}],
+        "accessors": [
+            {
+                "bufferView": 0,
+                "componentType": FLOAT,
+                "count": vertices,
+                "type": "VEC3",
+                "min": low,
+                "max": high,
+            },
+            {"bufferView": 1, "componentType": FLOAT, "count": vertices, "type": "VEC2"},
+            {
+                "bufferView": 2,
+                "componentType": UNSIGNED_INT,
+                "count": len(views[2]) // 4,
+                "type": "SCALAR",
+            },
+        ],
+        "bufferViews": [positions, uvs, indices, image],
+        "buffers": [{"byteLength": len(binary)}],
+    }
+    text = json.dumps(document, separators=(",", ":")).encode()
+    text += b" " * (-len(text) % 4)
+    total = GLB_HEADER.size + 2 * GLB_CHUNK.size + len(text) + len(binary)
+    out.write(GLB_HEADER.pack(b"glTF", 2, total))
+    out.write(GLB_CHUNK.pack(len(text), GLB_JSON) + text)
+    out.write(GLB_CHUNK.pack(len(binary), GLB_BIN) + binary)
 
 
 def _readings(params: Json) -> Iterator[dict[str, str | float]]:
@@ -262,6 +370,7 @@ def generate_eicar(out: BinaryIO, _: Json) -> None:
 
 GENERATORS: dict[str, Callable[[BinaryIO, Json], None]] = {
     "glb": generate_glb,
+    "terrain-glb": generate_terrain_glb,
     "readings-csv": generate_readings_csv,
     "readings-jsonl": generate_readings_jsonl,
     "eicar": generate_eicar,
@@ -298,6 +407,20 @@ def sha256_of(path: Path) -> str:
 
 
 def _download(sample: Sample, url: str, out: BinaryIO) -> None:
+    """The file at `url`, tried up to DOWNLOAD_ATTEMPTS times: some sources (USGS's) stall."""
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        out.seek(0)
+        out.truncate()
+        try:
+            _download_once(sample, url, out)
+            return
+        except httpx.TransportError:  # a timeout or a dropped connection, not an HTTP status
+            if attempt == DOWNLOAD_ATTEMPTS:
+                raise
+            print(f"retry    {sample.name}: attempt {attempt} stalled", flush=True)
+
+
+def _download_once(sample: Sample, url: str, out: BinaryIO) -> None:
     with httpx.stream("GET", url, follow_redirects=True, timeout=DOWNLOAD_TIMEOUT_SECONDS) as r:
         r.raise_for_status()
         written = 0
