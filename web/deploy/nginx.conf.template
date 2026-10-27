@@ -26,8 +26,9 @@ server {
         proxy_set_header X-Request-ID $request_id;
     }
 
-    # `/tiles/x` -> `http://tiler:8001/tiles/x`: preview tiles, under the API's preview tokens.
-    location /tiles/ {
+    # `/tiles/x` -> `http://tiler:8001/tiles/x`: preview tiles, under the API's preview tokens;
+    # `/scenes/x` likewise: a mesh's 3D Tiles, under its scene token.
+    location ~ ^/(tiles|scenes)/ {
         proxy_pass http://$tiler:8001$request_uri;
         # With its port: the tiler's TileJSON names its tiles by the host the browser asked.
         proxy_set_header Host $http_host;

@@ -434,3 +434,49 @@ progress::-moz-progress-bar { background: var(--accent); }
 
 .map.unavailable { display: grid; place-items: center; padding: 2rem; background: var(--bg); color: var(--muted); }
 .map.unavailable p { max-width: 32rem; margin: 0; text-align: center; }
+
+/* The 3D viewer: a full-window layer over the app, the model on a dark stage. */
+.scene {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: #14171c;
+  color: #e9ecef;
+}
+.scene header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid #2a2f37;
+}
+.scene header h2 {
+  margin: 0;
+  font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scene header .muted {
+  flex: 1;
+  color: #9aa3ad;
+  font-size: 0.85rem;
+}
+.scene-canvas {
+  flex: 1;
+  min-height: 0;
+  touch-action: none;
+}
+.scene-status {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  margin: 0;
+}
+@media (max-width: 640px) {
+  .scene header .muted {
+    display: none;
+  }
+}
