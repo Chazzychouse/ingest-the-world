@@ -1,7 +1,7 @@
 name: nightly
 
-# Slow harness tiers: a long, randomized simulation soak (new seeds every night) and the
-# planted-bug run that proves the suite still catches each known bug.
+# Slow harness tiers: a time-boxed, randomized simulation soak (new seeds every night), a canary
+# proving the soak catches a planted bug, and the planted-bug run against the whole suite.
 on:
   schedule:
     - cron: "17 6 * * *"
@@ -11,9 +11,66 @@ permissions:
   contents: read
 
 jobs:
-  soak-and-mutants:
+  # Rounds of the simulators with fresh seeds until the budget is spent (tools/soak.py): it ends
+  # on its own well inside the timeout, and its summary lists every seed it ran.
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Start Postgres
+        working-directory: .
+        run: docker compose -f compose.test.yaml up -d --wait db
+      - run: uv sync --frozen
+      - name: Simulation soak
+        run: uv run python -m tools.soak --minutes=40
+        env:
+          INGEST_REQUIRE_DB: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soak-reports
+          path: |
+            api/reports/
+            api/.hypothesis/
+
+  # The soak again, with a known bug planted (a different one each day): it must catch it, or
+  # a green soak means nothing.
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Start Postgres
+        working-directory: .
+        run: docker compose -f compose.test.yaml up -d --wait db
+      - run: uv sync --frozen
+      - name: Soak with a planted bug
+        run: uv run python -m tools.soak --minutes=15 --plant=auto
+        env:
+          INGEST_REQUIRE_DB: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: canary-reports
+          path: api/reports/
+
+  # Every planted bug against the whole suite, split across machines.
+  mutants:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
     defaults:
       run:
         working-directory: api
@@ -24,26 +81,11 @@ jobs:
         working-directory: .
         run: docker compose -f compose.test.yaml up -d --wait db azurite
       - run: uv sync --frozen
-      - name: Simulation soak
-        run: >-
-          uv run pytest -q -n auto tests/sim tests/test_access_model.py
-          --invariants-report=reports/soak.json
-        env:
-          INGEST_REQUIRE_DB: "1"
-          INGEST_HYPOTHESIS_PROFILE: soak
       - name: Planted bugs
-        if: always()
-        run: uv run python tools/mutants.py --full
+        run: uv run python tools/mutants.py --full --shard=${{ matrix.shard }}/6
         env:
           INGEST_REQUIRE_DB: "1"
           INGEST_REQUIRE_AZURITE: "1"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: nightly-reports
-          path: |
-            api/reports/
-            api/.hypothesis/
 
   # The sample corpus through the whole local stack, as `make up && make e2e` runs it. Needs the
   # Service Bus emulator, so it runs only once its licence is accepted (repository variable

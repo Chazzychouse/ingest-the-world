@@ -87,14 +87,14 @@ and the build fails if an `enforced` invariant has no check.
 make check        # the gate: lint + all tests (derandomized, as CI) + traceability + JSON report
 make explore      # property tests and simulator with fresh random inputs
 make sim SEED=7   # replay a simulator run
-make soak         # long simulator run
+make soak         # simulator rounds with fresh seeds, MINUTES=10; PLANT=auto plants a bug to catch
 make mutants      # planted-bug run
 make tf-validate  # Terraform fmt + validate, via the official image
 ```
 
 `make check` writes `api/reports/invariants.json` (each invariant's result, and per failure
 the invariants broken, the error and a repro command) for agents and CI. CI runs `check`,
-the web tests and Terraform validation on every push; soak and planted bugs run nightly.
+the web tests and Terraform validation on every push; the soak, its canary and planted bugs run nightly.
 Terraform `plan` runs per cloud when the repository defines `AZURE_CLIENT_ID_{PUBLIC,GOV}`
 etc. as variables (GitHub OIDC federation, no secrets). Code standards (duplication
 rule, Power of 10, typing) and agent guidance are in

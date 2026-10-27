@@ -57,8 +57,8 @@ test: services  ## API tests against the test services and the Service Bus emula
 # Hypothesis profile per target (see api/tests/conftest.py). `check` is derandomized so a
 # local pass predicts CI; `explore` and `soak` look for new failures.
 check: export INGEST_HYPOTHESIS_PROFILE = ci
-explore sim: export INGEST_HYPOTHESIS_PROFILE = dev
-soak: export INGEST_HYPOTHESIS_PROFILE = soak
+explore: export INGEST_HYPOTHESIS_PROFILE = dev
+sim: export INGEST_HYPOTHESIS_PROFILE = $(or $(PROFILE),dev)
 
 check: lint typecheck api-types-check services  ## The gate: lint, types, every test, traceability, JSON report
 	$(PYTEST) $(PARALLEL) --check-invariants --invariants-report=reports/invariants.json
@@ -69,13 +69,14 @@ explore:  ## Property tests and simulation with fresh random inputs
 	$(PYTEST) $(PARALLEL) tests/sim tests/test_access_model.py
 
 SEED ?= 0
-sim:  ## Replay the simulation from a seed: make sim SEED=123
+sim:  ## Replay the simulation from a seed: make sim SEED=123 (PROFILE=soak for a soak round's)
 	$(TEST_SERVICES) db
 	$(PYTEST) tests/sim --hypothesis-seed=$(SEED)
 
-soak:  ## Long simulation run (minutes)
+MINUTES ?= 10
+soak:  ## Simulation rounds with fresh seeds for MINUTES (10); PLANT=name|auto runs the canary
 	$(TEST_SERVICES) db
-	$(PYTEST) $(PARALLEL) tests/sim tests/test_access_model.py
+	cd api && INGEST_REQUIRE_DB=1 uv run python -m tools.soak --minutes=$(MINUTES) $(if $(PLANT),--plant=$(PLANT))
 
 mutants: services  ## Plant known bugs and check each is caught by its invariants' tests
 	cd api && INGEST_REQUIRE_DB=1 uv run python tools/mutants.py

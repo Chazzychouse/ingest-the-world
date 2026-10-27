@@ -24,7 +24,8 @@ from tools.stack import REALM
 pytest_plugins = ["tests.invariants", "pytester"]
 
 # Hypothesis profiles: `dev` explores new random inputs each run, `ci` is derandomized so a
-# red build reproduces exactly, `soak` runs long, `mutants` only needs to detect a failure.
+# red build reproduces exactly, `soak` is one round of the soak (tools/soak.py), `mutants` only
+# needs to detect a failure.
 # Pick with INGEST_HYPOTHESIS_PROFILE.
 settings.register_profile(
     "base",
@@ -42,7 +43,8 @@ settings.register_profile(
     database=None,
     phases=[Phase.explicit, Phase.generate],
 )
-settings.register_profile("soak", _base, max_examples=2000, stateful_step_count=100)
+# One soak round (tools/soak.py runs as many as its time allows, each with a new seed).
+settings.register_profile("soak", _base, max_examples=100, stateful_step_count=100)
 settings.load_profile(os.environ.get("INGEST_HYPOTHESIS_PROFILE", "dev"))
 
 # The test services (compose.test.yaml, `make services`), apart from the local stack's.
