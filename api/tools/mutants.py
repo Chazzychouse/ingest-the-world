@@ -652,6 +652,15 @@ MUTANTS = [
         ("SRCH-1",),
     ),
     Mutant(
+        # A role the catalog's rule refuses (it must start with a letter): every mesh's tileset
+        # fails to record. Found before it shipped, by the first test that recorded one.
+        "tileset-role-the-catalog-refuses",
+        "ingest_api/worker/recipes/mesh.py",
+        'role, version, media_type, suffix = "tileset",',
+        'role, version, media_type, suffix = "3dtiles",',
+        ("ING-12",),
+    ),
+    Mutant(
         # A coarse tile declares only its own clustering's error, not what its children's had
         # already moved: a viewer trusting it shows a surface further off than it claims.
         "tile-error-ignores-children",

@@ -1,6 +1,6 @@
 """Mesh derivatives, made from the original's local copy by our own tiler (`worker/meshes`).
 
-- `3dtiles`: the model as 3D Tiles 1.1, packed in one `.3tz` archive (M3 plan D-M3-5, D-M3-6):
+- `tileset`: the model as 3D Tiles 1.1, packed in one `.3tz` archive (M3 plan D-M3-5, D-M3-6):
   leaves holding its triangles exactly, coarser tiles standing for them within their declared
   error (ING-14), each tile with its own crop of its textures.
 
@@ -28,7 +28,7 @@ TRIANGLES = "mesh:triangles"
 
 
 class Tiles3D:
-    role, version, media_type, suffix = "3dtiles", 1, "application/zip", ".3tz"
+    role, version, media_type, suffix = "tileset", 1, "application/zip", ".3tz"
     title, stac_roles = "3D Tiles (3tz archive)", ("data", "3d-tiles")
     deterministic, software = True, SOFTWARE
 

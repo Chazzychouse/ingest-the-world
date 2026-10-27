@@ -41,6 +41,10 @@ type Box = tuple[Vector, Vector]  # low and high corners, Y up
 type Cells = NDArray[np.int64]
 
 TILESET = "tileset.json"
+# The fine grid's size, from the model's: a cell for every few triangles, and never so few that a
+# leaf can't be cut small.
+TRIANGLES_PER_CELL = 4
+MIN_GRID_CELLS = 4096
 # A partitioned triangle in scratch: which primitive, and its three vertex ids.
 ROW = np.dtype([("primitive", "<u4"), ("a", "<u4"), ("b", "<u4"), ("c", "<u4")])
 
@@ -109,7 +113,8 @@ class _Job:
         if not self.primitives:
             raise Unrenderable("the model has no triangles")
         low, high = self._bounds()
-        shape = _grid(low, high, self.limits)
+        triangles = sum(p.triangles for p in self.primitives)
+        shape = _grid(low, high, self.limits, triangles=triangles)
         cell = np.maximum((high - low) / shape, 1e-12)
         columns = [self._cells(i, low, cell, shape) for i in range(len(self.primitives))]
         self.nodes = _tree(self._counts(columns, shape), self.limits)
@@ -291,11 +296,13 @@ def _dims(shape: Cells) -> tuple[int, int, int]:
     return x, y, z
 
 
-def _grid(low: Vector, high: Vector, limits: Limits) -> Cells:
-    """Cells per axis: about `grid_cells` in all, as near cubes as the box allows."""
+def _grid(low: Vector, high: Vector, limits: Limits, *, triangles: int) -> Cells:
+    """Cells per axis, as near cubes as the box allows: a cell for every few triangles, up to
+    about `grid_cells` in all, so a small model makes a small grid."""
     extent = np.maximum(high - low, 1e-9)
     relative = np.maximum(extent / extent.max(), 1 / limits.grid_side)
-    side = (limits.grid_cells / float(relative.prod())) ** (1 / 3)
+    cells = min(limits.grid_cells, max(MIN_GRID_CELLS, triangles // TRIANGLES_PER_CELL))
+    side = (cells / float(relative.prod())) ** (1 / 3)
     return np.clip(np.ceil(side * relative), 1, limits.grid_side).astype(np.int64)
 
 

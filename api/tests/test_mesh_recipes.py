@@ -81,7 +81,7 @@ def test_the_recipe_applies_to_a_glb_with_triangles_whose_header_read(tmp_path):
     original = textured_model(tmp_path / "terrain.glb")
 
     assert RECIPE.applies(source(original))
-    assert [r.role for r in RECIPES if r.applies(source(original))] == ["3dtiles"]
+    assert [r.role for r in RECIPES if r.applies(source(original))] == ["tileset"]
     assert not RECIPE.applies(source(original, kind=Kind.RASTER))
     assert not RECIPE.applies(source(original, media=Media.OBJ))
 
@@ -100,7 +100,7 @@ def test_the_same_model_makes_the_same_archive(tmp_path):
     first = render(original, tmp_path).read_bytes()
     second = render(original, tmp_path).read_bytes()
 
-    check("ING-7", RECIPE.deterministic and first == second, "the 3dtiles archive differs")
+    check("ING-7", RECIPE.deterministic and first == second, "the tileset archive differs")
 
 
 def test_a_model_that_is_not_a_glb_is_unrenderable(tmp_path):
