@@ -94,7 +94,8 @@ def test_a_scene_serves_its_items_tileset_and_tiles_until_it_expires(
     assert tile.content[:4] == b"glTF"
     assert tile.headers["cache-control"].startswith("private, max-age=")
 
-    stack.clock.advance(MAX_MAP_SESSION_MINUTES * 60)
+    expires_at = datetime.fromisoformat(scene["expires_at"])
+    stack.clock.advance((expires_at - stack.clock.now()).total_seconds())
     late = stack.get(scene["tileset"], scene["token"])
     check("ACC-9", late.status_code == 404, f"an expired scene served: {late.status_code}")
 

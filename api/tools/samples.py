@@ -35,7 +35,8 @@ REPO = Path(__file__).resolve().parents[2]
 MANIFEST = REPO / "samples" / "manifest.json"
 CACHE = REPO / "samples" / ".cache"
 CHUNK = 1024 * 1024
-DOWNLOAD_TIMEOUT_SECONDS = 60.0
+DOWNLOAD_TIMEOUT_SECONDS = 120.0
+DOWNLOAD_ATTEMPTS = 3
 
 type Json = dict[str, Any]
 SampleSet = Literal["default", "large", "demo"]
@@ -406,6 +407,20 @@ def sha256_of(path: Path) -> str:
 
 
 def _download(sample: Sample, url: str, out: BinaryIO) -> None:
+    """The file at `url`, tried up to DOWNLOAD_ATTEMPTS times: some sources (USGS's) stall."""
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        out.seek(0)
+        out.truncate()
+        try:
+            _download_once(sample, url, out)
+            return
+        except httpx.TransportError:  # a timeout or a dropped connection, not an HTTP status
+            if attempt == DOWNLOAD_ATTEMPTS:
+                raise
+            print(f"retry    {sample.name}: attempt {attempt} stalled", flush=True)
+
+
+def _download_once(sample: Sample, url: str, out: BinaryIO) -> None:
     with httpx.stream("GET", url, follow_redirects=True, timeout=DOWNLOAD_TIMEOUT_SECONDS) as r:
         r.raise_for_status()
         written = 0
