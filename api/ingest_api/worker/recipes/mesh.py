@@ -17,8 +17,9 @@ import numpy as np
 import rasterio
 
 from ingest_api.items.kinds import Kind
+from ingest_api.items.metadata import TILESET_ROLE
+from ingest_api.tilesets import Writer
 from ingest_api.worker.classify import Media
-from ingest_api.worker.meshes.archive import Writer
 from ingest_api.worker.meshes.gltf import Glb
 from ingest_api.worker.meshes.tiler import tile
 from ingest_api.worker.recipe import Source
@@ -28,7 +29,7 @@ TRIANGLES = "mesh:triangles"
 
 
 class Tiles3D:
-    role, version, media_type, suffix = "tileset", 1, "application/zip", ".3tz"
+    role, version, media_type, suffix = TILESET_ROLE, 1, "application/zip", ".3tz"
     title, stac_roles = "3D Tiles (3tz archive)", ("data", "3d-tiles")
     deterministic, software = True, SOFTWARE
 

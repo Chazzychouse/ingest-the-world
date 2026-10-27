@@ -1111,6 +1111,31 @@
         "title": "Retention",
         "type": "object"
       },
+      "SceneSession": {
+        "description": "A scene of one mesh item: its 3D Tiles' `tileset.json` on the tiler, the token every\nrequest for it and the files it names carry (as `Authorization: Bearer`), and when that token\nstops working. A viewer past that asks again.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "tileset": {
+            "title": "Tileset",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tileset",
+          "token",
+          "expires_at"
+        ],
+        "title": "SceneSession",
+        "type": "object"
+      },
       "SearchIn": {
         "description": "One page of a search: its filters, and where the page starts.",
         "properties": {
@@ -2355,6 +2380,61 @@
           }
         ],
         "summary": "Open Preview",
+        "tags": [
+          "items"
+        ]
+      }
+    },
+    "/items/{item_id}/scene": {
+      "post": {
+        "description": "Opens a scene of a mesh item: a token for the tiler to serve its 3D Tiles under, for at\nmost 15 minutes, and the tileset's URL there. A viewer sends the token with every file.",
+        "operationId": "open_scene_items__item_id__scene_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SceneSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "No such item, or no 3D Tiles of it"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Scenes are not configured"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Open Scene",
         "tags": [
           "items"
         ]

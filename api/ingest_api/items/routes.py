@@ -11,7 +11,7 @@ token the tiler serves that one item's tiles for, and its tiles are not audited 
 """
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Annotated
@@ -25,7 +25,7 @@ from ingest_api.audit import AuditAction, Auditor, Target
 from ingest_api.auth import Principal
 from ingest_api.deps import Audit, Conn, CurrentPrincipal, Rt, Runtime
 from ingest_api.items import store
-from ingest_api.items.metadata import CLOUD_OPTIMIZED, COG_ROLE
+from ingest_api.items.metadata import CLOUD_OPTIMIZED, COG_ROLE, TILESET_ROLE
 from ingest_api.items.models import (
     FILE_EXTENSION,
     ORIGINAL,
@@ -40,6 +40,7 @@ from ingest_api.items.models import (
     NextLink,
     Polygon,
     PreviewSession,
+    SceneSession,
     SearchIn,
     StacItem,
     parse_interval,
@@ -51,6 +52,7 @@ router = APIRouter(tags=["items"])
 NOT_FOUND = "item not found"
 ASSET_NOT_FOUND = "asset not found"
 NO_PREVIEW = "item has no cloud-optimized raster"
+NO_SCENE = "item has no 3D Tiles"
 PREVIEWS_OFF = "previews are not configured"
 # The links are secrets while they last, and the answer changes with access: never cached.
 NO_STORE = {"Cache-Control": "no-store"}
@@ -287,11 +289,74 @@ def get_asset_url(
     return _signed((item_id, role), principal, conn, auditor, runtime)
 
 
+@dataclass(frozen=True, slots=True)
+class _Session:
+    """What opening a preview or a scene answers with, before it's shaped for the response."""
+
+    token: str
+    expires_at: dt.datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _Served:
+    """A kind of tiler session: what it's audited as, the blob it serves, whose tokens it takes."""
+
+    action: AuditAction
+    source: Callable[[Conn, store.ItemRow], _Blob | None]
+    missing: str  # why it's refused when the item has no such blob
+    audience: str
+
+
 def _preview_source(conn: Conn, row: store.ItemRow) -> _Blob | None:
     """The COG an item is previewed from: its original if that is one, else its `cog`."""
     if row.properties.get(CLOUD_OPTIMIZED) is True:
         return _blob(conn, row, ORIGINAL)
     return _blob(conn, row, COG_ROLE)
+
+
+def _scene_source(conn: Conn, row: store.ItemRow) -> _Blob | None:
+    """The `.3tz` an item's scene is served from: its `3dtiles` derivative."""
+    return _blob(conn, row, TILESET_ROLE)
+
+
+PREVIEW = _Served(AuditAction.ITEM_PREVIEW, _preview_source, NO_PREVIEW, previews.AUDIENCE)
+SCENE = _Served(AuditAction.ITEM_SCENE, _scene_source, NO_SCENE, previews.SCENE_AUDIENCE)
+
+
+def _open_session(
+    request: tuple[UUID, _Served],
+    principal: Principal,
+    conn: Conn,
+    auditor: Auditor,
+    runtime: Runtime,
+) -> _Session:
+    """A token for the tiler to serve one readable item's blob under: its preview's COG, or its
+    scene's archive. Refused, and audited so, if the item can't be read or has nothing to serve;
+    audited as opened otherwise (ACC-5, ACC-9)."""
+    item_id, served = request
+    key = runtime.settings.preview_key
+    if key is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, PREVIEWS_OFF)
+    row = _readable_or_404(conn, auditor, served.action, item_id, principal)
+    blob = served.source(conn, row)
+    if blob is None:
+        raise auditor.refuse(
+            served.action,
+            status_code=status.HTTP_404_NOT_FOUND,
+            message=served.missing,
+            target=_target(item_id),
+            marking=row.marking,
+        )
+    expires_at = runtime.clock.now() + dt.timedelta(minutes=runtime.settings.map_session_minutes)
+    granted = previews.Preview(item_id, blob.container, blob.name, expires_at)
+    auditor.allowed(
+        served.action,
+        target=_target(item_id),
+        marking=row.marking,
+        detail={"blob": f"{blob.container}/{blob.name}"},
+    )
+    token = previews.mint(granted, key.get_secret_value(), audience=served.audience)
+    return _Session(token, expires_at)
 
 
 @router.post(
@@ -308,32 +373,33 @@ def open_preview(
 ) -> PreviewSession:
     """Opens a preview of a raster item: a token for the tiler to serve its map tiles under, for
     at most 15 minutes, and the tiler's TileJSON for it."""
-    key = runtime.settings.preview_key
-    if key is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, PREVIEWS_OFF)
-    action = AuditAction.ITEM_PREVIEW
-    row = _readable_or_404(conn, auditor, action, item_id, principal)
-    source = _preview_source(conn, row)
-    if source is None:
-        raise auditor.refuse(
-            action,
-            status_code=status.HTTP_404_NOT_FOUND,
-            message=NO_PREVIEW,
-            target=_target(item_id),
-            marking=row.marking,
-        )
-    expires_at = runtime.clock.now() + dt.timedelta(minutes=runtime.settings.map_session_minutes)
-    preview = previews.Preview(item_id, source.container, source.name, expires_at)
-    auditor.allowed(
-        action,
-        target=_target(item_id),
-        marking=row.marking,
-        detail={"blob": f"{source.container}/{source.name}"},
-    )
+    session = _open_session((item_id, PREVIEW), principal, conn, auditor, runtime)
     return PreviewSession(
         tilejson=f"{runtime.settings.tiler_url}{previews.TILES_PATH}/{item_id}/tilejson.json",
-        token=previews.mint(preview, key.get_secret_value()),
-        expires_at=expires_at,
+        token=session.token,
+        expires_at=session.expires_at,
+    )
+
+
+@router.post(
+    "/items/{item_id}/scene",
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "No such item, or no 3D Tiles of it"},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "Scenes are not configured"},
+    },
+    dependencies=[Depends(_no_store)],
+)
+def open_scene(
+    item_id: UUID, principal: CurrentPrincipal, conn: Conn, auditor: Audit, runtime: Rt
+) -> SceneSession:
+    """Opens a scene of a mesh item: a token for the tiler to serve its 3D Tiles under, for at
+    most 15 minutes, and the tileset's URL there. A viewer sends the token with every file."""
+    session = _open_session((item_id, SCENE), principal, conn, auditor, runtime)
+    return SceneSession(
+        tileset=f"{runtime.settings.tiler_url}{previews.SCENES_PATH}/{item_id}/tileset.json",
+        token=session.token,
+        expires_at=session.expires_at,
     )
 
 

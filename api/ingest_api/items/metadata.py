@@ -17,6 +17,8 @@ type Json = str | int | float | bool | list[Json] | dict[str, Json] | None
 CLOUD_OPTIMIZED = "raster:cloud_optimized"
 # The derivative that is, and the one a raster is previewed from when its original isn't.
 COG_ROLE = "cog"
+# A mesh's 3D Tiles, as a `.3tz` archive: what its scene is served from.
+TILESET_ROLE = "tileset"
 
 
 # A grid registered at its cells' centres (pixel-is-point) reaches half a cell past an edge it

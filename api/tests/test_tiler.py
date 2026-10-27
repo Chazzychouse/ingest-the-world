@@ -9,7 +9,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from ingest_api.worker.meshes.archive import Writer
+from ingest_api.tilesets import Writer
 from ingest_api.worker.meshes.gltf import Glb
 from ingest_api.worker.meshes.model import Mesh
 from ingest_api.worker.meshes.tiler import Limits, tile

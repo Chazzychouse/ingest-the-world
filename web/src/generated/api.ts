@@ -191,6 +191,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/items/{item_id}/scene": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open Scene
+         * @description Opens a scene of a mesh item: a token for the tiler to serve its 3D Tiles under, for at
+         *     most 15 minutes, and the tileset's URL there. A viewer sends the token with every file.
+         */
+        post: operations["open_scene_items__item_id__scene_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -780,6 +801,23 @@ export interface components {
             tiering: components["schemas"]["TierStep"][];
         };
         /**
+         * SceneSession
+         * @description A scene of one mesh item: its 3D Tiles' `tileset.json` on the tiler, the token every
+         *     request for it and the files it names carry (as `Authorization: Bearer`), and when that token
+         *     stops working. A viewer past that asks again.
+         */
+        SceneSession: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Tileset */
+            tileset: string;
+            /** Token */
+            token: string;
+        };
+        /**
          * SearchIn
          * @description One page of a search: its filters, and where the page starts.
          */
@@ -1349,6 +1387,51 @@ export interface operations {
                 };
             };
             /** @description Previews are not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    open_scene_items__item_id__scene_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SceneSession"];
+                };
+            };
+            /** @description No such item, or no 3D Tiles of it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Scenes are not configured */
             503: {
                 headers: {
                     [name: string]: unknown;

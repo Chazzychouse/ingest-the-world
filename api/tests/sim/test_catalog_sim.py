@@ -2,12 +2,13 @@
 
 Hypothesis generates sequences of actors and operations (list, read, create, grant, revoke,
 start an upload, read it, renew its URL, list one's own, download an item's file, preview a
-raster), runs each
+raster, open a mesh's scene), runs each
 against the real app and a fresh Postgres database, and after every step checks:
 
 - the response matches what the model says the actor may see or do (ACC-1, ACC-2, ACC-4,
   ACC-7, ACC-9), every signed URL is scoped to its upload's or asset's blob (ACC-8), and every
-  preview token names only its item and the COG that previews it (ACC-9);
+  preview or scene token names only its item and the blob it serves from, for its own routes
+  alone (ACC-9);
 - exactly one audit event was written, with the right outcome and marking (ACC-5);
 - the database holds the same collections, grants and uploads as the model.
 
@@ -15,6 +16,7 @@ Failures shrink to a minimal sequence of steps and print how to replay them. Run
 seeded: `make sim SEED=123`. The pipeline has its own machine, `test_pipeline_sim.py`.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -36,8 +38,8 @@ from ingest_api import previews
 from ingest_api.audit import AuditAction
 from ingest_api.collections.routes import NOT_FOUND
 from ingest_api.items import store as items
-from ingest_api.items.metadata import CLOUD_OPTIMIZED, COG_ROLE, Metadata
-from ingest_api.items.routes import ASSET_NOT_FOUND, NO_PREVIEW
+from ingest_api.items.metadata import CLOUD_OPTIMIZED, COG_ROLE, TILESET_ROLE, Metadata
+from ingest_api.items.routes import ASSET_NOT_FOUND, NO_PREVIEW, NO_SCENE
 from ingest_api.items.routes import NOT_FOUND as ITEM_NOT_FOUND
 from ingest_api.ports import Container
 from ingest_api.settings import MAX_MAP_SESSION_MINUTES
@@ -68,6 +70,30 @@ class Item:
     marking: str
     blobs: dict[str, tuple[Container, str, str]]  # asset key -> (container, blob, media type)
     previewed_from: tuple[Container, str] | None  # its COG, if it has one
+    scene_from: tuple[Container, str] | None  # its tileset, if it has one
+
+
+@dataclass(frozen=True, slots=True)
+class Session:
+    """A kind of tiler session: where it's opened, how it's audited, whose tokens it mints."""
+
+    path: str
+    action: AuditAction
+    missing: str
+    audience: str
+
+
+def _previewed_from(item: Item) -> tuple[Container, str] | None:
+    return item.previewed_from
+
+
+def _scene_from(item: Item) -> tuple[Container, str] | None:
+    return item.scene_from
+
+
+type Served = Callable[[Item], tuple[Container, str] | None]
+PREVIEW = Session("preview", AuditAction.ITEM_PREVIEW, NO_PREVIEW, previews.AUDIENCE)
+SCENE = Session("scene", AuditAction.ITEM_SCENE, NO_SCENE, previews.SCENE_AUDIENCE)
 
 
 class CatalogMachine(RuleBasedStateMachine):
@@ -362,10 +388,11 @@ class CatalogMachine(RuleBasedStateMachine):
         item_id=st.uuids(version=4),
         thumbnail=st.booleans(),
         cog=st.sampled_from([None, "derived", "original"]),
+        tileset=st.booleans(),
     )
-    def catalog_item(self, data, item_id, thumbnail, cog):
+    def catalog_item(self, data, item_id, thumbnail, cog, tileset):
         """The pipeline catalogs a file, perhaps marked above its collection and perhaps a COG
-        already, and the derive stage perhaps thumbnails it or makes it a COG."""
+        already, and the derive stage perhaps thumbnails it, makes it a COG or tiles it."""
         if str(item_id) in self.items:  # Hypothesis likes to repeat itself
             return
         cid = data.draw(st.sampled_from(sorted(self.world.collections)))
@@ -377,7 +404,12 @@ class CatalogMachine(RuleBasedStateMachine):
         metadata = Metadata("extracted", 0, properties=properties, crs="EPSG:32613")
         made = catalog(self.db, replace(new, metadata=metadata))
         blobs = {"original": (Container.RAW, made.raw_blob, OCTETS)}
-        for role, wanted in ((THUMBNAIL, thumbnail), (COG_ROLE, cog == "derived")):
+        wanted_roles = (
+            (THUMBNAIL, thumbnail),
+            (COG_ROLE, cog == "derived"),
+            (TILESET_ROLE, tileset),
+        )
+        for role, wanted in wanted_roles:
             if wanted:
                 blobs[role] = self._derive(item_id, cid, role)
         previewed_from = {"original": "original", "derived": COG_ROLE}.get(cog or "")
@@ -386,6 +418,7 @@ class CatalogMachine(RuleBasedStateMachine):
             made.marking,
             blobs,
             blobs[previewed_from][:2] if previewed_from else None,
+            blobs[TILESET_ROLE][:2] if tileset else None,
         )
 
     def _derive(self, item_id: UUID, cid: str, role: str) -> tuple[Container, str, str]:
@@ -438,29 +471,44 @@ class CatalogMachine(RuleBasedStateMachine):
     def preview(self, actor, data):
         """Opens a preview of an item: a token naming exactly that item and its COG, for at most
         15 minutes, if the model says the actor may read it, and a missing item's 404 otherwise."""
+        self._open(actor, data, PREVIEW, _previewed_from)
+
+    @rule(actor=actors, data=st.data())
+    def scene(self, actor, data):
+        """Opens a scene of an item: a token naming exactly that item and its tileset, for its
+        routes alone, as for previews."""
+        self._open(actor, data, SCENE, _scene_from)
+
+    def _open(self, actor, data, session: Session, source: Served) -> None:
         item_id = data.draw(st.sampled_from([*self.items, GHOST_ITEM]))
-        response = self._call(actor, "POST", f"/items/{item_id}/preview")
+        response = self._call(actor, "POST", f"/items/{item_id}/{session.path}")
         item = self.items.get(item_id)
-        action = AuditAction.ITEM_PREVIEW
         if item is None or not self.world.can_read_item(actor, item.collection, item.marking):
             check(
                 "ACC-9",
                 (response.status_code, response.json()) == (404, {"detail": ITEM_NOT_FOUND}),
-                f"{actor} previewed {item_id}: {response.status_code} {response.text}",
+                f"{actor} opened a {session.path} of {item_id}: {response.status_code}",
             )
-            self._expect_audit(action, "denied", item and item.marking, item_id)
+            self._expect_audit(session.action, "denied", item and item.marking, item_id)
             return
-        if item.previewed_from is None:
-            check("ACC-9", response.json() == {"detail": NO_PREVIEW}, response.text)
-            self._expect_audit(action, "denied", item.marking, item_id)
+        served = source(item)
+        if served is None:
+            check("ACC-9", response.json() == {"detail": session.missing}, response.text)
+            self._expect_audit(session.action, "denied", item.marking, item_id)
             return
-        check("ACC-9", response.status_code == 201, f"{actor} refused a preview of {item_id}")
-        self._check_token(response.json()["token"], UUID(item_id), item.previewed_from)
-        self._expect_audit(action, "allowed", item.marking, item_id)
+        check("ACC-9", response.status_code == 201, f"{actor} refused a {session.path}")
+        self._check_token(response.json()["token"], UUID(item_id), served, session)
+        self._expect_audit(session.action, "allowed", item.marking, item_id)
 
-    def _check_token(self, token: str, item_id: UUID, source: tuple[Container, str]) -> None:
+    def _check_token(
+        self, token: str, item_id: UUID, source: tuple[Container, str], session: Session
+    ) -> None:
         now = datetime.now(UTC)
-        granted = previews.verify(token, PREVIEW_KEY, item_id=item_id, now=now)
+
+        def verify(for_item: UUID, audience: str = session.audience) -> previews.Preview | None:
+            return previews.verify(token, PREVIEW_KEY, item_id=for_item, now=now, audience=audience)
+
+        granted = verify(item_id)
         check(
             "ACC-9",
             granted is not None and (granted.container, granted.blob) == source,
@@ -468,10 +516,17 @@ class CatalogMachine(RuleBasedStateMachine):
         )
         lifetime = granted.expires_at - now if granted else timedelta()
         check("ACC-5", lifetime <= timedelta(minutes=MAX_MAP_SESSION_MINUTES), f"lives {lifetime}")
-        for other in (*self.items, str(uuid4())):
-            if other != str(item_id):
-                elsewhere = previews.verify(token, PREVIEW_KEY, item_id=UUID(other), now=now)
-                check("ACC-9", elsewhere is None, f"token for {item_id} serves {other}")
+        other = SCENE if session is PREVIEW else PREVIEW
+        check(
+            "ACC-9", verify(item_id, other.audience) is None, f"a {session.path} token opens more"
+        )
+        for elsewhere in (*self.items, str(uuid4())):
+            if elsewhere != str(item_id):
+                check(
+                    "ACC-9",
+                    verify(UUID(elsewhere)) is None,
+                    f"{item_id}'s token serves {elsewhere}",
+                )
 
     # -- global checks ----------------------------------------------------------------
 

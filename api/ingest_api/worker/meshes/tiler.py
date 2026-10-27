@@ -28,8 +28,8 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
+from ingest_api.tilesets import Writer
 from ingest_api.worker.meshes import clustering
-from ingest_api.worker.meshes.archive import Writer
 from ingest_api.worker.meshes.gltf import Glb, Primitive, runs
 from ingest_api.worker.meshes.model import Floats, Indices, Mesh, Part, bounds, merge
 from ingest_api.worker.meshes.textures import Baked, Textures

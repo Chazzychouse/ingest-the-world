@@ -585,10 +585,11 @@ MUTANTS = [
         ("ACC-9",),
     ),
     Mutant(
+        # Opening a preview or a scene goes unaudited: both share the one place that audits it.
         "preview-unaudited",
         ITEM_ROUTES,
-        "source.name, expires_at)\n    auditor.allowed(",
-        "source.name, expires_at)\n    (lambda *_, **__: None)(",
+        "blob.name, expires_at)\n    auditor.allowed(",
+        "blob.name, expires_at)\n    (lambda *_, **__: None)(",
         ("ACC-5",),
     ),
     Mutant(
@@ -652,12 +653,29 @@ MUTANTS = [
         ("SRCH-1",),
     ),
     Mutant(
+        # The scene routes take any token the tiler signed: a preview's opens a scene.
+        "scene-takes-a-preview-token",
+        "ingest_api/tiler/routes.py",
+        "token, runtime.key, item_id=item_id, now=now, audience=previews.SCENE_AUDIENCE",
+        "token, runtime.key, item_id=item_id, now=now",
+        ("ACC-9",),
+    ),
+    Mutant(
+        # A scene opens for an item whatever its derivatives: the token names a blob that isn't
+        # its tileset (here its original), which the tiler would serve as one.
+        "scene-of-the-original",
+        ITEM_ROUTES,
+        "    return _blob(conn, row, TILESET_ROLE)",
+        "    return _blob(conn, row, ORIGINAL)",
+        ("ACC-9",),
+    ),
+    Mutant(
         # A role the catalog's rule refuses (it must start with a letter): every mesh's tileset
         # fails to record. Found before it shipped, by the first test that recorded one.
         "tileset-role-the-catalog-refuses",
-        "ingest_api/worker/recipes/mesh.py",
-        'role, version, media_type, suffix = "tileset",',
-        'role, version, media_type, suffix = "3dtiles",',
+        "ingest_api/items/metadata.py",
+        'TILESET_ROLE = "tileset"',
+        'TILESET_ROLE = "3dtiles"',
         ("ING-12",),
     ),
     Mutant(
