@@ -89,11 +89,12 @@ api/ingest_api/
                  outbox.py (derive requests, written with the outcome and relayed to the
                  derive queue); the derive stage: derive.py (one item's derivatives),
                  recipe.py (what a recipe is), recipes/ (one per kind and role), meshes/ (the
-                 3D Tiles tiler: GLB reader, clustering, texture crops, `.3tz` writer); and for both:
+                 3D Tiles tiler: GLB reader, clustering, texture crops, coarse proxies and
+                 thumbnails, Assimp for other formats); and for both:
                  jobs.py (their store), runner.py (queue -> settle, dead-letter sweep),
                  selfcheck.py (`--check`), __main__.py (composition; `--derive` for the stage)
 api/typings/     local type stubs for the parts of untyped libraries we use (rasterio, pyarrow,
-                 pyogrio)
+                 pyogrio, assimp_py)
 api/migrations/  numbered SQL, never edited once merged; add a new file instead
 ```
 

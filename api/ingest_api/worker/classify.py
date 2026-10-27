@@ -26,6 +26,8 @@ class Media(StrEnum):
     GLTF = "model/gltf+json"
     PLY = "model/ply"
     OBJ = "model/obj"
+    FBX = "application/vnd.autodesk.fbx"
+    STL = "model/stl"
     E57 = "model/e57"
     LAS = "application/vnd.las"
     LAZ = "application/vnd.laszip"
@@ -54,6 +56,7 @@ _SIGNATURES: tuple[tuple[bytes, Classification], ...] = (
     (b"\xff\xd8\xff", Classification(Kind.RASTER, Media.JPEG)),
     (b"glTF", Classification(Kind.MESH, Media.GLB)),
     (b"ply\n", Classification(Kind.MESH, Media.PLY)),
+    (b"Kaydara FBX Binary  \x00", Classification(Kind.MESH, Media.FBX)),
     (b"ASTM-E57", Classification(Kind.POINTCLOUD, Media.E57)),
     (b"PAR1", Classification(Kind.TABULAR, Media.PARQUET)),
     (b"SQLite format 3\x00", Classification(Kind.VECTOR, Media.GEOPACKAGE)),
@@ -70,6 +73,8 @@ _EXTENSIONS: dict[str, Classification] = {
     ".geojson": Classification(Kind.VECTOR, Media.GEOJSON),
     ".gltf": Classification(Kind.MESH, Media.GLTF),
     ".obj": Classification(Kind.MESH, Media.OBJ),
+    ".fbx": Classification(Kind.MESH, Media.FBX),  # FBX in its text form
+    ".stl": Classification(Kind.MESH, Media.STL),  # a binary STL has no signature
     ".csv": Classification(Kind.TABULAR, Media.CSV),
     ".jsonl": Classification(Kind.TABULAR, Media.JSONL),
     ".txt": Classification(Kind.DOCUMENT, Media.TEXT),

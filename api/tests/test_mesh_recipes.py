@@ -103,7 +103,7 @@ def test_the_recipe_applies_to_a_glb_with_triangles_whose_header_read(tmp_path):
         "thumbnail",
     ]
     assert not RECIPE.applies(source(original, kind=Kind.RASTER))
-    assert not RECIPE.applies(source(original, media=Media.OBJ))
+    assert not RECIPE.applies(source(original, media=Media.TIFF))
 
 
 def test_the_recipe_skips_a_glb_whose_header_did_not_read(tmp_path):

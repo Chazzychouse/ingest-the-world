@@ -7,13 +7,16 @@
   its textures scaled to fit.
 - `thumbnail`: that coarse model drawn (`meshes/drawing`), a PNG like a raster's thumbnail.
 
-Only for GLBs whose header read cleanly and that have triangles to tile. The tiler holds a chunk
+For GLBs whose header read cleanly and that have triangles to tile, and for OBJ, FBX, PLY and
+STL models small enough for Assimp to read whole (`meshes/normalize`), each converted to a GLB
+in the recipe's scratch first. The tiler holds a chunk
 and a tile at a time, so a model of any size renders within the sandbox's memory limit; its
 working files live in the recipe's scratch. Deterministic for a given numpy and GDAL (ING-7); a
 change here that would change the output raises the version.
 """
 
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +26,7 @@ from ingest_api.items.kinds import Kind
 from ingest_api.items.metadata import TILESET_ROLE
 from ingest_api.tilesets import Writer
 from ingest_api.worker.classify import Media
+from ingest_api.worker.meshes import normalize
 from ingest_api.worker.meshes.coarse import coarse
 from ingest_api.worker.meshes.drawing import Sampler, draw
 from ingest_api.worker.meshes.gltf import Glb
@@ -33,6 +37,7 @@ from ingest_api.worker.recipe import Source
 
 SOFTWARE: Mapping[str, str] = {"numpy": np.__version__, "GDAL": rasterio.__gdal_version__}
 TRIANGLES = "mesh:triangles"
+NORMALIZED = frozenset({Media.OBJ, Media.FBX, Media.PLY, Media.STL})
 # The proxy: the model on a grid of 128 cells along its longest side (some tens of thousands of
 # triangles for a surface), textures at most 1024 px. The thumbnail: coarser, as it's small.
 # Each is coarsened further, if it must, to fit its triangle budget.
@@ -51,7 +56,7 @@ class Tiles3D:
     def render(self, original: Path, scratch: Path) -> Path:
         out, work = scratch / "tileset.3tz", scratch / "work"
         work.mkdir()
-        with Glb(original) as model, Writer(out) as archive:
+        with _model(original, scratch) as model, Writer(out) as archive:
             tile(model, work, archive)
         return out
 
@@ -66,7 +71,7 @@ class Proxy:
 
     def render(self, original: Path, scratch: Path) -> Path:
         out = scratch / "proxy.glb"
-        with Glb(original) as model:
+        with _model(original, scratch) as model:
             mesh, (low, high) = coarse(model, cells=PROXY_CELLS, max_triangles=PROXY_TRIANGLES)
             textures = Textures(model.image, scratch)
             baked = {
@@ -92,7 +97,7 @@ class Thumbnail:
 
     def render(self, original: Path, scratch: Path) -> Path:
         out = scratch / "thumbnail.png"
-        with Glb(original) as model:
+        with _model(original, scratch) as model:
             mesh, _ = coarse(model, cells=THUMBNAIL_CELLS, max_triangles=THUMBNAIL_TRIANGLES)
             textures = Textures(model.image, scratch)
             samplers: dict[int, Sampler] = {}
@@ -107,12 +112,23 @@ class Thumbnail:
 
 
 def _tileable(source: Source) -> bool:
-    """A GLB whose header read cleanly, with triangles."""
+    """A GLB whose header read cleanly, with triangles; or a model Assimp converts."""
+    if source.kind != Kind.MESH:
+        return False
+    if source.media_type in NORMALIZED:
+        return source.size <= normalize.MAX_BYTES
     triangles = source.properties.get(TRIANGLES)
     return (
-        source.kind == Kind.MESH
-        and source.media_type == Media.GLB
+        source.media_type == Media.GLB
         and source.extraction == "extracted"
         and isinstance(triangles, int)
         and triangles > 0
     )
+
+
+@contextmanager
+def _model(original: Path, scratch: Path) -> Generator[Glb]:
+    """The original as a GLB: itself, or its conversion, in scratch."""
+    path = original if normalize.is_glb(original) else normalize.to_glb(original, scratch)
+    with Glb(path) as model:
+        yield model
