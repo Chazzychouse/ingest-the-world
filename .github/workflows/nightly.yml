@@ -96,7 +96,8 @@ jobs:
 
   # The sample corpus through the whole local stack, as `make up && make e2e` runs it. Needs the
   # Service Bus emulator, so it runs only once its licence is accepted (repository variable
-  # ACCEPT_EULA=Y, see .env.example). Samples are cached by manifest, so they download once.
+  # ACCEPT_EULA=Y, see .env.example). Samples are cached by manifest and saved straight after
+  # fetching, even when a download fails, so each run fetches only what no earlier run got.
   e2e:
     if: vars.ACCEPT_EULA == 'Y'
     runs-on: ubuntu-latest
@@ -104,10 +105,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: samples/.cache
-          key: samples-${{ hashFiles('samples/manifest.json', 'api/tools/samples.py') }}
+          key: samples-${{ hashFiles('samples/manifest.json') }}-${{ github.run_id }}
+          restore-keys: samples-${{ hashFiles('samples/manifest.json') }}-
       - run: cd api && uv sync --frozen
       - uses: actions/setup-node@v5
         with:
@@ -115,6 +117,11 @@ jobs:
       - name: Cesium's 3D Tiles validator, which checks every mesh's tileset
         run: npm ci --prefix api/tools/validators --no-audit --no-fund
       - run: make samples
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: samples/.cache
+          key: samples-${{ hashFiles('samples/manifest.json') }}-${{ github.run_id }}
       - name: Start the stack
         run: echo ACCEPT_EULA=Y > .env && make up
       - run: make e2e
