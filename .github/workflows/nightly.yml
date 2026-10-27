@@ -82,11 +82,17 @@ jobs:
         working-directory: .
         run: docker compose -f compose.test.yaml up -d --wait db azurite
       - run: uv sync --frozen
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Cesium's 3D Tiles validator, which the tiler's tests run
+        run: npm ci --prefix tools/validators --no-audit --no-fund
       - name: Planted bugs
         run: uv run python tools/mutants.py --full --shard=${{ matrix.shard }}/8
         env:
           INGEST_REQUIRE_DB: "1"
           INGEST_REQUIRE_AZURITE: "1"
+          INGEST_REQUIRE_VALIDATORS: "1"
 
   # The sample corpus through the whole local stack, as `make up && make e2e` runs it. Needs the
   # Service Bus emulator, so it runs only once its licence is accepted (repository variable
@@ -103,10 +109,17 @@ jobs:
           path: samples/.cache
           key: samples-${{ hashFiles('samples/manifest.json', 'api/tools/samples.py') }}
       - run: cd api && uv sync --frozen
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Cesium's 3D Tiles validator, which checks every mesh's tileset
+        run: npm ci --prefix api/tools/validators --no-audit --no-fund
       - run: make samples
       - name: Start the stack
         run: echo ACCEPT_EULA=Y > .env && make up
       - run: make e2e
+        env:
+          INGEST_REQUIRE_VALIDATORS: "1"
       - name: Stack logs
         if: failure()
-        run: docker compose logs api worker event-shim
+        run: docker compose logs api worker deriver tiler event-shim
