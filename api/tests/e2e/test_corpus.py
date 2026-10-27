@@ -26,9 +26,11 @@ import httpx
 import pytest
 from rio_cogeo.cogeo import cog_validate
 
+from ingest_api.items.metadata import TILESET_ROLE
 from ingest_api.items.routes import SHA256_MULTIHASH
 from tests.geoparquet import valid_geoparquet
 from tests.invariants import check
+from tests.meshes import validated
 from tools import samples
 from tools.stack import API_URL, TIMEOUT, Api, await_upload, sign_in, start_upload
 
@@ -139,7 +141,8 @@ def _downloaded_sha256(api: Api, upload_id: str) -> str:
 
 
 def _check_derivatives(api: Api, label: str, upload_id: str, e: samples.Expect, scratch: Path):
-    """The item's derivatives, once settled, against the manifest's; each COG validated."""
+    """The item's derivatives, once settled, against the manifest's; each COG and tileset
+    validated."""
     stac = api.get(f"/items/{upload_id}")
     made = {role: a["type"] for role, a in stac["assets"].items() if role != "original"}
     failed = stac["properties"]["ingest:derivative_failures"]
@@ -158,9 +161,15 @@ def _check_derivatives(api: Api, label: str, upload_id: str, e: samples.Expect, 
             assert valid, f"{label}: {role} is not a valid COG: {errors}"
         if asset["type"] == PARQUET:
             assert valid_geoparquet(path).num_rows > 0, f"{label}: {role} has no features"
+        if role == TILESET_ROLE:
+            report = validated(path.rename(path.with_suffix(".3tz")), scratch)
+            problems = report["numErrors"] + report["numWarnings"]
+            check("ING-14", problems == 0, f"{label}: the tileset has {problems} problems")
 
 
-@pytest.mark.invariant("ING-2", "ING-4", "ING-5", "ING-6", "ING-12", "ING-13", "SRCH-1", "ACC-9")
+@pytest.mark.invariant(
+    "ING-2", "ING-4", "ING-5", "ING-6", "ING-12", "ING-13", "ING-14", "SRCH-1", "ACC-9"
+)
 @pytest.mark.parametrize("sample", CORPUS, ids=[s.name for s in CORPUS])
 def test_each_sample_reaches_its_outcome(sample: samples.Sample, http, collection, tmp_path):
     if not sample.path.exists():

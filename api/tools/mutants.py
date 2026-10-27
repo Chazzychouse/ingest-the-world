@@ -679,6 +679,15 @@ MUTANTS = [
         ("ING-12",),
     ),
     Mutant(
+        # Normals written as clustering left them: opposite ones averaged to zero, which glTF
+        # forbids (found by the corpus's chess set).
+        "zero-normals-written",
+        "ingest_api/worker/meshes/writer.py",
+        'attributes["NORMAL"] = doc.accessor(_unit(part.normals), target=ARRAY_BUFFER)',
+        'attributes["NORMAL"] = doc.accessor(part.normals, target=ARRAY_BUFFER)',
+        ("ING-14",),
+    ),
+    Mutant(
         # A coarse tile declares only its own clustering's error, not what its children's had
         # already moved: a viewer trusting it shows a surface further off than it claims.
         "tile-error-ignores-children",

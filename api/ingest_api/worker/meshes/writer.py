@@ -21,6 +21,8 @@ GENERATOR = "ingest-the-world"
 FLOAT, UNSIGNED_INT = 5126, 5125
 ARRAY_BUFFER, ELEMENT_ARRAY_BUFFER = 34962, 34963
 LINEAR, LINEAR_MIPMAP_LINEAR, CLAMP_TO_EDGE = 9729, 9987, 33071
+MIN_NORMAL = 1e-6
+UP = np.array([0.0, 1.0, 0.0])
 DEFAULT = Material((1.0, 1.0, 1.0, 1.0), None, double_sided=False)
 
 
@@ -105,7 +107,7 @@ def _primitive(
     accessors[position]["max"] = [float(v) for v in positions.max(axis=0)]
     attributes = {"POSITION": position}
     if part.normals is not None:
-        attributes["NORMAL"] = doc.accessor(part.normals, target=ARRAY_BUFFER)
+        attributes["NORMAL"] = doc.accessor(_unit(part.normals), target=ARRAY_BUFFER)
     pbr: dict[str, object] = {
         "baseColorFactor": list(material.base_colour),
         "metallicFactor": 0.0,
@@ -124,6 +126,14 @@ def _primitive(
         "indices": doc.accessor(part.triangles.reshape(-1), target=ELEMENT_ARRAY_BUFFER),
         "material": _append(doc.json["materials"], entry),
     }
+
+
+def _unit(normals: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Normals of unit length, as glTF requires: one too short to point anywhere (opposite
+    normals averaged by clustering, or a zero in the source) points up instead."""
+    lengths = np.linalg.norm(normals.astype(np.float64), axis=1, keepdims=True)
+    unit = np.where(lengths > MIN_NORMAL, normals / np.maximum(lengths, MIN_NORMAL), UP)
+    return unit.astype(np.float32)
 
 
 def _pack(document: dict[str, object], binary: bytes) -> bytes:

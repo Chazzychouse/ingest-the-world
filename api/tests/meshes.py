@@ -78,6 +78,7 @@ class Tile:
     parent: "Tile | None"
     positions: NDArray[np.float64]  # every vertex its triangles use, in world coordinates
     triangles: NDArray[np.float64]  # (m, 3, 3): each triangle's corners
+    normals: list[NDArray[np.float64]]  # each primitive's, as written
 
 
 def tiles(archive: Path, tmp_path: Path) -> list[Tile]:
@@ -90,8 +91,8 @@ def tiles(archive: Path, tmp_path: Path) -> list[Tile]:
             if not pending:
                 break
             entry, depth, parent = pending.pop(0)
-            positions, triangles = _content(z, entry, tmp_path)
-            tile = Tile(entry, depth, parent, positions, triangles)
+            positions, triangles, normals = _content(z, entry, tmp_path)
+            tile = Tile(entry, depth, parent, positions, triangles, normals)
             found.append(tile)
             pending += [(c, depth + 1, tile) for c in entry.get("children", [])]  # type: ignore[union-attr]  # pyright: ignore[reportUnknownVariableType] - JSON
     return found
@@ -99,23 +100,29 @@ def tiles(archive: Path, tmp_path: Path) -> list[Tile]:
 
 def _content(
     z: zipfile.ZipFile, entry: dict[str, object], tmp_path: Path
-) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    content = entry.get("content")
-    if not isinstance(content, dict):
-        return np.zeros((0, 3)), np.zeros((0, 3, 3))
-    path = tmp_path / "tile.glb"
-    path.write_bytes(z.read(str(content["uri"])))  # pyright: ignore[reportUnknownArgumentType] - JSON
+) -> tuple[NDArray[np.float64], NDArray[np.float64], list[NDArray[np.float64]]]:
+    """A tile's vertices, triangles and normals, from its `content` or each of its `contents`."""
     corners: list[NDArray[np.float64]] = []
-    with Glb(path) as model:
-        for p in model.primitives:
-            world = (
-                model.read(p.positions, 0, p.positions.count) @ p.transform[:3, :3].T
-                + p.transform[:3, 3]
-            )
-            ids = model.read_indices(p, 0, p.triangles)
-            corners.append(world[ids.astype(np.int64)])
+    normals: list[NDArray[np.float64]] = []
+    for content in _contents(entry):
+        path = tmp_path / "tile.glb"
+        path.write_bytes(z.read(str(content.get("uri"))))
+        with Glb(path) as model:
+            for p in model.primitives:
+                rows = model.read(p.positions, 0, p.positions.count)
+                world = rows @ p.transform[:3, :3].T + p.transform[:3, 3]
+                ids = model.read_indices(p, 0, p.triangles)
+                corners.append(world[ids.astype(np.int64)])
+                if p.normals is not None:
+                    normals.append(model.read(p.normals, 0, p.normals.count))
     triangles = np.concatenate(corners) if corners else np.zeros((0, 3, 3))
-    return triangles.reshape(-1, 3), triangles
+    return triangles.reshape(-1, 3), triangles, normals
+
+
+def _contents(entry: dict[str, object]) -> list[dict[str, object]]:
+    one, many = entry.get("content"), entry.get("contents")
+    found: list[object] = [one] if isinstance(one, dict) else many if isinstance(many, list) else []  # pyright: ignore[reportUnknownVariableType] - JSON
+    return [c for c in found if isinstance(c, dict)]  # pyright: ignore[reportUnknownVariableType] - JSON
 
 
 def triangle_set(triangles: NDArray[np.float64]) -> list[tuple[float, ...]]:

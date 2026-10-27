@@ -57,6 +57,9 @@ class Limits:
     chunk_rows: int = 1_000_000  # vertices or triangles read at once
     gap_rows: int = 64  # gaps a gather reads through rather than seek past
     buffer_bytes: int = 64 * 1024 * 1024  # partitioned triangles held before an append
+    # A leaf whose box can't be cut (its triangles crowd one cell of the fine grid) is written as
+    # several contents of at most this many triangles each: no one GLB, nor memory, grows with it.
+    content_triangles: int = 1_000_000
     leaf_texels: int = 2048
     texels: int = 1024
 
@@ -76,6 +79,9 @@ class Built:
     entry: dict[str, object]
     error: float
     box: Box | None
+    # How far the mesh its parent is given may be from its content: 0, unless the content was too
+    # big to hand on whole and its parent gets it clustered (a leaf of several contents).
+    approx: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +112,7 @@ class _Job:
         self.model, self.scratch, self.out, self.limits = model, scratch, out, limits
         self.primitives = [p for p in model.primitives if p.triangles]
         self.nodes: list[Node] = []
+        self.grid: tuple[Vector, Vector] = (np.zeros(3), np.ones(3))  # its corner and cell size
         self.textures = Textures(model.image, scratch)
 
     def run(self) -> Built:
@@ -115,6 +122,7 @@ class _Job:
         triangles = sum(p.triangles for p in self.primitives)
         shape = _grid(low, high, self.limits, triangles=triangles)
         cell = np.maximum((high - low) / shape, 1e-12)
+        self.grid = (low, cell)
         columns = [self._cells(i, low, cell, shape) for i in range(len(self.primitives))]
         self.nodes = _tree(self._counts(columns, shape), self.limits)
         leaves = [i for i, n in enumerate(self.nodes) if not n.children]
@@ -189,19 +197,68 @@ class _Job:
         built: dict[int, Built] = {}
         for index in reversed(_preorder(self.nodes)):
             node = self.nodes[index]
+            if not node.children:
+                built[index] = self._leaf(index, self.scratch / f"leaf-{numbers[index]}.rows")
+                continue
             children = [built.pop(c) for c in node.children]
-            if children:
-                mesh, error = self._parent(node, children)
-            else:
-                mesh, error = self._leaf(self.scratch / f"leaf-{numbers[index]}.rows"), 0.0
+            mesh, error = self._parent(node, children)
             if index != 0:  # the root has no parent to read it back
                 _save(mesh, self.scratch / f"tile-{index}.npz")
             built[index] = self._write(index, mesh, error, children)
         return built[0]
 
-    def _leaf(self, path: Path) -> dict[int, Part]:
-        rows = np.fromfile(path, ROW)
+    def _leaf(self, index: int, path: Path) -> Built:
+        count, step = path.stat().st_size // ROW.itemsize, self.limits.content_triangles
+        if count <= step:
+            mesh = self._leaf_mesh(np.fromfile(path, ROW))
+            path.unlink()
+            if index != 0:
+                _save(mesh, self.scratch / f"tile-{index}.npz")
+            return self._write(index, mesh, 0.0, [])
+        return self._crowded(index, path, count)
+
+    def _crowded(self, index: int, path: Path, count: int) -> Built:
+        """A leaf too big for one content: written `content_triangles` at a time, each its own
+        GLB, and handed to its parent clustered on a grid of its own size over `cells_per_tile`,
+        which is that cell's diagonal from its content (`Built.approx`)."""
+        step = self.limits.content_triangles
+        origin, size = self._box_of(self.nodes[index])
+        cell = max(float(size.max()) / self.limits.cells_per_tile, 1e-9)
+        contents: list[dict[str, object]] = []
+        boxes: list[Box | None] = []
+        stand_in: dict[int, Part] = {}
+        for part_number, start in enumerate(range(0, count, step)):  # bounded by the row count
+            rows = np.fromfile(path, ROW, count=step, offset=start * ROW.itemsize)
+            mesh = self._leaf_mesh(rows)
+            own = bounds(mesh)
+            if own is None:
+                continue
+            uri = f"tiles/{index}-{part_number}.glb"
+            self._content(uri, mesh, own, self.limits.leaf_texels)
+            contents.append({"uri": uri})
+            boxes.append(own)
+            stand_in = clustering.cluster(
+                merge([stand_in, clustering.cluster(mesh, origin, cell)]), origin, cell
+            )
         path.unlink()
+        if index != 0:
+            _save(stand_in, self.scratch / f"tile-{index}.npz")
+        box = _union(boxes)
+        entry: dict[str, object] = {
+            "geometricError": 0.0,
+            "refine": "REPLACE",
+            "contents": contents,
+        }
+        if box is not None:
+            entry["boundingVolume"] = {"box": _box(box)}
+        return Built(entry, 0.0, box, approx=clustering.diagonal(cell))
+
+    def _box_of(self, node: Node) -> tuple[Vector, Vector]:
+        """A node's corner and size in the model's coordinates, from its grid cells."""
+        low, cell = self.grid
+        return low + node.low * cell, (node.high - node.low) * cell
+
+    def _leaf_mesh(self, rows: NDArray[np.void]) -> dict[int, Part]:
         parts: list[Mesh] = []
         for p in np.unique(rows["primitive"]).tolist():
             mine = rows[rows["primitive"] == p]
@@ -229,7 +286,9 @@ class _Job:
 
     def _parent(self, node: Node, children: list[Built]) -> tuple[dict[int, Part], float]:
         merged = merge(_load(self.scratch / f"tile-{c}.npz") for c in node.children)
-        worst = max(c.error for c in children)
+        # How far what it was given may be from the model: each child's error, and how far what
+        # that child handed on is from its content.
+        worst = max(c.error + c.approx for c in children)
         box = _union([c.box for c in children])
         if box is None:
             return {}, worst
@@ -244,14 +303,19 @@ class _Job:
             entry["boundingVolume"] = {"box": _box(box)}
         if own is not None:
             path = f"tiles/{index}.glb"
-            baked = self._baked(mesh, self.limits.texels if children else self.limits.leaf_texels)
-            centre = (own[0] + own[1]) / 2
-            materials = self.model.materials
-            self.out.add(path, write_glb(mesh, centre=centre, materials=materials, baked=baked))
+            self._content(
+                path, mesh, own, self.limits.texels if children else self.limits.leaf_texels
+            )
             entry["content"] = {"uri": path}
         if children:
             entry["children"] = [c.entry for c in children]
         return Built(entry, error, box)
+
+    def _content(self, path: str, mesh: Mesh, own: Box, texels: int) -> None:
+        baked = self._baked(mesh, texels)
+        centre = (own[0] + own[1]) / 2
+        materials = self.model.materials
+        self.out.add(path, write_glb(mesh, centre=centre, materials=materials, baked=baked))
 
     def _baked(self, mesh: Mesh, texels: int) -> dict[int, Baked]:
         materials = self.model.materials

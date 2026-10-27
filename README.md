@@ -47,7 +47,7 @@ collection by design.
 |---------|-----|
 | Web (nginx, built SPA) | http://localhost:8081 |
 | API (OpenAPI docs at `/docs`) | http://localhost:8000 |
-| Tiler (raster previews, under a token the API mints) | http://localhost:8001 |
+| Tiler (raster previews and 3D Tiles, under tokens the API mints) | http://localhost:8001 |
 | Keycloak (admin / admin) | http://localhost:8080 |
 | Postgres + PostGIS + pgvector | `postgresql://ingest:ingest@localhost:5432/ingest` |
 | Azurite (Blob emulator) | http://localhost:10000 |
@@ -129,3 +129,13 @@ within 15 minutes (ACC-8); the map draws every match from footprint vector tiles
 raster from our own tiler, each under an audited session (ACC-5). Uploads report live over
 server-sent events until their derivatives are ready (ING-13). The plan, and where each slice
 departed from it, is [`docs/plans/m2.md`](docs/plans/m2.md).
+
+**M3 — big-file 3D**: every mesh (GLB, and OBJ, FBX, PLY and STL through Assimp) becomes 3D Tiles
+1.1 made by our own tiler, which reads a model a chunk at a time and keeps memory to a tile's
+worth whatever the model's size (a 3 GB mesh tiles in under 4 minutes at about 350 MiB), with
+leaves holding every triangle exactly under coarser tiles that declare how far they may be from
+the surface (ING-14); a proxy GLB and a thumbnail drawn without a GPU come from one streamed pass.
+A tileset is one `.3tz` archive, served a file at a time by the tiler under an audited scene token
+(ACC-3, ACC-5, ACC-9), and an item's details open it in a 3D view (three.js and
+3DTilesRendererJS). Spike S1, where mago-3d-tiler failed, and the plan are in
+[`docs/plans/m3.md`](docs/plans/m3.md).

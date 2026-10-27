@@ -11,7 +11,7 @@ from hypothesis import strategies as st
 
 from ingest_api.tilesets import Writer
 from ingest_api.worker.meshes.gltf import Glb
-from ingest_api.worker.meshes.model import Mesh
+from ingest_api.worker.meshes.model import Mesh, Part
 from ingest_api.worker.meshes.tiler import Limits, tile
 from tests.invariants import check
 from tests.meshes import (
@@ -32,6 +32,7 @@ SMALL = Limits(
     chunk_rows=7,
     gap_rows=2,
     buffer_bytes=64,
+    content_triangles=16,
 )
 offsets = st.tuples(*[st.integers(-80_000, 80_000).map(lambda v: v / 8)] * 3)
 
@@ -82,6 +83,9 @@ def test_every_tile_is_inside_nested_boxes_and_within_its_error(tmp_path, mesh, 
         for (low, high), (above_low, above_high) in _nested(t):
             held = np.all(low >= above_low - 1e-6) and np.all(high <= above_high + 1e-6)
             check("ING-14", held, f"a depth-{t.depth} tile's box reaches outside its parent's")
+        for normals in t.normals:
+            lengths = np.linalg.norm(normals, axis=1)
+            check("ING-14", np.all(np.abs(lengths - 1) < 1e-3), "a normal not of unit length")
         for low, high in boxes(t.entry):
             slack = 1e-6 * max(1.0, float(np.abs(np.concatenate([low, high])).max()))
             inside = np.all((t.positions >= low - slack) & (t.positions <= high + slack))
@@ -119,3 +123,43 @@ def test_a_big_model_makes_a_tree_whose_root_is_coarser(tmp_path):
     root, leaves = found[0], [t for t in found if "children" not in t.entry]
     assert len(leaves) > 4
     assert 0 < len(root.triangles) < len(part.triangles) / 4
+
+
+@pytest.mark.invariant("ING-14")
+def test_triangles_crowding_one_cell_are_split_across_contents(tmp_path):
+    """Every triangle on the same three points, as the corpus's stress GLBs are: the leaf can't
+    be cut, so it's written in pieces, and its parent's error covers the stand-in it was given."""
+    positions = np.array([[0, 0, 0], [8, 0, 0], [0, 8, 0]], np.float32)
+    triangles = np.tile(np.array([[0, 1, 2]], np.uint32), (100, 1))
+    mesh = {0: Part(positions, None, None, triangles)}
+
+    found = tiled(tmp_path, mesh, (0, 0, 0))
+
+    crowded = [t for t in found if len(t.entry.get("contents", [])) > 1]  # type: ignore[arg-type]
+    check("ING-14", len(crowded) == 1, f"{len(crowded)} leaves of several contents")
+    held = sum(len(t.triangles) for t in found if "children" not in t.entry)
+    check("ING-14", held == 100, f"the leaves hold {held} of 100 triangles")
+
+
+@pytest.mark.invariant("ING-14")
+def test_opposite_normals_clustered_together_still_point_somewhere(tmp_path):
+    """A thin surface seen from both sides, as a chess piece's: clustering averages its two
+    normals to nothing, and glTF wants every normal of unit length (the corpus found it)."""
+    side = 40
+    grid = terrain(side)
+    count = len(grid.positions)
+    up = np.tile(np.array([[0.0, 1.0, 0.0]], np.float32), (count, 1))
+    both = Part(  # one material: each vertex twice, facing up and facing down
+        np.concatenate([grid.positions, grid.positions]),
+        np.concatenate([up, -up]),
+        None,
+        np.concatenate([grid.triangles, grid.triangles[:, ::-1] + count]).astype(np.uint32),
+    )
+    limits = Limits(leaf_triangles=500, cells_per_tile=4, grid_cells=4096, grid_side=64)
+
+    found = tiled(tmp_path, {0: both}, (0, 0, 0), limits)
+
+    for t in found:
+        for normals in t.normals:
+            lengths = np.linalg.norm(normals, axis=1)
+            check("ING-14", np.all(np.abs(lengths - 1) < 1e-3), "a normal not of unit length")

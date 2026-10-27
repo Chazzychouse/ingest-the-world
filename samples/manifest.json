@@ -242,7 +242,11 @@
                 ]
               }
             },
-            "derivatives": {}
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
           }
         },
         {
@@ -258,7 +262,11 @@
             "outcome": "cataloged",
             "kind": "mesh",
             "media_type": "model/gltf-binary",
-            "derivatives": {}
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
           }
         }
       ]
@@ -301,7 +309,11 @@
                 ]
               }
             },
-            "derivatives": {}
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
           }
         }
       ]
@@ -344,7 +356,11 @@
                 ]
               }
             },
-            "derivatives": {}
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
           }
         }
       ]
@@ -390,7 +406,140 @@
                 ]
               }
             },
-            "derivatives": {}
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "terrain.glb",
+      "set": "default",
+      "sha256": "8c0a4866ebda248e7052b24f40e9c165f26eac391a40a14c24e35f75b1fbf21a",
+      "size": 5397568,
+      "generate": {
+        "by": "terrain-glb",
+        "seed": 1,
+        "side": 330,
+        "texture": 512
+      },
+      "notes": "A textured terrain big enough that the tiler cuts it into several tiles, each with its own crop of the texture; its extent is pinned by the generator (0 at one corner, 8 at the other).",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "model/gltf-binary",
+            "extraction": "extracted",
+            "properties": {
+              "mesh:vertices": 108900,
+              "mesh:triangles": 216482,
+              "mesh:materials": 1,
+              "mesh:extent": {
+                "min": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "max": [
+                  329.0,
+                  8.0,
+                  329.0
+                ]
+              }
+            },
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "box.fbx",
+      "set": "default",
+      "sha256": "ad2d79fe89d4d646bc7930dc952eb28e69976a321b387bf7851ecd3f37e667f8",
+      "size": 17200,
+      "source": {
+        "url": "https://raw.githubusercontent.com/assimp/assimp/2ee1888d74e2f2be44f1639a91c13a984b43fbd1/test/models/FBX/box.fbx",
+        "page": "https://github.com/assimp/assimp/tree/2ee1888d74e2f2be44f1639a91c13a984b43fbd1/test/models/FBX",
+        "licence": "BSD-3-Clause",
+        "licence_url": "https://github.com/assimp/assimp/blob/2ee1888d74e2f2be44f1639a91c13a984b43fbd1/LICENSE"
+      },
+      "notes": "Binary FBX: known by its signature, read through Assimp; no header extraction (its counts live in the geometry).",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "application/vnd.autodesk.fbx",
+            "extraction": "unsupported",
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Spider_binary.stl",
+      "set": "default",
+      "sha256": "267fdc458d855d70b09f88d3b434ddddeaf3785ea57011ab0b49a5d8581c55bd",
+      "size": 68484,
+      "source": {
+        "url": "https://raw.githubusercontent.com/assimp/assimp/2ee1888d74e2f2be44f1639a91c13a984b43fbd1/test/models/STL/Spider_binary.stl",
+        "page": "https://github.com/assimp/assimp/tree/2ee1888d74e2f2be44f1639a91c13a984b43fbd1/test/models/STL",
+        "licence": "BSD-3-Clause",
+        "licence_url": "https://github.com/assimp/assimp/blob/2ee1888d74e2f2be44f1639a91c13a984b43fbd1/LICENSE"
+      },
+      "notes": "Binary STL: no signature, so known by its extension; the derive stage knows it by its size.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "model/stl",
+            "extraction": "unsupported",
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "box.obj",
+      "set": "default",
+      "sha256": "65ad6ed518b8c0592a6f6f80773b8f65c17b80d6d17235447422a4ecd4746638",
+      "size": 410,
+      "source": {
+        "url": "https://raw.githubusercontent.com/assimp/assimp/2ee1888d74e2f2be44f1639a91c13a984b43fbd1/test/models/OBJ/box.obj",
+        "page": "https://github.com/assimp/assimp/tree/2ee1888d74e2f2be44f1639a91c13a984b43fbd1/test/models/OBJ",
+        "licence": "BSD-3-Clause",
+        "licence_url": "https://github.com/assimp/assimp/blob/2ee1888d74e2f2be44f1639a91c13a984b43fbd1/LICENSE"
+      },
+      "notes": "OBJ: known by its extension, read through Assimp.",
+      "uploads": [
+        {
+          "expect": {
+            "outcome": "cataloged",
+            "kind": "mesh",
+            "media_type": "model/obj",
+            "extraction": "unsupported",
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
           }
         }
       ]
@@ -516,7 +665,11 @@
                 ]
               }
             },
-            "derivatives": {}
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
           }
         }
       ]
@@ -555,7 +708,11 @@
                 ]
               }
             },
-            "derivatives": {}
+            "derivatives": {
+              "tileset": "application/zip",
+              "proxy": "model/gltf-binary",
+              "thumbnail": "image/png"
+            }
           }
         }
       ]
