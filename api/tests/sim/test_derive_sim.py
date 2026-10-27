@@ -111,6 +111,8 @@ class DeriveMachine(RuleBasedStateMachine):
         )
         self.recipes: list[Recipe] = [Digest(), Stamp(random.Random(seed)), Picky()]
         self.unshipped: list[Recipe] = [DigestV2()]  # deployed by `ship`, if at all
+        # The recipes deployed when each item's derivatives were last asked for: what settles it.
+        self.asked_with: dict[uuid.UUID, list[Recipe]] = {}
         self._make_deriver()
 
     def _make_deriver(self) -> None:
@@ -137,6 +139,7 @@ class DeriveMachine(RuleBasedStateMachine):
         self.store.faults = faults
         item = Item(cataloged.id, kind, cataloged.raw_blob, content)
         self.cataloged[item.id] = item
+        self.asked_with[item.id] = list(self.recipes)
         self.item_rows[str(item.id)] = self._item_rows()[str(item.id)]
         return item
 
@@ -145,6 +148,7 @@ class DeriveMachine(RuleBasedStateMachine):
         """Another request for an item's derivatives, as a rebuild would send."""
         with self._connect() as conn:
             outbox.request_derive(conn, item.id, now=self.clock.now())
+        self.asked_with[item.id] = list(self.recipes)
 
     @rule(target_kind=st.sampled_from(["upload", "nothing"]))
     def stray(self, target_kind: str) -> None:
@@ -286,15 +290,25 @@ class DeriveMachine(RuleBasedStateMachine):
             return
         self._drain()
         self._check_every_derivative_settled()
+        if any(asked != self.recipes for asked in self.asked_with.values()):
+            # A recipe version shipped since some item was asked for: a rebuild asks for every
+            # item, which makes it, before redelivery is checked to change nothing.
+            self._ask_for_everything(strays=False)
+            self._drain()
+            self._check_every_derivative_settled()
         before = self._snapshot()
-        with self._connect() as conn:
-            for item_id in self.cataloged:
-                outbox.request_derive(conn, item_id, now=self.clock.now())
-        for body in self.strays:
-            self.queue.send(body)
+        self._ask_for_everything(strays=True)
         self._drain()
         check("ING-12", self._snapshot() == before, "redelivering every request changed state")
         self._check_rebuild_matches()
+
+    def _ask_for_everything(self, *, strays: bool) -> None:
+        with self._connect() as conn:
+            for item_id in self.cataloged:
+                outbox.request_derive(conn, item_id, now=self.clock.now())
+                self.asked_with[item_id] = list(self.recipes)
+        for body in self.strays if strays else []:
+            self.queue.send(body)
 
     def _drain(self) -> None:
         """Faults off; relay everything, run the stage until the queue is empty, then sweep the
@@ -319,7 +333,7 @@ class DeriveMachine(RuleBasedStateMachine):
         jobs, settled = self._jobs(), self._settled()
         for item in self.cataloged.values():
             check("ING-13", str(item.id) in settled, f"{item.id} is still deriving after a drain")
-            for recipe in self.recipes:
+            for recipe in self.asked_with[item.id]:
                 if recipe.role == "stamp" and item.kind != Kind.RASTER:
                     continue
                 key = (str(item.id), recipe.role, recipe.version)
@@ -375,3 +389,21 @@ def test_derive_simulation(fresh_database, tmp_path):
     with psycopg.connect(url, autocommit=True) as db:
         # Hypothesis accepts any factory here; its annotation only says `type`.
         run_state_machine_as_test(lambda: DeriveMachine(db, url, tmp_path))  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.invariant("ING-13")
+def test_a_recipe_shipped_after_an_item_settles_waits_for_its_next_request(
+    fresh_database, tmp_path
+):
+    """The steps that showed the simulation's own check wrong: an item settles, a recipe version
+    ships, nothing asks again. The item stays settled on what it was asked for; the version is
+    made the next time it's asked, as the teardown's rebuild asks."""
+    url = fresh_database()
+    with psycopg.connect(url, autocommit=True) as db:
+        machine = DeriveMachine(db, url, tmp_path)
+        machine.start(seed=0, faults=Faults.none())
+        machine.catalog(content=b"\x00", kind=Kind.RASTER)
+        machine.relay()
+        machine.work(batch=1)
+        machine.ship()
+        machine.teardown()
